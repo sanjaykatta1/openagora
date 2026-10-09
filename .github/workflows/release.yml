@@ -130,6 +130,7 @@ jobs:
     runs-on: macos-14
     outputs:
       signed: ${{ steps.package.outputs.signed }}
+      notarized: ${{ steps.package.outputs.notarized }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -157,6 +158,7 @@ jobs:
           NOTARY_KEY_P8_BASE64: ${{ secrets.NOTARY_KEY_P8_BASE64 }}
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          MACOS_NOTARIZE: ${{ github.event_name != 'pull_request' }}
         run: packaging/macos/ci-build.sh binaries
       - uses: actions/upload-artifact@v4
         with:
@@ -259,6 +261,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - uses: actions/download-artifact@v4
         with:
           name: native-macos
@@ -266,9 +271,10 @@ jobs:
       - name: Verify checksum, install, run, uninstall, and assess signed package
         env:
           SIGNED: ${{ needs.macos-package.outputs.signed }}
+          NOTARIZED: ${{ needs.macos-package.outputs.notarized }}
         run: |
           (cd dist && shasum -a 256 -c ./*.sha256)
-          packaging/tests/macos.sh dist/*.pkg "$SIGNED"
+          packaging/tests/macos.sh dist/*.pkg "$SIGNED" "$NOTARIZED"
 
   install-tests:
     if: always()

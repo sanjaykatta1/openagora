@@ -2,6 +2,13 @@
 # Keep secrets out of the checkout. Never enable shell tracing in this script.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+builder="$ROOT/packaging/macos/build.sh"
+if [[ ${1:-} == --desktop ]]; then
+  builder="$ROOT/packaging/macos/desktop.sh"
+  shift
+fi
+notarize=${MACOS_NOTARIZE:-true}
+case "$notarize" in true|false) ;; *) echo 'MACOS_NOTARIZE must be true or false' >&2; exit 1 ;; esac
 secret_names=(MACOS_CERT_P12_BASE64 MACOS_CERT_PASSWORD APPLE_TEAM_ID NOTARY_KEY_P8_BASE64 NOTARY_KEY_ID NOTARY_ISSUER_ID)
 present=0
 for name in "${secret_names[@]}"; do
@@ -10,7 +17,8 @@ done
 if [[ $present -eq 0 ]]; then
   echo 'All macOS signing secrets are absent: building UNSIGNED (expected on forks).'
   [[ -z ${GITHUB_OUTPUT:-} ]] || echo 'signed=false' >> "$GITHUB_OUTPUT"
-  exec "$ROOT/packaging/macos/build.sh" "$@"
+  [[ -z ${GITHUB_OUTPUT:-} ]] || echo 'notarized=false' >> "$GITHUB_OUTPUT"
+  exec "$builder" "$@"
 fi
 [[ $present -eq 6 ]] || { echo 'Incomplete signing secrets: all six are required.' >&2; exit 1; }
 work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/openagora-signing.XXXXXX")
@@ -47,5 +55,7 @@ security import "$work/signing.p12" -k "$keychain" -P "$MACOS_CERT_PASSWORD" \
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
 rm "$work/signing.p12"
 export NOTARY_KEY_PATH="$work/notary.p8"
-"$ROOT/packaging/macos/build.sh" "$@"
+export CSC_KEYCHAIN="$keychain"
+"$builder" "$@"
 [[ -z ${GITHUB_OUTPUT:-} ]] || echo 'signed=true' >> "$GITHUB_OUTPUT"
+[[ -z ${GITHUB_OUTPUT:-} ]] || echo "notarized=$notarize" >> "$GITHUB_OUTPUT"

@@ -1,6 +1,10 @@
 # Native packages
 
-All native package versions come from `engine/Cargo.toml`. Python 3.11+ and
+All native package versions come from `engine/Cargo.toml`.
+`desktop/package.json` must carry the same version; both workflows reject a
+mismatch before packaging. Mac and Windows CLI installers use the
+`OpenAgora-CLI-` prefix to distinguish them from the desktop application.
+Python 3.11+ and
 Rust (including rustup) are required. Scripts run from any working directory,
 write release files to `dist/`, and fail on errors. Every distributable has a
 SHA-256 sidecar containing its basename. The existing binary archives retain
@@ -98,8 +102,21 @@ install/run/uninstall tests. These
 events cannot publish. Tag pushes and publishing workflow dispatches also run
 all tests before publication. A dispatch's version must match Cargo; choose
 `publish: false` for a rehearsal. The `install-tests` job blocks publication if
-any platform fails or is skipped. Signed macOS builds also check signature,
-Gatekeeper acceptance and stapling on both Apple Silicon and Intel runners.
+any platform fails or is skipped. Same-repository PRs check Developer ID signatures
+and installation on both Apple Silicon and Intel, but skip notarization to avoid
+waiting on Apple's service on every push. Forks without secrets test unsigned
+packages. Tags and manual rehearsals (`publish: false`) require notarization,
+Gatekeeper acceptance and stapling whenever signing credentials are present.
+Local builds also notarize by default; `MACOS_NOTARIZE=false` is only for
+development signature tests and must not be used for distribution.
+
+The desktop workflow reuses the same six secrets and temporary-keychain wrapper.
+Electron Builder signs the app, its bundled CLI, and the DMG. Release and manual
+rehearsal builds also notarize and staple the app before creating the DMG, then
+verify the app's ticket and Gatekeeper acceptance. PRs skip this notarization
+step. `CSC_KEYCHAIN` points Electron Builder at the imported identities, while
+`APPLE_API_KEY`, `APPLE_API_KEY_ID`, and `APPLE_API_ISSUER` are derived from the
+existing notarization secrets. No additional secret or certificate is needed.
 
 Arch x86_64 uses `archlinux:latest`. That official Docker image has no ARM64
 variant, so the native `ubuntu-24.04-arm` job imports the official Arch Linux ARM
@@ -112,14 +129,14 @@ Local install tests change system files. They reject an existing OpenAgora
 installation rather than overwrite it:
 
 ```sh
-packaging/tests/macos.sh dist/OpenAgora-0.1.0.pkg true
+packaging/tests/macos.sh dist/OpenAgora-CLI-0.3.0.pkg true
 packaging/tests/linux.sh debian:stable amd64 dist/openagora_0.1.0-1_amd64.deb
 ```
 
 On Windows, from an elevated PowerShell session:
 
 ```powershell
-packaging/tests/windows.ps1 -Msi dist/OpenAgora-0.1.0-x64.msi -TestUpgrade
+packaging/tests/windows.ps1 -Msi dist/OpenAgora-CLI-0.3.0-x64.msi -TestUpgrade
 ```
 
 The Windows CI test additionally builds an older-version MSI fixture from the same

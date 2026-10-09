@@ -44,9 +44,11 @@ Download the installer for your system from the
 - Windows: `OpenAgora-<version>-win-x64.exe`
 - Linux: `OpenAgora-<version>-linux-x86_64.AppImage` or `-linux-amd64.deb`
 
-The builds are not signed yet. On macOS, the first time: right-click the app →
-Open, or System Settings → Privacy & Security → Open Anyway. On Windows:
-"More info" → "Run anyway".
+Official macOS builds use Developer ID signing and notarization. PR builds are
+signed when credentials are available, but skip notarization; fork builds are
+unsigned. For these development builds, macOS may require right-click → Open,
+or System Settings → Privacy & Security → Open Anyway. Windows is unsigned:
+choose "More info" → "Run anyway" after verifying the download source.
 
 ### Command line
 
@@ -58,11 +60,12 @@ own if you prefer a terminal or want to script it.
 Choose your CPU architecture on the
 [latest release page](https://github.com/sanjaykatta1/openagora/releases/latest).
 These install for all users. Each download has an adjacent `.sha256` checksum file.
+Download links follow `https://github.com/sanjaykatta1/openagora/releases/download/v<version>/<filename>`.
 
 | Platform | Download filename | Install |
 |---|---|---|
-| macOS, Apple Silicon + Intel | `OpenAgora-<version>.pkg` (universal, signed and notarized on official builds) | Double-click the `.pkg` |
-| Windows x64 | `OpenAgora-<version>-x64.msi` | Double-click the `.msi` |
+| macOS, Apple Silicon + Intel | `OpenAgora-CLI-<version>.pkg` (universal, signed and notarized on official builds) | Double-click the `.pkg` |
+| Windows x64 | `OpenAgora-CLI-<version>-x64.msi` | Double-click the `.msi` |
 | Debian / Ubuntu | `openagora_<version>-1_<amd64 or arm64>.deb` | `sudo apt install ./openagora_*.deb` |
 | Fedora / RHEL / openSUSE | `openagora-<version>-1.<x86_64 or aarch64>.rpm` | `sudo dnf install ./openagora-*.rpm` (openSUSE: `sudo zypper install ./openagora-*.rpm`) |
 | Arch / derivatives | `openagora-<version>-1-<x86_64 or aarch64>.pkg.tar.zst` | `sudo pacman -U openagora-*.pkg.tar.zst` |

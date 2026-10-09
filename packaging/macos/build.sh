@@ -3,6 +3,8 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$ROOT"
 version=$(python3 packaging/version.py)
+notarize=${MACOS_NOTARIZE:-true}
+case "$notarize" in true|false) ;; *) echo 'MACOS_NOTARIZE must be true or false' >&2; exit 1 ;; esac
 out=${2:-dist}
 mkdir -p "$out"
 out=$(cd "$out" && pwd)
@@ -46,7 +48,7 @@ PY
   codesign --verify --strict --verbose=2 "$binary"
   signed=true
   sign_args=(--sign "$installer_identity" --timestamp)
-  if [[ -z ${NOTARY_PROFILE:-} && ( -z ${NOTARY_KEY_PATH:-} || -z ${NOTARY_KEY_ID:-} || -z ${NOTARY_ISSUER_ID:-} ) ]]; then
+  if [[ "$notarize" == true && -z ${NOTARY_PROFILE:-} && ( -z ${NOTARY_KEY_PATH:-} || -z ${NOTARY_KEY_ID:-} || -z ${NOTARY_ISSUER_ID:-} ) ]]; then
     echo 'Signing requires NOTARY_PROFILE or NOTARY_KEY_PATH, NOTARY_KEY_ID, NOTARY_ISSUER_ID' >&2
     exit 1
   fi
@@ -70,28 +72,32 @@ cat > "$work/Distribution.xml" <<XML
   <pkg-ref id="app.openagora.cli" version="$version" onConclusion="none">component.pkg</pkg-ref>
 </installer-gui-script>
 XML
-pkg="$out/OpenAgora-$version.pkg"
+pkg="$out/OpenAgora-CLI-$version.pkg"
 # Bash 3 (macOS) treats empty arrays as unset under nounset.
 if [[ "$signed" == true ]]; then
   productbuild --distribution "$work/Distribution.xml" --resources "$work/resources" \
     --package-path "$work" "${sign_args[@]}" "$pkg"
-  if [[ -n ${NOTARY_PROFILE:-} ]]; then
-    xcrun notarytool submit "$pkg" --keychain-profile "$NOTARY_PROFILE" --wait --output-format json > "$work/notary.json"
-  else
-    xcrun notarytool submit "$pkg" --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" \
-      --issuer "$NOTARY_ISSUER_ID" --wait --output-format json > "$work/notary.json"
-  fi
-  python3 - "$work/notary.json" <<'PY'
+  pkgutil --check-signature "$pkg"
+  if [[ "$notarize" == true ]]; then
+    if [[ -n ${NOTARY_PROFILE:-} ]]; then
+      xcrun notarytool submit "$pkg" --keychain-profile "$NOTARY_PROFILE" --wait --output-format json > "$work/notary.json"
+    else
+      xcrun notarytool submit "$pkg" --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" \
+        --issuer "$NOTARY_ISSUER_ID" --wait --output-format json > "$work/notary.json"
+    fi
+    python3 - "$work/notary.json" <<'PY'
 import json, sys
 result = json.load(open(sys.argv[1]))
 if result.get('status') != 'Accepted':
     raise SystemExit('Notarization was not accepted; submission ID: ' + str(result.get('id')))
 print('Notarization accepted.')
 PY
-  xcrun stapler staple "$pkg"
-  xcrun stapler validate "$pkg"
-  pkgutil --check-signature "$pkg"
-  spctl --assess --type install -vv "$pkg"
+    xcrun stapler staple "$pkg"
+    xcrun stapler validate "$pkg"
+    spctl --assess --type install -vv "$pkg"
+  else
+    echo 'Signed PR test package: notarization is deferred to release/rehearsal builds.'
+  fi
 else
   productbuild --distribution "$work/Distribution.xml" --resources "$work/resources" \
     --package-path "$work" "$pkg"

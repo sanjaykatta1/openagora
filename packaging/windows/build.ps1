@@ -20,7 +20,7 @@ try {
     $Wix = Join-Path $Root '.tools/wix/wix.exe'
     if (!(Test-Path $Wix)) { throw 'Install WiX 4.0.6 in .tools/wix (see packaging/README.md)' }
     $env:DOTNET_ROLL_FORWARD = 'Major'
-    $Msi = Join-Path $OutputDir "OpenAgora-$Version-x64.msi"
+    $Msi = Join-Path $OutputDir "OpenAgora-CLI-$Version-x64.msi"
     # AUTHENTICODE HOOK: sign a staged copy of openagora.exe before wix build,
     # then sign the MSI after wix build and before generating its checksum.
     & $Wix build packaging/windows/OpenAgora.wxs -arch x64 -d "Version=$Version" -d "BinaryPath=$BinaryPath" -d "LicensePath=$Root/LICENSE" -out $Msi

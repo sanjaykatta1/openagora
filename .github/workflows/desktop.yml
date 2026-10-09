@@ -1,0 +1,92 @@
+name: desktop
+# Builds the OpenAgora desktop app (Electron) with the engine bundled inside:
+# .dmg for macOS (Apple Silicon and Intel), .exe installer for Windows, and
+# AppImage + .deb for Linux.
+#   - On every push to main that touches the app or engine: build and upload
+#     the installers as workflow artifacts.
+#   - Run by hand with a version (e.g. v0.3.0): also attach them to that
+#     GitHub release, creating it if needed.
+on:
+  push:
+    branches: [main]
+    paths: ["desktop/**", "engine/**", "catalog/**", ".github/workflows/desktop.yml"]
+  pull_request:
+    paths: ["desktop/**", "engine/**", "catalog/**", ".github/workflows/desktop.yml"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to attach the installers to, e.g. v0.3.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macos-arm64, os: macos-latest, target: aarch64-apple-darwin, builder: --mac --arm64 }
+          - { name: macos-x64, os: macos-latest, target: x86_64-apple-darwin, builder: --mac --x64 }
+          - { name: windows-x64, os: windows-latest, target: x86_64-pc-windows-msvc, builder: --win --x64 }
+          - { name: linux-x64, os: ubuntu-latest, target: x86_64-unknown-linux-musl, builder: --linux --x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - if: contains(matrix.target, 'linux-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build the engine
+        run: cargo build --release --locked --target ${{ matrix.target }}
+        working-directory: engine
+      - name: Bundle the engine into the app
+        shell: bash
+        run: |
+          exe=openagora; [ "${{ runner.os }}" = Windows ] && exe=openagora.exe
+          cp "engine/target/${{ matrix.target }}/release/$exe" "desktop/resources/bin/$exe"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+        working-directory: desktop
+      - run: npm run typecheck
+        working-directory: desktop
+      - name: Package
+        working-directory: desktop
+        shell: bash
+        env:
+          # Unsigned until signing secrets are configured; see docs/SPEC.md.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run build && npx electron-builder ${{ matrix.builder }} --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenAgora-${{ matrix.name }}
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.exe
+            desktop/release/*.AppImage
+            desktop/release/*.deb
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            *.dmg
+            *.exe
+            *.AppImage
+            *.deb

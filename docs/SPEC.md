@@ -102,7 +102,20 @@ openagora uninstall <id>
 openagora serve               the daemon: local API for the shell + MCP server for Hermes
 ```
 
-`catalog`, `show` and `validate` exist today. The rest is the next milestone.
+All of these exist except `update` and `serve`. Details as built:
+
+- `install` shows the listing and its steps and asks first (`--yes` skips the
+  question; without a terminal it refuses unless `--yes` is given). Downloads
+  come from the app's latest GitHub release and are checked against the SHA-256
+  digest GitHub publishes. Any failure removes the app's folder, so a failed
+  install leaves nothing behind.
+- `start` runs the app detached, in its own process group, with output going
+  to its log. Web apps count as started once their port accepts connections
+  (90 s limit); background apps once they have stayed up for 2 s. If the app
+  exits during startup, `start` fails and prints the end of its log.
+- `stop` sends SIGTERM to the app's process group (Windows: `taskkill /T`),
+  then forces it after 10 s.
+- The built-in agent (`role = "agent"`) cannot be uninstalled.
 
 ### Toolchain
 

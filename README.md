@@ -23,10 +23,10 @@ Early. What exists today:
 - Four listings: [T3 Code](catalog/apps/t3code/app.toml),
   [Hermes](catalog/apps/hermes/app.toml), [Maccy](catalog/apps/maccy/app.toml)
   (clipboard history) and [Handy](catalog/apps/handy/app.toml) (speech-to-text).
-- The `openagora` CLI: `catalog`, `show` and `validate`, with installers for
-  macOS, Linux and Windows.
+- The `openagora` CLI: browse the catalog, and install, start, stop and remove
+  apps, with installers for macOS, Linux and Windows.
 
-Next up is installing and running apps. The full design and roadmap are in
+Next up is the agent: Hermes driving these commands from chat. The full design and roadmap are in
 [docs/SPEC.md](docs/SPEC.md).
 
 ## Install
@@ -54,7 +54,17 @@ Then:
 openagora catalog            # browse the store
 openagora catalog clipboard  # search
 openagora show handy         # what installing it involves on this machine
+openagora install handy      # shows the steps and asks before doing anything
+openagora start handy        # runs it in the background
+openagora ps                 # installed apps and whether they're running
+openagora logs handy         # the app's recent output
+openagora stop handy
+openagora uninstall handy    # stops it and removes its folder
 ```
+
+Apps live in their own folder under `~/Library/Application Support/OpenAgora`
+(macOS), `~/.local/share/openagora` (Linux) or `%APPDATA%\OpenAgora`
+(Windows). Set `OPENAGORA_HOME` to use another location.
 
 The catalog is built into the binary. `--catalog <dir>` reads a local copy
 instead.

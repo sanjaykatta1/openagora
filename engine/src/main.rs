@@ -2,8 +2,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use openagora::apps::{Engine, Status, tail};
 use openagora::catalog::{Catalog, load_listing};
-use openagora::manifest::{Arch, Os};
+use openagora::manifest::{Arch, Manifest, Os};
+use std::io::{BufRead, IsTerminal, Write};
 
 #[derive(Parser)]
 #[command(
@@ -33,6 +35,33 @@ enum Cmd {
     Validate {
         /// Listing folders; defaults to the whole catalog.
         dirs: Vec<PathBuf>,
+    },
+    /// Install an app (asks for confirmation first).
+    Install {
+        id: String,
+        /// Don't ask for confirmation.
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Stop and remove an app (asks for confirmation first).
+    Uninstall {
+        id: String,
+        /// Don't ask for confirmation.
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Start an installed app in the background.
+    Start { id: String },
+    /// Stop a running app.
+    Stop { id: String },
+    /// List installed apps and whether they are running.
+    Ps,
+    /// Show the end of an app's log.
+    Logs {
+        id: String,
+        /// Number of lines.
+        #[arg(short = 'n', long, default_value_t = 50)]
+        lines: usize,
     },
 }
 
@@ -73,38 +102,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Cmd::Show { id } => {
             let catalog = load_catalog(&cli.catalog)?;
-            let l = catalog
-                .listings
-                .get(&id)
-                .ok_or_else(|| anyhow::anyhow!("no app {id:?} in the catalog"))?;
-            let m = &l.manifest;
-            println!(
-                "{} ({})\n{}\nsource:  {}\nlicense: {}",
-                m.name, m.id, m.summary, m.source, m.license
-            );
-            match Os::current() {
-                Some(os) => {
-                    println!("install on {os}:");
-                    for step in m.steps_for(os) {
-                        if let Some(d) = &step.download {
-                            let asset = Arch::current().and_then(|a| d.asset.for_arch(a));
-                            println!(
-                                "  download {} from github.com/{} (latest release)",
-                                asset.unwrap_or("(no build for this CPU)"),
-                                d.github
-                            );
-                        }
-                        println!("  {}", step.run);
-                    }
-                }
-                None => println!("install: this OS is not supported"),
-            }
-            if let Some(agent) = &m.agent {
-                println!("agent access (asked at install):");
-                for p in &agent.permissions {
-                    println!("  [{:?}] {}", p.default, p.description);
-                }
-            }
+            describe(listing(&catalog, &id)?);
         }
         Cmd::Validate { dirs } => {
             if dirs.is_empty() {
@@ -117,6 +115,130 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 }
             }
         }
+        Cmd::Install { id, yes } => {
+            let catalog = load_catalog(&cli.catalog)?;
+            let m = listing(&catalog, &id)?;
+            let engine = Engine::new()?;
+            describe(m);
+            if !confirm(&format!("Install {}?", m.name), yes)? {
+                println!("Nothing was installed.");
+                return Ok(());
+            }
+            engine.install(m)?;
+            println!(
+                "Installed {}. Start it with: openagora start {}",
+                m.name, m.id
+            );
+        }
+        Cmd::Uninstall { id, yes } => {
+            let catalog = load_catalog(&cli.catalog)?;
+            let m = listing(&catalog, &id)?;
+            let engine = Engine::new()?;
+            if !confirm(&format!("Remove {} and its folder?", m.name), yes)? {
+                println!("Nothing was removed.");
+                return Ok(());
+            }
+            engine.uninstall(m)?;
+            println!("Removed {}.", m.name);
+        }
+        Cmd::Start { id } => {
+            let catalog = load_catalog(&cli.catalog)?;
+            let m = listing(&catalog, &id)?;
+            let running = Engine::new()?.start(m)?;
+            match &running.url {
+                Some(url) => println!("{} is running at {url} (pid {})", m.name, running.pid),
+                None => println!("{} is running (pid {})", m.name, running.pid),
+            }
+        }
+        Cmd::Stop { id } => {
+            let catalog = load_catalog(&cli.catalog)?;
+            let m = listing(&catalog, &id)?;
+            if Engine::new()?.stop(m)? {
+                println!("Stopped {}.", m.name);
+            } else {
+                println!("{} was not running.", m.name);
+            }
+        }
+        Cmd::Ps => {
+            let catalog = load_catalog(&cli.catalog)?;
+            let engine = Engine::new()?;
+            let mut any = false;
+            for (id, l) in &catalog.listings {
+                if engine.installed(id)?.is_none() {
+                    continue;
+                }
+                any = true;
+                match engine.status(id)? {
+                    Status::Running(r) => println!(
+                        "{id:<10} running  pid {:<7} {}",
+                        r.pid,
+                        r.url.as_deref().unwrap_or("(background)")
+                    ),
+                    Status::Stopped => println!("{id:<10} stopped  {}", l.manifest.name),
+                }
+            }
+            if !any {
+                println!("No apps installed. Browse with: openagora catalog");
+            }
+        }
+        Cmd::Logs { id, lines } => {
+            let engine = Engine::new()?;
+            println!("{}", tail(&engine.paths.log_file(&id), lines)?);
+        }
     }
     Ok(())
+}
+
+fn listing<'a>(catalog: &'a Catalog, id: &str) -> anyhow::Result<&'a Manifest> {
+    catalog
+        .listings
+        .get(id)
+        .map(|l| &l.manifest)
+        .ok_or_else(|| anyhow::anyhow!("no app {id:?} in the catalog (try: openagora catalog)"))
+}
+
+fn describe(m: &Manifest) {
+    println!(
+        "{} ({})\n{}\nsource:  {}\nlicense: {}",
+        m.name, m.id, m.summary, m.source, m.license
+    );
+    match Os::current() {
+        Some(os) if m.platforms.contains(&os) => {
+            println!("install on {os}:");
+            for step in m.steps_for(os) {
+                if let Some(d) = &step.download {
+                    let asset = Arch::current().and_then(|a| d.asset.for_arch(a));
+                    println!(
+                        "  download {} from github.com/{} (latest release)",
+                        asset.unwrap_or("(no build for this CPU)"),
+                        d.github
+                    );
+                }
+                println!("  {}", step.run);
+            }
+        }
+        Some(os) => println!("not available on {os}"),
+        None => println!("install: this OS is not supported"),
+    }
+    if let Some(agent) = &m.agent {
+        println!("agent access (asked at install):");
+        for p in &agent.permissions {
+            println!("  [{:?}] {}", p.default, p.description);
+        }
+    }
+}
+
+/// Asks a yes/no question; without a terminal, only `--yes` proceeds.
+fn confirm(question: &str, yes: bool) -> anyhow::Result<bool> {
+    if yes {
+        return Ok(true);
+    }
+    if !std::io::stdin().is_terminal() {
+        anyhow::bail!("{question} Run again with --yes to confirm without a terminal.");
+    }
+    print!("{question} [y/N] ");
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().lock().read_line(&mut answer)?;
+    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
 }

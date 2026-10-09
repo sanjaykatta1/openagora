@@ -1,0 +1,42 @@
+schema = "openagora/v1"
+id = "hermes"
+name = "Hermes"
+summary = "Nous Research's agent with persistent memory. OpenAgora's built-in agent across all apps."
+category = "agents"
+homepage = "https://hermes-agent.nousresearch.com"
+source = "https://github.com/NousResearch/hermes-agent"
+license = "MIT"
+platforms = ["macos", "linux", "windows"]
+# Installed with OpenAgora itself and cannot be removed: it is the agent that
+# talks to every other app.
+role = "agent"
+
+[install]
+provides = "hermes"
+
+# The official installer creates a self-updating checkout under ~/.hermes with
+# every extra, including the MCP support OpenAgora relies on.
+[[install.steps]]
+os = ["macos", "linux"]
+shell = "sh"
+run = "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash"
+
+[[install.steps]]
+os = ["windows"]
+shell = "powershell"
+run = "iex (irm https://hermes-agent.nousresearch.com/install.ps1)"
+
+[update]
+run = "hermes update"
+
+[run]
+command = "hermes"
+args = ["dashboard", "--host", "127.0.0.1", "--port", "{port}", "--no-open"]
+port = "auto"
+
+[run.health]
+tcp = true
+
+[ui]
+kind = "web"
+url = "http://127.0.0.1:{port}/"

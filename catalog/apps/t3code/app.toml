@@ -1,0 +1,58 @@
+schema = "openagora/v1"
+id = "t3code"
+name = "T3 Code"
+summary = "Run coding agents (Codex, Claude Code, OpenCode and more) in threads, each in its own worktree."
+category = "coding"
+homepage = "https://t3.codes"
+source = "https://github.com/pingdotgg/t3code"
+license = "MIT"
+platforms = ["macos", "linux", "windows"]
+
+[install]
+provides = "t3"
+
+# T3 Code's own installer, so `t3 update` keeps working. It installs `t3` into
+# ~/.local/bin rather than an app-scoped folder; isolation comes later.
+[[install.steps]]
+os = ["macos", "linux"]
+shell = "sh"
+run = "curl -fsSL https://t3.codes/install.sh | sh"
+
+[[install.steps]]
+os = ["windows"]
+shell = "powershell"
+run = "irm https://t3.codes/install.ps1 | iex"
+
+[update]
+run = "t3 update"
+
+[uninstall]
+run = "t3 uninstall"
+
+[run]
+command = "t3"
+args = ["serve", "--host", "127.0.0.1", "--port", "{port}"]
+port = "auto"
+
+[run.health]
+tcp = true
+
+[ui]
+kind = "web"
+url = "http://127.0.0.1:{port}/"
+
+# T3 Code's official route for agents it did not start (docs/user/outside-agents.md).
+# The first connection opens T3's own approval page.
+[agent.mcp]
+url = "http://127.0.0.1:{port}/mcp"
+auth = "oauth"
+
+[[agent.permissions]]
+id = "read"
+description = "Read your projects and threads, and see available providers and models"
+default = "granted"
+
+[[agent.permissions]]
+id = "act"
+description = "Start, message and stop threads in every project"
+default = "ask"

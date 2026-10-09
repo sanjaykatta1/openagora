@@ -1,0 +1,21 @@
+[package]
+name = "openagora"
+version = "0.1.0"
+edition = "2024"
+description = "OpenAgora engine: installs, runs and supervises open-source apps from the OpenAgora catalog."
+license = "MIT"
+repository = "https://github.com/sanjaykatta1/openagora"
+rust-version = "1.85"
+
+[[bin]]
+name = "openagora"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3"

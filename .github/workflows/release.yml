@@ -1,16 +1,24 @@
 name: release
-# Tag a version (git tag v0.1.0 && git push origin v0.1.0) to build the
-# `openagora` binaries and publish them as a GitHub release, which is what
-# install.sh and install.ps1 download.
+# Builds the `openagora` binaries and publishes them as a GitHub release, which
+# is what install.sh and install.ps1 download. Start it either way:
+#   - push a tag: git tag v0.1.0 && git push origin v0.1.0
+#   - Actions -> release -> Run workflow, entering the version; the release
+#     creates the tag on the commit it built.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to create, e.g. v0.1.0"
+        required: true
 
 permissions:
   contents: write
 
 jobs:
   build:
+    if: github.event_name == 'push' || startsWith(inputs.version, 'v')
     strategy:
       fail-fast: false
       matrix:
@@ -60,5 +68,7 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+          target_commitish: ${{ github.sha }}
           files: openagora-*
           generate_release_notes: true

@@ -69,7 +69,8 @@ cargo install --path .
 
 ## Release
 
-Push a tag such as `v0.1.0`. The release workflow builds macOS (Apple Silicon
+Push a tag such as `v0.1.0`, or run the **release** workflow from the Actions
+tab and enter the version. It builds macOS (Apple Silicon
 and Intel), Linux (x64 and ARM, static) and Windows binaries and publishes them
 with checksums, which is what the installers download.
 

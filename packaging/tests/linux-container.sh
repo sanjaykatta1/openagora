@@ -18,7 +18,7 @@ case "$package" in
   *.apk) apk add --no-network --allow-untrusted "$package" ;;
   *) echo 'Unknown package format' >&2; exit 1 ;;
 esac
-[ "$(command -v openagora)" = /usr/bin/openagora ]
+[ "$(readlink -f "$(command -v openagora)")" = /usr/bin/openagora ]
 [ "$(openagora --version)" = "openagora $EXPECTED_VERSION" ]
 openagora catalog
 [ -f /usr/share/licenses/openagora/LICENSE ]
@@ -32,5 +32,7 @@ case "$package" in
 esac
 [ ! -e /usr/bin/openagora ]
 [ ! -e /usr/share/licenses/openagora/LICENSE ]
+# Discard the shell's cached executable path after package removal.
+hash -r
 if command -v openagora; then echo "Unexpected openagora on PATH" >&2; exit 1; fi
 printf 'Install, version, catalog and uninstall passed on %s.\n' "$expected_machine"

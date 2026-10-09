@@ -1,0 +1,23 @@
+# Binary package for the existing v0.1.0 release. Update BOTH pinned digests for each release.
+pkgname=openagora-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Browse and validate the OpenAgora catalog of open-source desktop apps'
+arch=('x86_64' 'aarch64')
+url='https://github.com/sanjaykatta1/openagora'
+license=('MIT')
+provides=('openagora')
+conflicts=('openagora')
+depends=()
+options=('!strip' '!debug')
+source_x86_64=("openagora-${pkgver}-x86_64.tar.gz::${url}/releases/download/v${pkgver}/openagora-x86_64-unknown-linux-musl.tar.gz")
+source_aarch64=("openagora-${pkgver}-aarch64.tar.gz::${url}/releases/download/v${pkgver}/openagora-aarch64-unknown-linux-musl.tar.gz")
+sha256sums_x86_64=('b3c2cf409f6e6677b242d15859cb92b2d7ff2e0df31ad63b920a652aee50f288')
+sha256sums_aarch64=('e66e65624815912240c3989b5de8dc46741e9dead814d8aefcf904c4d878ed9e')
+# The tarballs contain only the binary. Keep the license alongside this recipe.
+source=('LICENSE')
+sha256sums=('d5933687aac1f556e61fcb544f40705c9c3dd6079e908f2582add4bd168e45e9')
+package() {
+  install -Dm755 "$srcdir/openagora" "$pkgdir/usr/bin/openagora"
+  install -Dm644 "$srcdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -93,8 +93,8 @@ repository. Local signing can alternatively use `NOTARY_KEY_PATH`,
 
 ## Install verification and publication
 
-The release workflow runs on PRs and on the `native-installers` development
-branch, building artifacts and running clean install/run/uninstall tests. These
+The release workflow runs on PRs, building artifacts and running clean
+install/run/uninstall tests. These
 events cannot publish. Tag pushes and publishing workflow dispatches also run
 all tests before publication. A dispatch's version must match Cargo; choose
 `publish: false` for a rehearsal. The `install-tests` job blocks publication if
@@ -112,8 +112,12 @@ packaging/tests/linux.sh debian:stable amd64 dist/openagora_0.1.0-1_amd64.deb
 On Windows, from an elevated PowerShell session:
 
 ```powershell
-packaging/tests/windows.ps1 -Msi dist/OpenAgora-0.1.0-x64.msi
+packaging/tests/windows.ps1 -Msi dist/OpenAgora-0.1.0-x64.msi -TestUpgrade
 ```
+
+The Windows CI test additionally builds an older-version MSI fixture from the same
+executable to verify major upgrades and subsequent uninstall. The fixture is not
+a release artifact.
 
 ## Publishing `openagora-bin` to the AUR (manual, not performed by CI)
 

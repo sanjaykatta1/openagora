@@ -1,10 +1,9 @@
 name: release
-# Pull requests and this development branch build/test only. Publication is gated
+# Pull requests build/test only. Publication is gated
 # on every install test and requires a v* tag or an explicit publishing dispatch.
 on:
   push:
     tags: ['v*']
-    branches: [native-installers]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -225,14 +224,18 @@ jobs:
         with:
           name: binaries-x86_64-pc-windows-msvc
           path: dist
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: dotnet tool install wix --tool-path .tools/wix --version 4.0.6
       - name: Silent install and uninstall, including fresh-shell PATH checks
         shell: pwsh
-        run: packaging/tests/windows.ps1 -Msi (Get-ChildItem dist/*.msi).FullName
+        run: packaging/tests/windows.ps1 -Msi (Get-ChildItem dist/*.msi).FullName -TestUpgrade
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: windows-install-logs
-          path: dist/test-logs
+          path: dist/test-logs/*.log
 
   install-test-macos:
     needs: [macos-package, version]

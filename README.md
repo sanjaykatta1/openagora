@@ -31,6 +31,32 @@ Next up is installing and running apps. The full design and roadmap are in
 
 ## Install
 
+Native installers install the CLI for all users. Choose your CPU architecture
+on the [latest release page](https://github.com/sanjaykatta1/openagora/releases/latest).
+For version `<version>`, links follow
+`https://github.com/sanjaykatta1/openagora/releases/download/v<version>/<filename>`.
+Each download has an adjacent `.sha256` checksum file.
+
+| Platform | Download filename | Install |
+|---|---|---|
+| macOS, Apple Silicon + Intel | `OpenAgora-<version>.pkg` (universal, signed and notarized on official builds) | Double-click the `.pkg` |
+| Windows x64 | `OpenAgora-<version>-x64.msi` | Double-click the `.msi` |
+| Debian / Ubuntu | `openagora_<version>-1_<amd64 or arm64>.deb` | `sudo apt install ./openagora_*.deb` |
+| Fedora / RHEL / openSUSE | `openagora-<version>-1.<x86_64 or aarch64>.rpm` | `sudo dnf install ./openagora-*.rpm` (openSUSE: `sudo zypper install ./openagora-*.rpm`) |
+| Arch / derivatives | `openagora-<version>-1-<x86_64 or aarch64>.pkg.tar.zst` | `sudo pacman -U openagora-*.pkg.tar.zst` |
+| Alpine | `openagora-<version>-r1.<x86_64 or aarch64>.apk` | `sudo apk add --allow-untrusted openagora-*.apk` |
+| Other Linux | `openagora-<x86_64 or aarch64>-unknown-linux-musl.tar.gz` | Use the one-line installer below |
+
+Keep just the intended package in the directory when using these wildcard commands.
+The Windows installer is **unsigned for now**. If SmartScreen appears, choose
+**More info → Run anyway** after verifying you downloaded the official release.
+The Windows installation adds `C:\Program Files\OpenAgora` to the system PATH;
+open a new terminal after installing. macOS installs to `/usr/local/bin/openagora`,
+and Linux packages install to `/usr/bin/openagora`. Fork builds without Apple
+credentials produce unsigned macOS packages, clearly marked in their build logs.
+
+For a per-user installation, the existing one-line installers remain available.
+
 macOS and Linux:
 
 ```sh
@@ -59,6 +85,18 @@ openagora show handy         # what installing it involves on this machine
 The catalog is built into the binary. `--catalog <dir>` reads a local copy
 instead.
 
+### Uninstall
+
+- macOS `.pkg`: `sudo rm /usr/local/bin/openagora && sudo pkgutil --forget app.openagora.cli`
+- Windows `.msi`: **Settings → Apps → Installed apps → OpenAgora → Uninstall**.
+- Debian / Ubuntu: `sudo apt remove openagora`
+- Fedora / RHEL: `sudo dnf remove openagora`; openSUSE: `sudo zypper remove openagora`
+- Arch: `sudo pacman -R openagora` (use `openagora-bin` if installed from the AUR recipe)
+- Alpine: `sudo apk del openagora`
+- macOS / Linux one-line installer: `rm ~/.local/bin/openagora`
+- Windows one-line installer: remove `%LOCALAPPDATA%\OpenAgora\bin\openagora.exe`
+  and remove that directory from your **user** PATH in Environment Variables.
+
 ## Build from source
 
 ```sh
@@ -72,7 +110,11 @@ cargo install --path .
 Push a tag such as `v0.1.0`, or run the **release** workflow from the Actions
 tab and enter the version. It builds macOS (Apple Silicon
 and Intel), Linux (x64 and ARM, static) and Windows binaries and publishes them
-with checksums, which is what the installers download.
+with checksums, which is what the one-line installers download. It also builds
+native packages and runs install, command and uninstall checks before publishing.
+Pull requests build and test packages without creating a release or tag.
+See [packaging/README.md](packaging/README.md) for local builds, signing secrets,
+and the manual steps to publish the included `openagora-bin` AUR recipe.
 
 ## Add an app
 

@@ -1,0 +1,36 @@
+schema = "openagora/v1"
+id = "artcraft"
+name = "ArtCraft"
+summary = "Create AI images and videos with 2D composition and 3D scene tools. Source-available under a custom fair-source license; model services may require accounts or payment."
+category = "creative"
+homepage = "https://getartcraft.com"
+source = "https://github.com/storytold/artcraft"
+# Upstream explicitly uses a custom fair-source license, not an OSI license.
+# See https://github.com/storytold/artcraft/blob/main/LICENSE.md.
+license = "ArtCraft License (fair source)"
+# The official universal archive supports Apple Silicon and Intel. Windows
+# installers exist upstream; enable them once their installation and cleanup
+# are supported and verified. Upstream currently publishes no Linux package.
+platforms = ["macos"]
+
+[install]
+provides = "{app_dir}/ArtCraft.app/Contents/MacOS/artcraft"
+
+[[install.steps]]
+os = ["macos"]
+shell = "sh"
+download = { github = "storytold/artcraft", asset = "ArtCraft_universal.app.tar.gz" }
+run = "tar -xzf '{download}' -C '{app_dir}'"
+
+# Preserve the upstream app bundle and launch its real native window. There is
+# no declared MCP integration, and no agent access or paid generation is granted.
+# OpenAgora's normal uninstall removes its isolated app folder, leaving the
+# user's ArtCraft projects/settings untouched.
+[run]
+command = "{app_dir}/ArtCraft.app/Contents/MacOS/artcraft"
+
+[run.health]
+process = true
+
+[ui]
+kind = "window"

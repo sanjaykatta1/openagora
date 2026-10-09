@@ -20,9 +20,11 @@ markets and messengers.
 Early. What exists today:
 
 - The listing format and its validator ([`engine/src/manifest.rs`](engine/src/manifest.rs)).
-- Four listings: [T3 Code](catalog/apps/t3code/app.toml),
+- Five listings: [T3 Code](catalog/apps/t3code/app.toml),
   [Hermes](catalog/apps/hermes/app.toml), [Maccy](catalog/apps/maccy/app.toml)
-  (clipboard history) and [Handy](catalog/apps/handy/app.toml) (speech-to-text).
+  (clipboard history), [Handy](catalog/apps/handy/app.toml) (speech-to-text), and
+  [ArtCraft](catalog/apps/artcraft/app.toml) (AI image/video creation on macOS).
+  ArtCraft uses a custom fair-source license, shown in its listing.
 - The desktop app ([`desktop/`](desktop)): a Store to search and browse apps,
   app pages showing what installing does, one-click install with a
   confirmation, a Library to start and stop apps, and web apps opening in tabs

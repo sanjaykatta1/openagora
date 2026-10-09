@@ -94,6 +94,9 @@ jobs:
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
           MACOS_NOTARIZE: ${{ github.event_name != 'pull_request' }}
+          # Electron Builder otherwise skips signing on every PR, even when
+          # GitHub has supplied credentials for a same-repository branch.
+          CSC_FOR_PULL_REQUEST: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
           ARCH: ${{ matrix.arch }}
         run: packaging/macos/ci-build.sh --desktop "$ARCH"
       - name: Checksum desktop installers

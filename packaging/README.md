@@ -101,6 +101,13 @@ all tests before publication. A dispatch's version must match Cargo; choose
 any platform fails or is skipped. Signed macOS builds also check signature,
 Gatekeeper acceptance and stapling on both Apple Silicon and Intel runners.
 
+Arch x86_64 uses `archlinux:latest`. That official Docker image has no ARM64
+variant, so the native `ubuntu-24.04-arm` job imports the official Arch Linux ARM
+generic root filesystem from an HTTPS mirror. `tests/archlinuxarm-image.sh`
+verifies its detached signature against the published build-system public-key
+fingerprint before importing it. Both architectures run the same package tests.
+The root filesystem is only a disposable test image; it is never published.
+
 Local install tests change system files. They reject an existing OpenAgora
 installation rather than overwrite it:
 

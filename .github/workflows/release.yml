@@ -200,7 +200,13 @@ jobs:
 
   install-test-arch:
     needs: build
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, target: x86_64-unknown-linux-musl, os: ubuntu-latest, image: 'archlinux:latest' }
+          - { arch: arm64, target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm, image: 'openagora-archlinuxarm:test' }
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -208,9 +214,16 @@ jobs:
           python-version: '3.12'
       - uses: actions/download-artifact@v4
         with:
-          name: binaries-x86_64-unknown-linux-musl
+          name: binaries-${{ matrix.target }}
           path: dist
-      - run: packaging/tests/linux.sh archlinux:latest amd64 dist/*.pkg.tar.zst
+      - name: Import verified official Arch Linux ARM root filesystem
+        if: matrix.arch == 'arm64'
+        run: packaging/tests/archlinuxarm-image.sh
+      - name: Install, run and uninstall Arch package natively
+        env:
+          IMAGE: ${{ matrix.image }}
+          ARCH: ${{ matrix.arch }}
+        run: packaging/tests/linux.sh "$IMAGE" "$ARCH" dist/*.pkg.tar.zst
 
   install-test-windows:
     needs: build

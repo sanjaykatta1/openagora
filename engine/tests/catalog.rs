@@ -41,6 +41,14 @@ fn shipped_catalog_is_valid() {
 }
 
 #[test]
+fn embedded_catalog_matches_repo() {
+    let embedded = Catalog::embedded().unwrap();
+    let on_disk = Catalog::load(repo_catalog()).unwrap();
+    let ids = |c: &Catalog| c.listings.keys().cloned().collect::<Vec<_>>();
+    assert_eq!(ids(&embedded), ids(&on_disk));
+}
+
+#[test]
 fn search_matches_name_and_category() {
     let catalog = Catalog::load(repo_catalog()).unwrap();
     let ids = |q: &str| {

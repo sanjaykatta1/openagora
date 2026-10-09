@@ -23,24 +23,60 @@ Early. What exists today:
 - Four listings: [T3 Code](catalog/apps/t3code/app.toml),
   [Hermes](catalog/apps/hermes/app.toml), [Maccy](catalog/apps/maccy/app.toml)
   (clipboard history) and [Handy](catalog/apps/handy/app.toml) (speech-to-text).
-- The `openagora` CLI: `catalog`, `show` and `validate`.
+- The `openagora` CLI: `catalog`, `show` and `validate`, with installers for
+  macOS, Linux and Windows.
 
 Next up is installing and running apps. The full design and roadmap are in
 [docs/SPEC.md](docs/SPEC.md).
 
-## Try the CLI
+## Install
+
+macOS and Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sanjaykatta1/openagora/main/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/sanjaykatta1/openagora/main/install.ps1 | iex
+```
+
+The installer downloads the `openagora` binary for your system from the latest
+[release](https://github.com/sanjaykatta1/openagora/releases), checks its SHA-256
+checksum, and puts it in `~/.local/bin` (`%LOCALAPPDATA%\OpenAgora\bin` on
+Windows). Set `OPENAGORA_VERSION=v0.1.0` to pin a version.
+
+Then:
+
+```sh
+openagora catalog            # browse the store
+openagora catalog clipboard  # search
+openagora show handy         # what installing it involves on this machine
+```
+
+The catalog is built into the binary. `--catalog <dir>` reads a local copy
+instead.
+
+## Build from source
 
 ```sh
 cd engine
-cargo run -- --catalog ../catalog catalog
-cargo run -- --catalog ../catalog show t3code
 cargo test
+cargo install --path .
 ```
+
+## Release
+
+Push a tag such as `v0.1.0`. The release workflow builds macOS (Apple Silicon
+and Intel), Linux (x64 and ARM, static) and Windows binaries and publishes them
+with checksums, which is what the installers download.
 
 ## Add an app
 
 1. Create `catalog/apps/<id>/app.toml`; the existing listings are the template.
-2. Run `cargo run -- --catalog ../catalog validate` from `engine/`.
+2. Run `openagora --catalog catalog validate` from the repo root.
 3. Open a pull request.
 
 Listings must install from the app's official source and declare what the

@@ -12,9 +12,10 @@ use openagora::manifest::{Arch, Os};
     about = "Install and run open-source apps from the OpenAgora catalog"
 )]
 struct Cli {
-    /// Catalog folder (contains apps/<id>/app.toml).
-    #[arg(long, global = true, default_value = "catalog")]
-    catalog: PathBuf,
+    /// Read listings from this folder (contains apps/<id>/app.toml) instead of
+    /// the catalog built into this binary.
+    #[arg(long, global = true)]
+    catalog: Option<PathBuf>,
     #[command(subcommand)]
     command: Cmd,
 }
@@ -45,10 +46,17 @@ fn main() -> ExitCode {
     }
 }
 
+fn load_catalog(dir: &Option<PathBuf>) -> anyhow::Result<Catalog> {
+    match dir {
+        Some(dir) => Catalog::load(dir),
+        None => Catalog::embedded(),
+    }
+}
+
 fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Cmd::Catalog { query } => {
-            let catalog = Catalog::load(&cli.catalog)?;
+            let catalog = load_catalog(&cli.catalog)?;
             let listings = match &query {
                 Some(q) => catalog.search(q),
                 None => catalog.listings.values().collect(),
@@ -64,7 +72,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             }
         }
         Cmd::Show { id } => {
-            let catalog = Catalog::load(&cli.catalog)?;
+            let catalog = load_catalog(&cli.catalog)?;
             let l = catalog
                 .listings
                 .get(&id)
@@ -100,7 +108,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Cmd::Validate { dirs } => {
             if dirs.is_empty() {
-                let catalog = Catalog::load(&cli.catalog)?;
+                let catalog = load_catalog(&cli.catalog)?;
                 println!("{} listing(s) valid", catalog.listings.len());
             } else {
                 for dir in &dirs {

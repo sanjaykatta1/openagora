@@ -1,0 +1,64 @@
+name: release
+# Tag a version (git tag v0.1.0 && git push origin v0.1.0) to build the
+# `openagora` binaries and publish them as a GitHub release, which is what
+# install.sh and install.ps1 download.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          # musl builds are static, so they run on any Linux distribution.
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - if: contains(matrix.target, 'linux-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+        working-directory: engine
+      - name: Package
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          name="openagora-${{ matrix.target }}.tar.gz"
+          tar -czf "$name" -C "engine/target/${{ matrix.target }}/release" openagora
+          shasum -a 256 "$name" > "$name.sha256"
+      - name: Package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "openagora-${{ matrix.target }}.zip"
+          Compress-Archive -Path "engine/target/${{ matrix.target }}/release/openagora.exe" -DestinationPath $name
+          $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name" | Out-File -Encoding ascii -NoNewline "$name.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: openagora-*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: openagora-*
+          generate_release_notes: true

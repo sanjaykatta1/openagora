@@ -19,8 +19,23 @@ pub struct Catalog {
     pub listings: BTreeMap<String, Listing>,
 }
 
+mod embedded {
+    include!(concat!(env!("OUT_DIR"), "/embedded_catalog.rs"));
+}
+
 impl Catalog {
-    /// Loads every listing, failing with all problems at once rather than the first.
+    /// The catalog snapshot built into this binary.
+    pub fn embedded() -> Result<Catalog> {
+        Catalog::collect(embedded::EMBEDDED.iter().map(|(folder, text)| {
+            parse_listing(
+                PathBuf::from(format!("<built-in>/{folder}/app.toml")),
+                folder,
+                text,
+            )
+        }))
+    }
+
+    /// Loads every listing under `<root>/apps`.
     pub fn load(root: &Path) -> Result<Catalog> {
         let apps = root.join("apps");
         let mut entries: Vec<PathBuf> = fs::read_dir(&apps)
@@ -29,17 +44,21 @@ impl Catalog {
             .filter(|p| p.is_dir())
             .collect();
         entries.sort();
+        Catalog::collect(entries.iter().map(|dir| load_listing(dir)))
+    }
 
+    /// Reports every problem at once rather than stopping at the first.
+    fn collect(listings: impl Iterator<Item = Result<Listing>>) -> Result<Catalog> {
         let mut catalog = Catalog::default();
         let mut errors = Vec::new();
-        for dir in entries {
-            match load_listing(&dir) {
+        for listing in listings {
+            match listing {
                 Ok(listing) => {
                     let id = listing.manifest.id.clone();
                     if let Some(existing) = catalog.listings.get(&id) {
                         errors.push(format!(
                             "{}: id {id:?} already used by {}",
-                            dir.display(),
+                            listing.path.display(),
                             existing.path.display()
                         ));
                     } else {
@@ -72,9 +91,13 @@ impl Catalog {
 pub fn load_listing(dir: &Path) -> Result<Listing> {
     let path = dir.join("app.toml");
     let text = fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let manifest =
-        Manifest::parse(&text).map_err(|e| anyhow::anyhow!("{}:\n{e}", path.display()))?;
     let folder = dir.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    parse_listing(path.clone(), folder, &text)
+}
+
+fn parse_listing(path: PathBuf, folder: &str, text: &str) -> Result<Listing> {
+    let manifest =
+        Manifest::parse(text).map_err(|e| anyhow::anyhow!("{}:\n{e}", path.display()))?;
     if folder != manifest.id {
         bail!(
             "{}: id {:?} must match its folder {folder:?}",

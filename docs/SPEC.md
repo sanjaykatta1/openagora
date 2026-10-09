@@ -60,19 +60,23 @@ A listing describes an app in four parts. The full schema is in
 | Section | Says |
 |---|---|
 | top level | id, name, summary, category, homepage, source, license, platforms, role |
-| `[install]` | the executable it provides, plus ordered steps per OS |
+| `[install]` | what it provides (an executable on PATH or a path under `{app_dir}`), plus ordered steps per OS; a step can first download a file from the app's latest GitHub release, picked per CPU |
 | `[update]`, `[uninstall]` | the app's own commands for these |
-| `[run]` | command and args, port (`auto` or fixed), health check |
-| `[ui]` | `web` (tab), `terminal` (terminal tab) or `window` (own window), plus URL |
+| `[run]` | command (same everywhere or per OS) and args, port (`auto`, fixed, or none), health check (`tcp` or `process`) |
+| `[ui]` | `web` (tab), `terminal` (terminal tab), `window` (own window) or `background` (menu-bar, tray or shortcut utility), plus URL for `web` |
 | `[agent]` | the app's MCP URL and auth, plus the permissions Hermes asks for |
 
-`{port}` in args and URLs is replaced with the port the engine allocates.
+Placeholders the engine fills in: `{app_dir}` (the app's own folder under
+OpenAgora's data directory), `{download}` (the file a step downloaded) and
+`{port}` (the allocated port). Unknown placeholders are errors.
 
 Rules the validator enforces:
 
 - Unknown fields are errors, so a typo never reads as a working setting.
 - Every listed platform has at least one install step.
 - UI and MCP URLs point at `127.0.0.1` or `localhost`.
+- Downloads come only from the repository named in the listing's `source`.
+- `provides` and `run.command` cover every listed platform.
 - The agent listing (`role = "agent"`) cannot declare uninstall.
 
 ### Catalog governance

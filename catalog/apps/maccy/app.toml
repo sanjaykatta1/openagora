@@ -1,0 +1,31 @@
+schema = "openagora/v1"
+id = "maccy"
+name = "Maccy"
+summary = "Lightweight clipboard manager: keeps your copy history so you can search it and paste earlier items. Needs macOS 14 or later."
+category = "utilities"
+homepage = "https://maccy.app"
+source = "https://github.com/p0deje/Maccy"
+license = "MIT"
+platforms = ["macos"]
+
+[install]
+provides = "{app_dir}/Maccy.app"
+
+# The official release build, unpacked into Maccy's own folder. No Homebrew
+# and no admin rights needed.
+[[install.steps]]
+os = ["macos"]
+shell = "sh"
+download = { github = "p0deje/Maccy", asset = "Maccy.app.zip" }
+run = "ditto -x -k '{download}' '{app_dir}'"
+
+# A menu-bar app: Shift+Cmd+C opens the history. Nothing to show in a tab, and
+# no MCP server, so the agent can install, start and stop it but not read it.
+[run]
+command = "{app_dir}/Maccy.app/Contents/MacOS/Maccy"
+
+[run.health]
+process = true
+
+[ui]
+kind = "background"

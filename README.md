@@ -20,8 +20,9 @@ markets and messengers.
 Early. What exists today:
 
 - The listing format and its validator ([`engine/src/manifest.rs`](engine/src/manifest.rs)).
-- The first two listings: [T3 Code](catalog/apps/t3code/app.toml) and
-  [Hermes](catalog/apps/hermes/app.toml).
+- Four listings: [T3 Code](catalog/apps/t3code/app.toml),
+  [Hermes](catalog/apps/hermes/app.toml), [Maccy](catalog/apps/maccy/app.toml)
+  (clipboard history) and [Handy](catalog/apps/handy/app.toml) (speech-to-text).
 - The `openagora` CLI: `catalog`, `show` and `validate`.
 
 Next up is installing and running apps. The full design and roadmap are in

@@ -10,8 +10,14 @@ use std::fmt;
 use serde::Deserialize;
 
 pub const SCHEMA: &str = "openagora/v1";
-/// Placeholder the engine replaces with the port it allocated for the app.
-pub const PORT_PLACEHOLDER: &str = "{port}";
+
+/// Placeholders the engine fills in, and where each may appear.
+/// `{app_dir}`: the app's own folder under OpenAgora's data directory.
+/// `{download}`: the file a step's `download` fetched.
+/// `{port}`: the port the engine allocated.
+const STEP_PLACEHOLDERS: &[&str] = &["app_dir", "download"];
+const RUN_PLACEHOLDERS: &[&str] = &["app_dir", "port"];
+const URL_PLACEHOLDERS: &[&str] = &["port"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -42,6 +48,105 @@ impl fmt::Display for Os {
     }
 }
 
+/// A value that is either the same everywhere or set per OS.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum PerOs<T> {
+    All(T),
+    ByOs(ByOs<T>),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ByOs<T> {
+    pub macos: Option<T>,
+    pub linux: Option<T>,
+    pub windows: Option<T>,
+}
+
+impl<T> PerOs<T> {
+    pub fn for_os(&self, os: Os) -> Option<&T> {
+        match self {
+            PerOs::All(value) => Some(value),
+            PerOs::ByOs(by) => match os {
+                Os::Macos => by.macos.as_ref(),
+                Os::Linux => by.linux.as_ref(),
+                Os::Windows => by.windows.as_ref(),
+            },
+        }
+    }
+
+    fn values(&self) -> Vec<&T> {
+        match self {
+            PerOs::All(value) => vec![value],
+            PerOs::ByOs(by) => [&by.macos, &by.linux, &by.windows]
+                .into_iter()
+                .flatten()
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arch {
+    X64,
+    Arm64,
+}
+
+impl Arch {
+    pub fn current() -> Option<Arch> {
+        match std::env::consts::ARCH {
+            "x86_64" => Some(Arch::X64),
+            "aarch64" => Some(Arch::Arm64),
+            _ => None,
+        }
+    }
+}
+
+/// A release asset name, the same for every CPU or set per CPU.
+/// `*` matches the version, e.g. `Handy_*_amd64.AppImage`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum Asset {
+    Any(String),
+    ByArch {
+        x64: Option<String>,
+        arm64: Option<String>,
+    },
+}
+
+impl Asset {
+    pub fn for_arch(&self, arch: Arch) -> Option<&str> {
+        match self {
+            Asset::Any(name) => Some(name),
+            Asset::ByArch { x64, arm64 } => match arch {
+                Arch::X64 => x64.as_deref(),
+                Arch::Arm64 => arm64.as_deref(),
+            },
+        }
+    }
+
+    fn patterns(&self) -> Vec<&str> {
+        match self {
+            Asset::Any(name) => vec![name],
+            Asset::ByArch { x64, arm64 } => [x64, arm64]
+                .into_iter()
+                .flatten()
+                .map(String::as_str)
+                .collect(),
+        }
+    }
+}
+
+/// Fetch a file from the latest GitHub release before running the step.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Download {
+    /// `owner/repo`; must be the app's own repository.
+    pub github: String,
+    pub asset: Asset,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
@@ -63,14 +168,16 @@ pub enum Shell {
 pub struct Step {
     pub os: Vec<Os>,
     pub shell: Shell,
+    pub download: Option<Download>,
     pub run: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Install {
-    /// Executable the install puts on PATH; the engine checks for it afterwards.
-    pub provides: String,
+    /// What the install leaves behind, checked afterwards: an executable name on
+    /// PATH, or a path under `{app_dir}`.
+    pub provides: PerOs<String>,
     pub steps: Vec<Step>,
 }
 
@@ -86,16 +193,20 @@ pub struct Health {
     /// Healthy once the allocated port accepts TCP connections.
     #[serde(default)]
     pub tcp: bool,
+    /// Healthy while the started process is alive (apps without a port).
+    #[serde(default)]
+    pub process: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Run {
-    pub command: String,
+    pub command: PerOs<String>,
     #[serde(default)]
     pub args: Vec<String>,
-    /// `"auto"` lets the engine pick a free port; a number pins one.
-    pub port: Port,
+    /// `"auto"` lets the engine pick a free port; a number pins one. Apps
+    /// without a web UI have none.
+    pub port: Option<Port>,
     pub health: Health,
 }
 
@@ -115,6 +226,8 @@ pub enum UiKind {
     Terminal,
     /// A native app that opens its own window.
     Window,
+    /// No window of its own in OpenAgora: a menu-bar, tray or shortcut utility.
+    Background,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -235,51 +348,109 @@ impl Manifest {
         }
         let platforms: BTreeSet<Os> = self.platforms.iter().copied().collect();
         for os in &platforms {
-            let steps = self
-                .install
-                .steps
-                .iter()
-                .filter(|s| s.os.contains(os))
-                .count();
-            if steps == 0 {
+            if self.steps_for(*os).next().is_none() {
                 out.push(format!("no install step for listed platform {os}"));
+            }
+            if self.install.provides.for_os(*os).is_none() {
+                out.push(format!("install.provides has no value for {os}"));
+            }
+            if self.run.command.for_os(*os).is_none() {
+                out.push(format!("run.command has no value for {os}"));
             }
         }
         for (i, step) in self.install.steps.iter().enumerate() {
+            let n = i + 1;
             if step.run.trim().is_empty() {
-                out.push(format!("install step {} has an empty run", i + 1));
+                out.push(format!("install step {n} has an empty run"));
             }
             if let Some(os) = step.os.iter().find(|os| !platforms.contains(os)) {
                 out.push(format!(
-                    "install step {} targets {os}, which is not in platforms",
-                    i + 1
+                    "install step {n} targets {os}, which is not in platforms"
                 ));
             }
             if step.shell == Shell::Powershell && step.os.iter().any(|os| *os != Os::Windows) {
-                out.push(format!(
-                    "install step {} uses powershell outside windows",
-                    i + 1
-                ));
+                out.push(format!("install step {n} uses powershell outside windows"));
+            }
+            check_placeholders(
+                &mut out,
+                &format!("install step {n}"),
+                &step.run,
+                STEP_PLACEHOLDERS,
+            );
+            match &step.download {
+                Some(download) => {
+                    if !step.run.contains("{download}") {
+                        out.push(format!(
+                            "install step {n} downloads a file but never uses {{download}}"
+                        ));
+                    }
+                    if !self
+                        .source
+                        .ends_with(&format!("github.com/{}", download.github))
+                    {
+                        out.push(format!(
+                            "install step {n} downloads from {:?}, which is not this app's source",
+                            download.github
+                        ));
+                    }
+                    let patterns = download.asset.patterns();
+                    if patterns.is_empty()
+                        || patterns.iter().any(|p| p.is_empty() || p.contains('/'))
+                    {
+                        out.push(format!("install step {n} has an invalid asset name"));
+                    }
+                }
+                None if step.run.contains("{download}") => {
+                    out.push(format!(
+                        "install step {n} uses {{download}} without a download"
+                    ));
+                }
+                None => {}
             }
         }
-        if let Port::Named(name) = &self.run.port
-            && name != "auto"
-        {
-            out.push(format!(
+        for provides in self.install.provides.values() {
+            check_placeholders(&mut out, "install.provides", provides, &["app_dir"]);
+        }
+        for command in self.run.command.values() {
+            check_placeholders(&mut out, "run.command", command, RUN_PLACEHOLDERS);
+        }
+        for arg in &self.run.args {
+            check_placeholders(&mut out, "run.args", arg, RUN_PLACEHOLDERS);
+        }
+        match &self.run.port {
+            Some(Port::Named(name)) if name != "auto" => out.push(format!(
                 "run.port must be a number or \"auto\", got {name:?}"
-            ));
-        }
-        if !self.run.health.tcp {
-            out.push("run.health needs a check (tcp = true)".into());
-        }
-        match (self.ui.kind, &self.ui.url) {
-            (UiKind::Web, None) => out.push("ui.url is required for kind = \"web\"".into()),
-            (UiKind::Web, Some(url)) if !is_loopback_http(url) => {
-                out.push("ui.url must point at 127.0.0.1 or localhost".into())
+            )),
+            None if self.run.args.iter().any(|a| a.contains("{port}")) => {
+                out.push("run.args uses {port} but run.port is not set".into())
             }
             _ => {}
         }
+        let health = &self.run.health;
+        match (health.tcp, health.process) {
+            (false, false) => out.push("run.health needs a check (tcp or process)".into()),
+            (true, true) => out.push("run.health: choose tcp or process, not both".into()),
+            (true, false) if self.run.port.is_none() => {
+                out.push("run.health.tcp needs run.port".into())
+            }
+            _ => {}
+        }
+        match (self.ui.kind, &self.ui.url) {
+            (UiKind::Web, None) => out.push("ui.url is required for kind = \"web\"".into()),
+            (UiKind::Web, Some(url)) => {
+                if !is_loopback_http(url) {
+                    out.push("ui.url must point at 127.0.0.1 or localhost".into());
+                }
+                if self.run.port.is_none() {
+                    out.push("kind = \"web\" needs run.port".into());
+                }
+                check_placeholders(&mut out, "ui.url", url, URL_PLACEHOLDERS);
+            }
+            (_, Some(_)) => out.push("ui.url is only for kind = \"web\"".into()),
+            (_, None) => {}
+        }
         if let Some(agent) = &self.agent {
+            check_placeholders(&mut out, "agent.mcp.url", &agent.mcp.url, URL_PLACEHOLDERS);
             if !is_loopback_http(&agent.mcp.url) {
                 // Remote MCP endpoints are allowed later, with their own review rules.
                 out.push("agent.mcp.url must point at 127.0.0.1 or localhost".into());
@@ -295,6 +466,21 @@ impl Manifest {
             out.push("the agent cannot declare uninstall; it ships with OpenAgora".into());
         }
         out
+    }
+}
+
+/// Reports `{name}` placeholders that are not in `allowed`. Braces that are not
+/// a plain lowercase name (shell or PowerShell syntax) are left alone.
+fn check_placeholders(out: &mut Vec<String>, field: &str, text: &str, allowed: &[&str]) {
+    let mut rest = text;
+    while let Some(start) = rest.find('{') {
+        rest = &rest[start + 1..];
+        let Some(end) = rest.find('}') else { break };
+        let name = &rest[..end];
+        let plain = !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c == '_');
+        if plain && !allowed.contains(&name) {
+            out.push(format!("{field}: unknown placeholder {{{name}}}"));
+        }
     }
 }
 

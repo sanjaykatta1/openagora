@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use openagora::catalog::Catalog;
-use openagora::manifest::{Manifest, Os, Role};
+use openagora::manifest::{Arch, Manifest, Os, Role, UiKind};
 
 fn repo_catalog() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../catalog"))
@@ -20,6 +20,23 @@ fn shipped_catalog_is_valid() {
     );
     for os in [Os::Macos, Os::Linux, Os::Windows] {
         assert!(t3.steps_for(os).count() > 0, "no T3 install step for {os}");
+    }
+
+    let maccy = &catalog.listings["maccy"].manifest;
+    assert_eq!(maccy.platforms, [Os::Macos]);
+    assert_eq!(maccy.ui.kind, UiKind::Background);
+
+    let handy = &catalog.listings["handy"].manifest;
+    for os in [Os::Macos, Os::Linux] {
+        let step = handy.steps_for(os).next().unwrap();
+        let asset = &step.download.as_ref().unwrap().asset;
+        for arch in [Arch::X64, Arch::Arm64] {
+            assert!(
+                asset.for_arch(arch).is_some(),
+                "handy: no {os} asset for {arch:?}"
+            );
+        }
+        assert!(handy.run.command.for_os(os).is_some());
     }
 }
 
@@ -103,6 +120,99 @@ fn rejects_bad_listings() {
         problems(|s| s.replace("license = \"MIT\"", "license = \"MIT\"\nlicence = \"MIT\""))
             .contains("licence")
     );
+}
+
+const BACKGROUND: &str = r#"
+schema = "openagora/v1"
+id = "tool"
+name = "Tool"
+summary = "A background tool"
+category = "utilities"
+homepage = "https://example.com"
+source = "https://github.com/example/tool"
+license = "MIT"
+platforms = ["macos", "linux"]
+
+[install]
+provides = { macos = "{app_dir}/Tool.app", linux = "{app_dir}/tool" }
+
+[[install.steps]]
+os = ["macos", "linux"]
+shell = "sh"
+download = { github = "example/tool", asset = { x64 = "tool-x64.tar.gz", arm64 = "tool-arm64.tar.gz" } }
+run = "tar -xzf '{download}' -C '{app_dir}'"
+
+[run]
+command = { macos = "{app_dir}/Tool.app/Contents/MacOS/Tool", linux = "{app_dir}/tool" }
+
+[run.health]
+process = true
+
+[ui]
+kind = "background"
+"#;
+
+type Edit = dyn Fn(&str) -> String;
+
+fn background_problems(edit: impl Fn(&str) -> String) -> String {
+    Manifest::parse(&edit(BACKGROUND)).err().unwrap_or_default()
+}
+
+#[test]
+fn background_app_rules() {
+    Manifest::parse(BACKGROUND).unwrap();
+    let cases: &[(&Edit, &str)] = &[
+        (
+            &|s| s.replace(", linux = \"{app_dir}/tool\" }\n\n[[", " }\n\n[["),
+            "install.provides has no value for linux",
+        ),
+        (
+            &|s| {
+                s.replace(
+                    "kind = \"background\"",
+                    "kind = \"background\"\nurl = \"http://127.0.0.1:1/\"",
+                )
+            },
+            "only for kind",
+        ),
+        (
+            &|s| {
+                s.replace(
+                    "kind = \"background\"",
+                    "kind = \"web\"\nurl = \"http://127.0.0.1:{port}/\"",
+                )
+            },
+            "needs run.port",
+        ),
+        (
+            &|s| s.replace("tar -xzf '{download}'", "tar -xzf x"),
+            "never uses {download}",
+        ),
+        (
+            &|s| s.replace("github = \"example/tool\"", "github = \"someone/else\""),
+            "not this app's source",
+        ),
+        (
+            &|s| {
+                s.replace(
+                    "{app_dir}/tool\" }\n\n[run.health]",
+                    "{app_dir}/tool\" }\nargs = [\"{prot}\"]\n\n[run.health]",
+                )
+            },
+            "unknown placeholder {prot}",
+        ),
+        (
+            &|s| s.replace("process = true", "process = false"),
+            "needs a check",
+        ),
+    ];
+    for (edit, expected) in cases {
+        let problems = background_problems(edit);
+        assert!(
+            problems.contains(expected),
+            "expected {expected:?} in {problems:?}"
+        );
+    }
 }
 
 #[test]

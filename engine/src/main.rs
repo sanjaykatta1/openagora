@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use openagora::catalog::{Catalog, load_listing};
-use openagora::manifest::Os;
+use openagora::manifest::{Arch, Os};
 
 #[derive(Parser)]
 #[command(
@@ -78,6 +78,14 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 Some(os) => {
                     println!("install on {os}:");
                     for step in m.steps_for(os) {
+                        if let Some(d) = &step.download {
+                            let asset = Arch::current().and_then(|a| d.asset.for_arch(a));
+                            println!(
+                                "  download {} from github.com/{} (latest release)",
+                                asset.unwrap_or("(no build for this CPU)"),
+                                d.github
+                            );
+                        }
                         println!("  {}", step.run);
                     }
                 }

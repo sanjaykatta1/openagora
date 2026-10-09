@@ -1,0 +1,42 @@
+schema = "openagora/v1"
+id = "handy"
+name = "Handy"
+summary = "Offline speech-to-text: press a shortcut, speak, and your words are typed into whatever app you're using."
+category = "utilities"
+homepage = "https://handy.computer"
+source = "https://github.com/cjpais/Handy"
+license = "MIT"
+# Windows builds exist upstream; the listing adds Windows once its silent
+# install has been tested.
+platforms = ["macos", "linux"]
+
+[install]
+provides = { macos = "{app_dir}/Handy.app", linux = "{app_dir}/Handy.AppImage" }
+
+[[install.steps]]
+os = ["macos"]
+shell = "sh"
+download = { github = "cjpais/Handy", asset = { x64 = "Handy_x64.app.tar.gz", arm64 = "Handy_aarch64.app.tar.gz" } }
+run = "tar -xzf '{download}' -C '{app_dir}'"
+
+# The AppImage needs no root. Typing into other apps on Wayland also needs
+# `wtype` or `dotool` from the system package manager (see Handy's README).
+[[install.steps]]
+os = ["linux"]
+shell = "sh"
+download = { github = "cjpais/Handy", asset = { x64 = "Handy_*_amd64.AppImage", arm64 = "Handy_*_aarch64.AppImage" } }
+run = "mv '{download}' '{app_dir}/Handy.AppImage' && chmod +x '{app_dir}/Handy.AppImage'"
+
+# Runs in the background with a global shortcut (Cmd+Shift+D on macOS,
+# Ctrl+Shift+D elsewhere). First launch asks for microphone and accessibility
+# permission. Handy has no MCP server; its `--toggle-transcription` flag could
+# become an agent action later.
+[run]
+command = { macos = "{app_dir}/Handy.app/Contents/MacOS/Handy", linux = "{app_dir}/Handy.AppImage" }
+args = ["--start-hidden"]
+
+[run.health]
+process = true
+
+[ui]
+kind = "background"

@@ -23,13 +23,32 @@ Early. What exists today:
 - Four listings: [T3 Code](catalog/apps/t3code/app.toml),
   [Hermes](catalog/apps/hermes/app.toml), [Maccy](catalog/apps/maccy/app.toml)
   (clipboard history) and [Handy](catalog/apps/handy/app.toml) (speech-to-text).
-- The `openagora` CLI: browse the catalog, and install, start, stop and remove
-  apps, with installers for macOS, Linux and Windows.
+- The desktop app ([`desktop/`](desktop)): a Store to search and browse apps,
+  app pages showing what installing does, one-click install with a
+  confirmation, a Library to start and stop apps, and web apps opening in tabs
+  inside the window.
+- The `openagora` engine underneath it, also usable on its own from a terminal.
 
-Next up is the agent: Hermes driving these commands from chat. The full design and roadmap are in
+Next up: Hermes in the window, driving all of this from chat. The full design and roadmap are in
 [docs/SPEC.md](docs/SPEC.md).
 
 ## Install
+
+### Desktop app
+
+Download the installer for your system from the
+[latest desktop build](https://github.com/sanjaykatta1/openagora/actions/workflows/desktop.yml)
+(open the newest run, then "Artifacts"):
+
+- macOS: `OpenAgora-<version>-mac-arm64.dmg` (Apple Silicon) or `-mac-x64.dmg` (Intel)
+- Windows: `OpenAgora-<version>-win-x64.exe`
+- Linux: `OpenAgora-<version>-linux-x86_64.AppImage` or `-linux-amd64.deb`
+
+The builds are not signed yet. On macOS, the first time: right-click the app →
+Open, or System Settings → Privacy & Security → Open Anyway. On Windows:
+"More info" → "Run anyway".
+
+### Command line only
 
 macOS and Linux:
 
@@ -72,10 +91,12 @@ instead.
 ## Build from source
 
 ```sh
-cd engine
-cargo test
-cargo install --path .
+cd engine && cargo test && cargo build    # the engine
+cd ../desktop && npm install && npm start  # the desktop app (uses the engine build)
 ```
+
+`OPENAGORA_CATALOG=<dir>` makes the desktop app read a local catalog folder,
+handy when writing a listing.
 
 ## Release
 

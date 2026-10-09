@@ -28,6 +28,10 @@ enum Cmd {
     Catalog {
         /// Only show apps matching this text.
         query: Option<String>,
+        /// Print JSON (for the desktop app): every listing with its install
+        /// steps for this machine, permissions, and install/run status.
+        #[arg(long)]
+        json: bool,
     },
     /// Show one listing, including the install steps for this OS.
     Show { id: String },
@@ -84,12 +88,21 @@ fn load_catalog(dir: &Option<PathBuf>) -> anyhow::Result<Catalog> {
 
 fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
-        Cmd::Catalog { query } => {
+        Cmd::Catalog { query, json } => {
             let catalog = load_catalog(&cli.catalog)?;
             let listings = match &query {
                 Some(q) => catalog.search(q),
                 None => catalog.listings.values().collect(),
             };
+            if json {
+                let engine = Engine::new()?;
+                let items = listings
+                    .iter()
+                    .map(|l| listing_json(&engine, &l.manifest))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                println!("{}", serde_json::to_string_pretty(&items)?);
+                return Ok(());
+            }
             let here = Os::current();
             for l in listings {
                 let m = &l.manifest;
@@ -241,4 +254,58 @@ fn confirm(question: &str, yes: bool) -> anyhow::Result<bool> {
     let mut answer = String::new();
     std::io::stdin().lock().read_line(&mut answer)?;
     Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
+}
+
+fn listing_json(engine: &Engine, m: &Manifest) -> anyhow::Result<serde_json::Value> {
+    let os = engine.os;
+    let available = m.platforms.contains(&os);
+    let steps: Vec<serde_json::Value> = m
+        .steps_for(os)
+        .map(|step| {
+            let download = step.download.as_ref().map(|d| {
+                serde_json::json!({
+                    "github": d.github,
+                    "asset": engine.arch.and_then(|a| d.asset.for_arch(a)),
+                })
+            });
+            serde_json::json!({ "download": download, "run": step.run })
+        })
+        .collect();
+    let permissions: Vec<serde_json::Value> = m
+        .agent
+        .iter()
+        .flat_map(|a| &a.permissions)
+        .map(|p| {
+            serde_json::json!({
+                "id": p.id,
+                "description": p.description,
+                "default": format!("{:?}", p.default).to_lowercase(),
+            })
+        })
+        .collect();
+    let installed = engine.installed(&m.id)?.is_some();
+    let (status, pid, url) = match engine.status(&m.id)? {
+        Status::Running(r) => ("running", Some(r.pid), r.url),
+        Status::Stopped if installed => ("stopped", None, None),
+        Status::Stopped => ("not-installed", None, None),
+    };
+    Ok(serde_json::json!({
+        "id": m.id,
+        "name": m.name,
+        "summary": m.summary,
+        "category": m.category,
+        "homepage": m.homepage,
+        "source": m.source,
+        "license": m.license,
+        "platforms": m.platforms.iter().map(|o| o.to_string()).collect::<Vec<_>>(),
+        "available": available,
+        "role": format!("{:?}", m.role).to_lowercase(),
+        "ui": format!("{:?}", m.ui.kind).to_lowercase(),
+        "steps": steps,
+        "permissions": permissions,
+        "installed": installed,
+        "status": status,
+        "pid": pid,
+        "url": url,
+    }))
 }

@@ -1,0 +1,23 @@
+# One configuration for all four formats; the build script supplies these values.
+name: openagora
+arch: ${PACKAGE_ARCH}
+platform: linux
+version: ${PACKAGE_VERSION}
+release: 1
+maintainer: OpenAgora contributors <sanjaykatta1@users.noreply.github.com>
+description: OpenAgora CLI to browse, install, start, stop and manage open-source apps.
+homepage: https://github.com/sanjaykatta1/openagora
+license: MIT
+section: utils
+priority: optional
+depends: []
+contents:
+  - src: ${PACKAGE_BINARY}
+    expand: true
+    dst: /usr/bin/openagora
+    file_info:
+      mode: 0755
+  - src: LICENSE
+    dst: /usr/share/licenses/openagora/LICENSE
+    file_info:
+      mode: 0644

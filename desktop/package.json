@@ -29,6 +29,7 @@
       }
     ],
     "mac": {
+      "binaries": ["Resources/bin/openagora"],
       "category": "public.app-category.developer-tools",
       "target": [
         "dmg"

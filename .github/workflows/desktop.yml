@@ -9,17 +9,25 @@ name: desktop
 on:
   push:
     branches: [main]
-    paths: ["desktop/**", "engine/**", "catalog/**", ".github/workflows/desktop.yml"]
+    paths: ["desktop/**", "engine/**", "catalog/**", "packaging/**", ".github/workflows/desktop.yml"]
   pull_request:
-    paths: ["desktop/**", "engine/**", "catalog/**", ".github/workflows/desktop.yml"]
+    paths: ["desktop/**", "engine/**", "catalog/**", "packaging/**", ".github/workflows/desktop.yml"]
   workflow_dispatch:
     inputs:
       version:
         description: "Release tag to attach the installers to, e.g. v0.3.0"
         required: true
+      publish:
+        description: "Publish after verification (disable for a signing rehearsal)"
+        type: boolean
+        default: true
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -27,13 +35,26 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: macos-arm64, os: macos-latest, target: aarch64-apple-darwin, builder: --mac --arm64 }
-          - { name: macos-x64, os: macos-latest, target: x86_64-apple-darwin, builder: --mac --x64 }
+          - { name: macos-arm64, os: macos-14, target: aarch64-apple-darwin, arch: arm64 }
+          - { name: macos-x64, os: macos-15-intel, target: x86_64-apple-darwin, arch: x64 }
           - { name: windows-x64, os: windows-latest, target: x86_64-pc-windows-msvc, builder: --win --x64 }
           - { name: linux-x64, os: ubuntu-latest, target: x86_64-unknown-linux-musl, builder: --linux --x64 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Require matching engine, desktop and requested release versions
+        shell: bash
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          version=$(python3 packaging/version.py)
+          if [[ -n "$REQUESTED" && "$REQUESTED" != "v$version" ]]; then
+            echo 'Requested tag must match the engine and desktop versions' >&2
+            exit 1
+          fi
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -56,13 +77,37 @@ jobs:
         working-directory: desktop
       - run: npm run typecheck
         working-directory: desktop
-      - name: Package
+      - name: Package Windows and Linux
+        if: runner.os != 'macOS'
         working-directory: desktop
         shell: bash
         env:
-          # Unsigned until signing secrets are configured; see docs/SPEC.md.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: npm run build && npx electron-builder ${{ matrix.builder }} --publish never
+      - name: Build and verify signed Mac desktop installer
+        if: runner.os == 'macOS'
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NOTARY_KEY_P8_BASE64: ${{ secrets.NOTARY_KEY_P8_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          MACOS_NOTARIZE: ${{ github.event_name != 'pull_request' }}
+          # Electron Builder otherwise skips signing on every PR, even when
+          # GitHub has supplied credentials for a same-repository branch.
+          CSC_FOR_PULL_REQUEST: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+          ARCH: ${{ matrix.arch }}
+        run: packaging/macos/ci-build.sh --desktop "$ARCH"
+      - name: Checksum desktop installers
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib, subprocess, sys
+          for path in pathlib.Path('desktop/release').iterdir():
+              if path.suffix in {'.dmg', '.exe', '.AppImage', '.deb'}:
+                  subprocess.run([sys.executable, 'packaging/checksums.py', str(path)], check=True)
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: OpenAgora-${{ matrix.name }}
@@ -71,12 +116,15 @@ jobs:
             desktop/release/*.exe
             desktop/release/*.AppImage
             desktop/release/*.deb
+            desktop/release/*.sha256
           if-no-files-found: error
 
   publish:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -90,3 +138,4 @@ jobs:
             *.exe
             *.AppImage
             *.deb
+            *.sha256

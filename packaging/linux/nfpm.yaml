@@ -13,6 +13,7 @@ priority: optional
 depends: []
 contents:
   - src: ${PACKAGE_BINARY}
+    expand: true
     dst: /usr/bin/openagora
     file_info:
       mode: 0755

@@ -17,7 +17,8 @@ cleanup() {
 }
 trap cleanup EXIT
 sudo installer -pkg "$pkg" -target /
-lipo -verify_arch arm64 x86_64 /usr/local/bin/openagora
+archs=$(lipo -archs /usr/local/bin/openagora)
+[[ " $archs " == *" arm64 "* && " $archs " == *" x86_64 "* ]] || { echo "Missing universal architecture" >&2; exit 1; }
 lipo -info /usr/local/bin/openagora
 /usr/local/bin/openagora --version
 /usr/local/bin/openagora catalog

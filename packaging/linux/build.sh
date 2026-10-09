@@ -14,7 +14,7 @@ PACKAGE_VERSION=$(python3 packaging/version.py)
 PACKAGE_ARCH=$arch
 if [[ $# -lt 2 ]]; then
   rustup target add --toolchain stable "$target"
-  rustup run stable cargo build --manifest-path engine/Cargo.toml --locked --release --target "$target"
+  RUSTC=$(rustup which --toolchain stable rustc) rustup run stable cargo build --manifest-path engine/Cargo.toml --locked --release --target "$target"
 fi
 PACKAGE_BINARY=$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve())' "${2:-engine/target/$target/release/openagora}")
 [[ -f "$PACKAGE_BINARY" ]] || { echo "Missing binary: $PACKAGE_BINARY" >&2; exit 1; }

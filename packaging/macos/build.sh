@@ -15,14 +15,15 @@ if [[ -n ${1:-} ]]; then
 else
   rustup target add --toolchain stable aarch64-apple-darwin x86_64-apple-darwin
   for target in aarch64-apple-darwin x86_64-apple-darwin; do
-    rustup run stable cargo build --manifest-path engine/Cargo.toml --release --locked --target "$target"
+    RUSTC=$(rustup which --toolchain stable rustc) rustup run stable cargo build --manifest-path engine/Cargo.toml --release --locked --target "$target"
   done
   arm=engine/target/aarch64-apple-darwin/release/openagora
   intel=engine/target/x86_64-apple-darwin/release/openagora
 fi
 binary="$work/root/usr/local/bin/openagora"
 lipo -create "$arm" "$intel" -output "$binary"
-lipo -verify_arch arm64 x86_64 "$binary"
+archs=$(lipo -archs "$binary")
+[[ " $archs " == *" arm64 "* && " $archs " == *" x86_64 "* ]] || { echo "Missing universal architecture" >&2; exit 1; }
 lipo -info "$binary"
 chmod 755 "$binary"
 signed=false

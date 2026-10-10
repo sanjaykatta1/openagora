@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { registerUpdater } from "./updater";
 
 const EXE = process.platform === "win32" ? "openagora.exe" : "openagora";
 const LOCAL_URL = /^http:\/\/(127\.0\.0\.1|localhost):\d+(\/|$)/;
@@ -132,7 +133,10 @@ app.on("web-contents-created", (_event, contents) => {
   });
 });
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createWindow();
+  registerUpdater();
+});
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });

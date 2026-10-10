@@ -44,4 +44,6 @@ if [[ "$signed" == true ]]; then
     spctl --assess --type execute -vv "$app"
   fi
 fi
+zip="release/OpenAgora-$version-mac-$arch.zip"
+[[ -f "$zip" && -f release/latest-mac.yml ]]
 python3 "$ROOT/packaging/checksums.py" "$dmg"

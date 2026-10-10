@@ -55,6 +55,11 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .nav.tab { padding: 0; }
 .tab-open { flex: 1; display: flex; align-items: center; gap: 8px; background: none; border: 0; padding: 7px 10px; text-align: left; }
 .tab-close { background: none; border: 0; color: var(--muted); padding: 4px 10px; font-size: 16px; }
+.update-card { margin-top: auto; display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); font-size: 12px; }
+.update-card + .sidebar-foot { margin-top: 0; }
+.update-bar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.update-bar > div { height: 100%; background: var(--accent); transition: width 0.2s; }
+.update-error { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-foot { margin-top: auto; font-size: 11px; color: var(--muted); padding: 8px 10px; }
 
 .content { overflow: auto; position: relative; }

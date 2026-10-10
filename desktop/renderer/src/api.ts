@@ -44,6 +44,16 @@ export interface EngineResult {
   stderr: string;
 }
 
+/** OpenAgora's own updates; mirrors electron/updater.ts. */
+export type UpdateState =
+  | { kind: "unsupported"; current: string }
+  | { kind: "idle"; current: string }
+  | { kind: "checking"; current: string }
+  | { kind: "available"; current: string; version: string }
+  | { kind: "downloading"; current: string; version: string; percent: number }
+  | { kind: "ready"; current: string; version: string }
+  | { kind: "error"; current: string; message: string };
+
 export interface Bridge {
   platform: string;
   catalog(): Promise<App[]>;
@@ -53,6 +63,13 @@ export interface Bridge {
   stop(id: string): Promise<EngineResult>;
   logs(id: string): Promise<EngineResult>;
   openExternal(url: string): Promise<void>;
+  update: {
+    state(): Promise<UpdateState>;
+    check(): Promise<void>;
+    download(): Promise<void>;
+    install(): Promise<void>;
+    onState(callback: (state: UpdateState) => void): () => void;
+  };
   onProgress(callback: (event: { id: string; line: string }) => void): () => void;
 }
 

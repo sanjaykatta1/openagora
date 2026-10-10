@@ -29,10 +29,13 @@
       }
     ],
     "mac": {
-      "binaries": ["Resources/bin/openagora"],
+      "binaries": [
+        "Resources/bin/openagora"
+      ],
       "category": "public.app-category.developer-tools",
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ]
     },
     "win": {
@@ -52,9 +55,16 @@
       "output": "release"
     },
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
-    "publish": null
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "sanjaykatta1",
+        "repo": "openagora"
+      }
+    ]
   },
   "dependencies": {
+    "electron-updater": "6.8.9",
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },

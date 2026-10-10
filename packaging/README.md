@@ -110,6 +110,12 @@ Gatekeeper acceptance and stapling whenever signing credentials are present.
 Local builds also notarize by default; `MACOS_NOTARIZE=false` is only for
 development signature tests and must not be used for distribution.
 
+The desktop app updates itself from GitHub releases (`electron-updater`), so
+each desktop release also carries `latest.yml`, `latest-mac.yml` and
+`latest-linux.yml`, the Mac apps as `.zip` (the format the Mac updater
+installs), and `.blockmap` files. The two Mac jobs each write their own
+`latest-mac.yml`; the publish job merges them with `merge-mac-update.py`.
+
 The desktop workflow reuses the same six secrets and temporary-keychain wrapper.
 Electron Builder signs the app, its bundled CLI, and the DMG. Release and manual
 rehearsal builds also notarize and staple the app before creating the DMG, then

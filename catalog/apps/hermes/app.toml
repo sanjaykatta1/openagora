@@ -19,12 +19,12 @@ provides = "hermes"
 [[install.steps]]
 os = ["macos", "linux"]
 shell = "sh"
-run = "curl -fsSL https://hermes-agent.nousresearch.com/install.sh -o '{app_dir}/hermes-install.sh' && bash '{app_dir}/hermes-install.sh' --non-interactive"
+run = "curl -fsSL https://hermes-agent.nousresearch.com/install.sh -o hermes-install.sh && bash hermes-install.sh --non-interactive"
 
 [[install.steps]]
 os = ["windows"]
 shell = "powershell"
-run = "Invoke-WebRequest 'https://hermes-agent.nousresearch.com/install.ps1' -OutFile '{app_dir}/hermes-install.ps1'; & '{app_dir}/hermes-install.ps1' -NonInteractive; if ($LASTEXITCODE -ne 0) { throw 'Hermes installation failed' }"
+run = "Invoke-WebRequest 'https://hermes-agent.nousresearch.com/install.ps1' -OutFile 'hermes-install.ps1'; & './hermes-install.ps1' -NonInteractive; if ($LASTEXITCODE -ne 0) { throw 'Hermes installation failed' }"
 
 [update]
 run = "hermes update"

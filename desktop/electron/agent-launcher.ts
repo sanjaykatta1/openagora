@@ -8,7 +8,7 @@ import { agentCommand, agentWorkflow } from "./agent-workflows";
 export function commandDirectories(env: NodeJS.ProcessEnv = process.env, platform = process.platform, home = os.homedir()): string[] {
   const extra = platform === "win32"
     ? [env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, "hermes", "bin"), env.APPDATA && path.join(env.APPDATA, "npm")]
-    : ["/opt/homebrew/bin", "/usr/local/bin"];
+    : ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"];
   return [...extra, path.join(home, ".local", "bin"), path.join(home, ".cargo", "bin"),
     ...(env.PATH ?? "").split(path.delimiter)].filter((p): p is string => !!p && path.isAbsolute(p));
 }

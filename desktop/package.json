@@ -1,7 +1,7 @@
 {
   "name": "openagora-desktop",
   "productName": "OpenAgora",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "An open-source app store for your desktop",
   "license": "MIT",
   "private": true,
@@ -11,6 +11,8 @@
     "build:electron": "tsc -p electron/tsconfig.json",
     "build": "npm run build:renderer && npm run build:electron",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p electron/tsconfig.json --noEmit",
+    "test": "npm run build:electron && node --test tests/*.test.cjs",
+    "test:ui": "npm run build && node tests/onboarding.cjs",
     "start": "npm run build && electron .",
     "preview": "vite",
     "dist": "npm run build && electron-builder"

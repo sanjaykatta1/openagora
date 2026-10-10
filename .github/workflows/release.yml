@@ -14,6 +14,10 @@ on:
         description: 'Publish a release after all install tests pass'
         type: boolean
         default: true
+      draft:
+        description: 'Keep the release draft until desktop and CLI assets are verified'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -311,6 +315,7 @@ jobs:
           path: dist
       - uses: softprops/action-gh-release@v2
         with:
+          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft }}
           tag_name: v${{ needs.version.outputs.version }}
           target_commitish: ${{ github.sha }}
           files: dist/*

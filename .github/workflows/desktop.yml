@@ -22,6 +22,10 @@ on:
         description: "Publish after verification (disable for a signing rehearsal)"
         type: boolean
         default: true
+      draft:
+        description: "Keep the release draft until desktop and CLI assets are verified"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -77,6 +81,12 @@ jobs:
       - run: npm ci
         working-directory: desktop
       - run: npm run typecheck
+        working-directory: desktop
+      - run: npm test
+        working-directory: desktop
+      - name: Test first-launch agent choice
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:ui
         working-directory: desktop
       - name: Package Windows and Linux
         if: runner.os != 'macOS'
@@ -149,6 +159,7 @@ jobs:
           ls latest.yml latest-mac.yml latest-linux.yml
       - uses: softprops/action-gh-release@v2
         with:
+          draft: ${{ inputs.draft }}
           tag_name: ${{ inputs.version }}
           target_commitish: ${{ github.sha }}
           files: |

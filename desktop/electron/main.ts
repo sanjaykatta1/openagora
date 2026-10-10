@@ -4,9 +4,10 @@
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { readAgentPreferences, saveAgentPreferences } from "./preferences";
 import { registerUpdater } from "./updater";
+import { agentAvailability, commandDirectories, launchAgent } from "./agent-launcher";
 
 const EXE = process.platform === "win32" ? "openagora.exe" : "openagora";
 const LOCAL_URL = /^http:\/\/(127\.0\.0\.1|localhost):\d+(\/|$)/;
@@ -25,12 +26,7 @@ function enginePath(): string {
 /** Apps launched from the Dock or Start menu get a minimal PATH; add the
  *  usual places installers put their commands. */
 function engineEnv(): NodeJS.ProcessEnv {
-  const extra =
-    process.platform === "win32"
-      ? []
-      : ["/usr/local/bin", "/opt/homebrew/bin", path.join(os.homedir(), ".local", "bin")];
-  const PATH = [...extra, process.env.PATH ?? ""].filter(Boolean).join(path.delimiter);
-  return { ...process.env, PATH };
+  return { ...process.env, PATH: commandDirectories().join(path.delimiter) };
 }
 
 interface EngineResult {
@@ -65,7 +61,7 @@ function runEngine(args: string[], onLine?: (line: string) => void): Promise<Eng
 
 const VALID_ID = /^[a-z][a-z0-9-]*$/;
 
-function registerIpc(window: BrowserWindow): void {
+function registerIpc(): void {
   const checkId = (id: unknown): string => {
     if (typeof id !== "string" || !VALID_ID.test(id)) throw new Error("invalid app id");
     return id;
@@ -75,10 +71,19 @@ function registerIpc(window: BrowserWindow): void {
     if (!r.ok) throw new Error(r.stderr || "could not read the catalog");
     return JSON.parse(r.stdout);
   });
-  ipcMain.handle("install", (_e, id: unknown) => {
+  ipcMain.handle("agent-preferences", () => readAgentPreferences(app.getPath("userData")));
+  ipcMain.handle("save-agent-preferences", (_e, value: unknown) => saveAgentPreferences(app.getPath("userData"), value));
+  ipcMain.handle("agent-availability", (_e, id: unknown) => agentAvailability(id));
+  ipcMain.handle("launch-agent", (event, id: unknown, action: unknown) => {
+    if (!BrowserWindow.fromWebContents(event.sender) || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error("Agent actions are only available in the OpenAgora window");
+    }
+    return launchAgent(id, action, app.getPath("userData"));
+  });
+  ipcMain.handle("install", (event, id: unknown) => {
     const appId = checkId(id);
     return runEngine(["install", appId, "--yes"], (line) =>
-      window.webContents.send("progress", { id: appId, line }),
+      !event.sender.isDestroyed() && event.sender.send("progress", { id: appId, line }),
     );
   });
   for (const action of ["uninstall", "start", "stop"] as const) {
@@ -114,7 +119,6 @@ function createWindow(): void {
       webviewTag: true,
     },
   });
-  registerIpc(window);
   window.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
 }
 
@@ -134,8 +138,9 @@ app.on("web-contents-created", (_event, contents) => {
 });
 
 app.whenReady().then(() => {
-  createWindow();
+  registerIpc();
   registerUpdater();
+  createWindow();
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

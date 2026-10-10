@@ -5,8 +5,20 @@ An open-source app store for your desktop.
 - **Find open-source apps** in one store, and install them with one click from
   their official source.
 - **Use them side by side** in one window. Each app keeps its own interface.
-- **Bring your own agent** (coming next): pick the open-source personal agent you
-  like, and it works across every app you've installed.
+- **Choose your personal agent** on first launch, or choose later. Change your
+  preference anytime from **Personal agent** in the sidebar. Connections across
+  apps are coming next.
+
+Version 0.3.2 adds Hermes, OpenClaw, Goose, nanobot, NanoClaw, PicoClaw,
+and ZeroClaw as personal-agent choices. Hermes installs from the Store and
+opens its own dashboard inside OpenAgora. Other agents use official installation
+and their own interfaces; supported CLI shortcuts appear when the CLI is found.
+All model login, account setup, phone channels, pairing, and gateway management
+remain in the original assistant. OpenAgora does not replace their setup or
+collect their credentials. See [agent support](docs/personal-agents.md).
+
+The download links below stay on the published release until 0.3.2 finishes
+release verification.
 
 ## Download
 

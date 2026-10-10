@@ -2,6 +2,26 @@
 
 Status: draft v0.1, 2026-10-09.
 
+**Personal-agent update (2026-10-10):** the desktop now asks users to choose
+Hermes, OpenClaw, Goose, nanobot, NanoClaw, PicoClaw, or ZeroClaw on first launch.
+There is no default selection; users can skip and change the choice from the
+Personal agent page. The choice is saved atomically in `personal-agent.json`
+under Electron's user-data directory, separately from installation state.
+Hermes uses a noninteractive Store installation, then opens its original dashboard
+inside OpenAgora. Native CLI shortcuts launch upstream interfaces in an interactive
+terminal; other installations remain upstream-owned. All model and channel setup,
+credentials, pairing, and service management remain in each assistant. OpenAgora
+only stores the choice. See [personal-agents.md](personal-agents.md) for support
+and verification scope. Selection does not install, authenticate, or grant app access.
+The fixed-Hermes design and proposed cross-app integration below are historical
+plans, not implemented behavior. Hermes retains the engine's existing removal
+protection because its installer manages files outside OpenAgora's app folder.
+
+The browser preview stores a separate preference in browser storage. Unreadable
+desktop preferences show Retry / Choose again and are retained until a new
+choice is explicitly saved. Choosing later is persisted too. Existing desktop
+users without preferences see the chooser once after updating.
+
 ## 1. What it is
 
 One desktop app where you install open-source apps from a store and use them

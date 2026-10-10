@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { bridge, osName, type App as Listing, type EngineResult, type UpdateState } from "./api";
+import { NEW_AGENT_PREFERENCES, PERSONAL_AGENTS, parseAgentPreferences, type AgentPreferences } from "../../electron/agents";
+import { AgentChooser, PersonalAgentPage } from "./PersonalAgent";
 
-type View = { kind: "store" } | { kind: "library" } | { kind: "app"; id: string } | { kind: "tab"; id: string };
+type View = { kind: "store" } | { kind: "library" } | { kind: "personal-agent" } | { kind: "app"; id: string } | { kind: "tab"; id: string };
+
+const PREVIEW_PREFERENCES = "openagora-preview-personal-agent";
 
 const CATEGORY_LABELS: Record<string, string> = {
   agents: "Agents",
@@ -21,6 +25,39 @@ export function App() {
   const [progress, setProgress] = useState<Record<string, string[]>>({});
   const [confirming, setConfirming] = useState<Listing | null>(null);
   const [toast, setToast] = useState<{ text: string; error: boolean } | null>(null);
+  const [preferences, setPreferences] = useState<AgentPreferences | null>(null);
+  const [preferenceError, setPreferenceError] = useState<string | null>(null);
+  const [savingPreferences, setSavingPreferences] = useState(false);
+  const [choosingAgent, setChoosingAgent] = useState(false);
+
+  const loadPreferences = useCallback(async () => {
+    setPreferenceError(null);
+    try {
+      const saved = bridge ? await bridge.agentPreferences() : JSON.parse(localStorage.getItem(PREVIEW_PREFERENCES) ?? "null");
+      setPreferences(parseAgentPreferences(saved ?? NEW_AGENT_PREFERENCES));
+    } catch {
+      setPreferenceError("Couldn’t read your saved agent choice. Retry, or choose again to replace it.");
+    }
+  }, []);
+
+  useEffect(() => { void loadPreferences(); }, [loadPreferences]);
+
+  const saveAgent = async (id: string | null) => {
+    setSavingPreferences(true);
+    setPreferenceError(null);
+    try {
+      const next = parseAgentPreferences({ version: 1, completed: true, selectedAgent: id });
+      if (bridge) await bridge.saveAgentPreferences(next);
+      else localStorage.setItem(PREVIEW_PREFERENCES, JSON.stringify(next));
+      setPreferences(next);
+      setChoosingAgent(false);
+      setView({ kind: id ? "personal-agent" : "store" });
+    } catch {
+      setPreferenceError("Couldn’t save your choice. Please try again.");
+    } finally {
+      setSavingPreferences(false);
+    }
+  };
 
   const refresh = useCallback(async () => {
     if (!bridge) return;
@@ -69,6 +106,7 @@ export function App() {
       if (result.ok) {
         const done = { install: "installed", uninstall: "removed", start: "started", stop: "stopped" }[action];
         setToast({ text: `${app.name} ${done}.`, error: false });
+        if (action === "install" && app.id === preferences?.selectedAgent) setView({ kind: "personal-agent" });
         if (action === "stop" || action === "uninstall") setTabs((t) => t.filter((id) => id !== app.id));
         if (action === "start" && app.ui === "web") openTab(app.id);
       } else {
@@ -76,7 +114,7 @@ export function App() {
       }
     },
     // openTab only calls state setters, so it never goes stale.
-    [refresh],
+    [refresh, preferences?.selectedAgent],
   );
 
   const openTab = (id: string) => {
@@ -90,6 +128,28 @@ export function App() {
   };
 
   const installedCount = apps.filter((a) => a.installed).length;
+  const personalAgent = PERSONAL_AGENTS.find((a) => a.id === preferences?.selectedAgent);
+
+  if (!preferences) return (
+    <main className="onboarding loading" aria-live="polite">
+      {preferenceError ? <div>
+        <p role="alert">{preferenceError}</p>
+        <div className="actions">
+          <button className="btn primary" onClick={() => void loadPreferences()}>Retry</button>
+          <button className="btn ghost" onClick={() => {
+            setPreferenceError(null);
+            setPreferences({ ...NEW_AGENT_PREFERENCES });
+          }}>Choose again</button>
+        </div>
+      </div> : <p className="muted">Opening OpenAgora…</p>}
+    </main>
+  );
+
+  if (!preferences.completed) return <main className="onboarding">
+    {!bridge && <div className="notice">Browser preview — your choice here is separate from the desktop app.</div>}
+    <AgentChooser firstLaunch selected={preferences.selectedAgent} saving={savingPreferences} error={preferenceError}
+      onSave={(id) => void saveAgent(id)} onCancel={() => {}} />
+  </main>;
 
   return (
     <div className="shell">
@@ -104,6 +164,14 @@ export function App() {
           <button className={view.kind === "library" ? "nav active" : "nav"} onClick={() => setView({ kind: "library" })}>
             <span className="nav-icon">▤</span> Library
             {installedCount > 0 && <span className="count">{installedCount}</span>}
+          </button>
+          <button className={view.kind === "personal-agent" ? "nav active" : "nav"} onClick={() => {
+            setChoosingAgent(false);
+            setPreferenceError(null);
+            setView({ kind: "personal-agent" });
+          }}>
+            <span className="nav-icon">◇</span>
+            <span>Personal agent<span className="muted small block">{personalAgent?.name ?? "Choose anytime"}</span></span>
           </button>
         </nav>
         {tabs.length > 0 && (
@@ -138,6 +206,16 @@ export function App() {
           </div>
         )}
         {loadError && <div className="notice error">Couldn't read the catalog: {loadError}</div>}
+
+        {view.kind === "personal-agent" && (choosingAgent ? (
+          <AgentChooser firstLaunch={false} selected={preferences.selectedAgent} saving={savingPreferences} error={preferenceError}
+            onSave={(id) => void saveAgent(id)} onCancel={() => { setChoosingAgent(false); setPreferenceError(null); }} />
+        ) : (
+          <PersonalAgentPage key={personalAgent?.id ?? "none"} agent={personalAgent} listing={personalAgent?.catalogId ? byId.get(personalAgent.catalogId) : undefined}
+            busy={personalAgent?.catalogId ? busy[personalAgent.catalogId] : undefined}
+            onChange={() => setChoosingAgent(true)} onOpenListing={(id) => setView({ kind: "app", id })}
+            onOpenApp={(app) => app.status === "running" ? openTab(app.id) : void act(app, "start", "Starting…")} />
+        ))}
 
         {view.kind === "store" && <Store apps={apps} busy={busy} onOpen={(id) => setView({ kind: "app", id })} onInstall={setConfirming} />}
 
@@ -449,7 +527,7 @@ function Detail(props: {
 
       {app.permissions.length > 0 && (
         <div className="panel">
-          <h3>What Hermes may do with {app.name}</h3>
+          <h3>Available agent permissions for {app.name}</h3>
           <Permissions app={app} />
         </div>
       )}
@@ -598,7 +676,7 @@ function ConfirmInstall(props: { app: Listing; onCancel: () => void; onConfirm: 
         <InstallSteps app={app} />
         {app.permissions.length > 0 && (
           <>
-            <h3>Hermes access</h3>
+            <h3>Available agent permissions</h3>
             <Permissions app={app} />
           </>
         )}

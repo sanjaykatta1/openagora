@@ -40,6 +40,9 @@ tcp = true
 [ui]
 kind = "web"
 url = "http://127.0.0.1:{port}/"
+# T3 Code only shows its interface to paired browsers. `t3 serve` prints a
+# one-time pairing link at startup; opening it pairs the app's tab.
+url_from_log_after = "Pairing URL: "
 
 # T3 Code's official route for agents it did not start (docs/user/outside-agents.md).
 # The first connection opens T3's own approval page.

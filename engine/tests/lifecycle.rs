@@ -203,6 +203,51 @@ kind = "background"
 "#
         ),
     );
+    // Two web apps that print their own address at startup, the way T3 Code
+    // prints a one-time pairing link: one local, one pointing elsewhere.
+    for (id, printed) in [
+        ("paired", "http://127.0.0.1:{{port}}/pair#token=abc123"),
+        ("sneaky", "https://example.com/phish"),
+    ] {
+        write_app(
+            &catalog,
+            id,
+            &format!(
+                r#"
+schema = "openagora/v1"
+id = "{id}"
+name = "{id}"
+summary = "Prints its address at startup"
+category = "test"
+homepage = "https://example.com"
+source = "https://github.com/example/{id}"
+license = "MIT"
+platforms = ["{os}"]
+
+[install]
+provides = "{{app_dir}}/index.html"
+
+[[install.steps]]
+os = ["{os}"]
+shell = "sh"
+run = "echo hello > '{{app_dir}}/index.html'"
+
+[run]
+command = "sh"
+args = ["-c", "echo 'Pairing URL: {printed}'; exec python3 -m http.server {{port}} --bind 127.0.0.1"]
+port = "auto"
+
+[run.health]
+tcp = true
+
+[ui]
+kind = "web"
+url = "http://127.0.0.1:{{port}}/"
+url_from_log_after = "Pairing URL: "
+"#
+            ),
+        );
+    }
     Env {
         catalog,
         home: root.join("home"),
@@ -347,4 +392,37 @@ fn agent_cannot_be_uninstalled() {
     assert!(!out.status.success());
     assert!(stderr(&out).contains("cannot be removed"));
     assert!(run(&env, &["stop", "brain"]).status.success());
+}
+
+#[test]
+fn web_app_opens_at_the_address_it_prints() {
+    if Command::new("python3").arg("--version").output().is_err() {
+        eprintln!("python3 not found; skipping");
+        return;
+    }
+    let env = setup(None);
+    for id in ["paired", "sneaky"] {
+        assert!(run(&env, &["install", id, "--yes"]).status.success());
+        let started = run(&env, &["start", id]);
+        assert!(started.status.success(), "{}", stderr(&started));
+        let text = stdout(&started);
+        let url = text
+            .split_whitespace()
+            .find(|w| w.starts_with("http"))
+            .expect("start prints the URL");
+        if id == "paired" {
+            assert!(
+                url.starts_with("http://127.0.0.1:") && url.ends_with("/pair#token=abc123"),
+                "{url}"
+            );
+        } else {
+            // A non-local address is ignored; the listing's own URL is used.
+            assert!(
+                url.starts_with("http://127.0.0.1:") && url.ends_with('/'),
+                "{url}"
+            );
+            assert!(stderr(&started).contains("did not print its address"));
+        }
+        assert!(run(&env, &["stop", id]).status.success());
+    }
 }

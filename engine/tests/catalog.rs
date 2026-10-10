@@ -213,6 +213,15 @@ fn background_app_rules() {
             &|s| s.replace("process = true", "process = false"),
             "needs a check",
         ),
+        (
+            &|s| {
+                s.replace(
+                    "kind = \"background\"",
+                    "kind = \"background\"\nurl_from_log_after = \"URL: \"",
+                )
+            },
+            "url_from_log_after is only for kind",
+        ),
     ];
     for (edit, expected) in cases {
         let problems = background_problems(edit);

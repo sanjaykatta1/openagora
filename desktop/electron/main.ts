@@ -89,7 +89,10 @@ function registerIpc(window: BrowserWindow): void {
   }
   ipcMain.handle("logs", (_e, id: unknown) => runEngine(["logs", checkId(id), "-n", "200"]));
   ipcMain.handle("open-external", (_e, url: unknown) => {
-    if (typeof url === "string" && url.startsWith("https://")) return shell.openExternal(url);
+    // Websites, and the user's own apps on this machine ("Open in browser").
+    if (typeof url === "string" && (url.startsWith("https://") || LOCAL_URL.test(url))) {
+      return shell.openExternal(url);
+    }
   });
 }
 

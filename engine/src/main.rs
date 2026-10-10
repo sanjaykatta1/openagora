@@ -284,10 +284,16 @@ fn listing_json(engine: &Engine, m: &Manifest) -> anyhow::Result<serde_json::Val
         })
         .collect();
     let installed = engine.installed(&m.id)?.is_some();
-    let (status, pid, url) = match engine.status(&m.id)? {
-        Status::Running(r) => ("running", Some(r.pid), r.url),
-        Status::Stopped if installed => ("stopped", None, None),
-        Status::Stopped => ("not-installed", None, None),
+    let (status, pid, url, port) = match engine.status(&m.id)? {
+        Status::Running(r) => ("running", Some(r.pid), r.url, r.port),
+        Status::Stopped if installed => ("stopped", None, None, None),
+        Status::Stopped => ("not-installed", None, None, None),
+    };
+    // The app's plain address. `url` can differ: a one-time sign-in link the
+    // app printed at startup, which only works for the first visit.
+    let home_url = match (&m.ui.url, port) {
+        (Some(template), Some(port)) => Some(template.replace("{port}", &port.to_string())),
+        _ => None,
     };
     Ok(serde_json::json!({
         "id": m.id,
@@ -307,5 +313,6 @@ fn listing_json(engine: &Engine, m: &Manifest) -> anyhow::Result<serde_json::Val
         "status": status,
         "pid": pid,
         "url": url,
+        "home_url": home_url,
     }))
 }

@@ -135,3 +135,12 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .webview-wrap { position: absolute; inset: 0; flex-direction: column; background: var(--bg); }
 .webview-bar { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600; }
 .webview { flex: 1; width: 100%; border: 0; }
+.bar-actions { margin-left: auto; display: flex; gap: 14px; }
+.tab-notice { margin: 10px 14px 0; }
+.tab-log { margin: 10px 14px 0; max-height: 40%; overflow: auto; }
+.tab-log-head { display: flex; justify-content: space-between; align-items: center; }
+.stopped-tab { align-items: center; justify-content: center; }
+.stopped-card { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; max-width: 640px; padding: 24px; }
+.stopped-card h2 { font-size: 20px; margin-top: 6px; }
+.stopped-card p { margin: 0; }
+.stopped-log { margin-top: 12px; text-align: left; width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }

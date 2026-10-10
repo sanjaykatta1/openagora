@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { bridge, osName, type App as Listing, type EngineResult } from "./api";
 
 type View = { kind: "store" } | { kind: "library" } | { kind: "app"; id: string } | { kind: "tab"; id: string };
@@ -168,17 +168,22 @@ export function App() {
 
         {tabs.map((id) => {
           const app = byId.get(id);
+          if (!app) return null;
           const visible = view.kind === "tab" && view.id === id;
-          if (!app?.url) return null;
-          return (
-            <div key={id} className="webview-wrap" style={{ display: visible ? "flex" : "none" }}>
-              <div className="webview-bar">
-                <span>{app.name}</span>
-                <span className="muted">{app.url}</span>
-              </div>
-              <webview src={app.url} className="webview" />
-            </div>
-          );
+          // An app can stop on its own (crash, quit elsewhere). Say so in its
+          // tab rather than leaving the tab blank.
+          if (app.status !== "running" || app.pid === null) {
+            return (
+              <StoppedTab
+                key={id}
+                app={app}
+                visible={visible}
+                busy={busy[id]}
+                onStart={() => act(app, "start", "Starting…")}
+              />
+            );
+          }
+          return <AppTab key={`${id}:${app.pid}`} app={app} visible={visible} />;
         })}
       </main>
 
@@ -543,6 +548,131 @@ function ConfirmInstall(props: { app: Listing; onCancel: () => void; onConfirm: 
           </button>
         </footer>
       </div>
+    </div>
+  );
+}
+
+function StoppedTab(props: { app: Listing; visible: boolean; busy?: string; onStart: () => void }) {
+  const [log, setLog] = useState<string | null>(null);
+  const showLog = async () => {
+    const result = await window.openagora?.logs(props.app.id);
+    setLog(result ? (result.ok ? result.stdout : result.stderr) || "(the log is empty)" : null);
+  };
+  return (
+    <div className="webview-wrap stopped-tab" style={{ display: props.visible ? "flex" : "none" }}>
+      <div className="stopped-card">
+        <Monogram app={props.app} size="lg" />
+        <h2>{props.app.name} isn't running</h2>
+        <p className="muted">It may have quit or crashed. Its log usually says why.</p>
+        <div className="actions">
+          <button className="btn primary" disabled={!!props.busy} onClick={props.onStart}>
+            {props.busy ?? "Start"}
+          </button>
+          <button className="btn ghost" onClick={() => void showLog()}>
+            Show log
+          </button>
+        </div>
+        {log !== null && <pre className="log stopped-log">{log}</pre>}
+      </div>
+    </div>
+  );
+}
+
+/** The subset of Electron's <webview> element this page uses. */
+interface WebviewElement extends HTMLElement {
+  reload(): void;
+  loadURL(url: string): Promise<void>;
+}
+
+/** Each start of an app may print a one-time sign-in link (`url`). Use it for
+ *  the first visit only; after that the tab's saved session is signed in, so
+ *  later visits go to the app's plain address (`home_url`). */
+function entryUrl(app: Listing): string {
+  const key = `openagora.entered.${app.id}`;
+  const visit = `${app.pid}`;
+  let entered: string | null = null;
+  try {
+    entered = window.localStorage.getItem(key);
+    window.localStorage.setItem(key, visit);
+  } catch {
+    // Storage unavailable: fall back to the plain address after the first visit.
+  }
+  if (entered === visit && app.home_url) return app.home_url;
+  return app.url ?? app.home_url ?? "about:blank";
+}
+
+function AppTab({ app, visible }: { app: Listing; visible: boolean }) {
+  const ref = useRef<WebviewElement | null>(null);
+  const [src] = useState(() => entryUrl(app));
+  const [failure, setFailure] = useState<string | null>(null);
+  const [log, setLog] = useState<string | null>(null);
+
+  useEffect(() => {
+    const view = ref.current;
+    if (!view) return;
+    const failed = (event: Event) => {
+      const { errorCode, errorDescription, isMainFrame } = event as Event & {
+        errorCode: number;
+        errorDescription: string;
+        isMainFrame: boolean;
+      };
+      // -3 is an aborted load (a redirect or a new navigation), not a failure.
+      if (isMainFrame && errorCode !== -3) setFailure(errorDescription || `error ${errorCode}`);
+    };
+    const loaded = () => setFailure(null);
+    view.addEventListener("did-fail-load", failed);
+    view.addEventListener("did-finish-load", loaded);
+    return () => {
+      view.removeEventListener("did-fail-load", failed);
+      view.removeEventListener("did-finish-load", loaded);
+    };
+  }, []);
+
+  const shownAddress = app.home_url ?? src.split("#")[0];
+  const openInBrowser = () => void window.openagora?.openExternal(app.home_url ?? src);
+  const showLog = async () => {
+    const result = await window.openagora?.logs(app.id);
+    setLog(result ? (result.ok ? result.stdout : result.stderr) || "(the log is empty)" : null);
+  };
+
+  return (
+    <div className="webview-wrap" style={{ display: visible ? "flex" : "none" }}>
+      <div className="webview-bar">
+        <span>{app.name}</span>
+        <span className="muted">{shownAddress}</span>
+        <span className="bar-actions">
+          <button className="link" onClick={() => (setFailure(null), ref.current?.reload())}>
+            Reload
+          </button>
+          <button className="link" onClick={openInBrowser}>
+            Open in browser ↗
+          </button>
+          <button className="link" onClick={() => void showLog()}>
+            Log
+          </button>
+        </span>
+      </div>
+      {failure && (
+        <div className="notice error tab-notice">
+          {app.name} didn't load: {failure}.{" "}
+          <button className="link" onClick={() => (setFailure(null), ref.current?.reload())}>
+            Retry
+          </button>
+        </div>
+      )}
+      {log !== null && (
+        <div className="panel tab-log">
+          <div className="tab-log-head">
+            <h3>{app.name} log</h3>
+            <button className="link" onClick={() => setLog(null)}>
+              Close
+            </button>
+          </div>
+          <pre className="log">{log}</pre>
+        </div>
+      )}
+      {/* A saved session per app, so sign-ins survive restarts and apps don't share cookies. */}
+      <webview ref={ref} src={src} partition={`persist:app-${app.id}`} className="webview" />
     </div>
   );
 }

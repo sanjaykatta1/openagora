@@ -235,6 +235,10 @@ pub enum UiKind {
 pub struct Ui {
     pub kind: UiKind,
     pub url: Option<String>,
+    /// For apps that print their own address at startup, e.g. one carrying a
+    /// one-time sign-in token: the text that comes right before it in the
+    /// app's output. The address after it replaces `url` when found.
+    pub url_from_log_after: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -448,6 +452,14 @@ impl Manifest {
             }
             (_, Some(_)) => out.push("ui.url is only for kind = \"web\"".into()),
             (_, None) => {}
+        }
+        if let Some(marker) = &self.ui.url_from_log_after {
+            if self.ui.kind != UiKind::Web {
+                out.push("ui.url_from_log_after is only for kind = \"web\"".into());
+            }
+            if marker.trim().is_empty() {
+                out.push("ui.url_from_log_after is empty".into());
+            }
         }
         if let Some(agent) = &self.agent {
             check_placeholders(&mut out, "agent.mcp.url", &agent.mcp.url, URL_PLACEHOLDERS);

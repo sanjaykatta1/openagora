@@ -32,7 +32,10 @@ export interface App {
   installed: boolean;
   status: Status;
   pid: number | null;
+  /** Where to open the app: may be a one-time sign-in link it printed at startup. */
   url: string | null;
+  /** The app's plain address while it runs. */
+  home_url: string | null;
 }
 
 export interface EngineResult {

@@ -20,6 +20,8 @@ const START_TIMEOUT: Duration = Duration::from_secs(90);
 /// How long a background app must stay up to count as started.
 const SETTLE: Duration = Duration::from_secs(2);
 const STOP_GRACE: Duration = Duration::from_secs(10);
+/// How long to wait, once the app is up, for it to print its address.
+const LOGGED_URL_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub struct Engine {
     pub paths: Paths,
@@ -188,9 +190,11 @@ impl Engine {
         let program = resolve(&command).with_context(|| format!("{command} was not found"))?;
         let args: Vec<String> = m.run.args.iter().map(|a| fill(a, &vars)).collect();
         let log = self.paths.log_file(&m.id);
+        // Only output from this start counts when looking for the app's address.
+        let log_start = fs::metadata(&log).map(|meta| meta.len()).unwrap_or(0);
         let mut child = process::spawn(&program, &args, &app_dir, &log)?;
         let pid = child.id();
-        let running = Running {
+        let mut running = Running {
             pid,
             port,
             url: m.ui.url.as_ref().map(|u| fill(u, &vars)),
@@ -221,6 +225,18 @@ impl Engine {
                 m.name,
                 log.display()
             );
+        }
+        if let Some(marker) = &m.ui.url_from_log_after {
+            match wait_for_logged_url(&log, log_start, marker, LOGGED_URL_TIMEOUT) {
+                Some(url) => {
+                    running.url = Some(url);
+                    state::write(&self.paths.run_file(&m.id), &running)?;
+                }
+                None => eprintln!(
+                    "warning: {} did not print its address after {marker:?}; using the default address",
+                    m.name
+                ),
+            }
         }
         Ok(running)
     }
@@ -310,8 +326,63 @@ pub fn resolve(target: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
+/// Finds the first local address printed after `marker` in the log, reading
+/// only what was written since `from`. Anything not on 127.0.0.1/localhost is
+/// ignored, so an app can't point its tab at another site.
+fn wait_for_logged_url(log: &Path, from: u64, marker: &str, timeout: Duration) -> Option<String> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if let Some(url) = fs::read(log).ok().and_then(|bytes| {
+            let start = usize::try_from(from).ok()?.min(bytes.len());
+            let text = String::from_utf8_lossy(&bytes[start..]).into_owned();
+            logged_url(&text, marker)
+        }) {
+            return Some(url);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+pub fn logged_url(text: &str, marker: &str) -> Option<String> {
+    text.match_indices(marker).find_map(|(i, _)| {
+        let url = text[i + marker.len()..].split_whitespace().next()?;
+        ["http://127.0.0.1:", "http://localhost:"]
+            .iter()
+            .any(|prefix| url.starts_with(prefix))
+            .then(|| url.to_string())
+    })
+}
+
 pub fn tail(path: &Path, lines: usize) -> Result<String> {
     let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let all: Vec<&str> = text.lines().collect();
     Ok(all[all.len().saturating_sub(lines)..].join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::logged_url;
+
+    #[test]
+    fn finds_local_urls_after_the_marker_only() {
+        let log = "starting\nPairing URL: http://127.0.0.1:4000/pair#token=x\nready";
+        assert_eq!(
+            logged_url(log, "Pairing URL: ").as_deref(),
+            Some("http://127.0.0.1:4000/pair#token=x")
+        );
+        assert_eq!(
+            logged_url("Pairing URL: https://evil.example/", "Pairing URL: "),
+            None
+        );
+        assert_eq!(logged_url("nothing here", "Pairing URL: "), None);
+        // A later local URL is used if an earlier one isn't local.
+        let mixed = "Pairing URL: https://x.example/ then Pairing URL: http://localhost:9/a";
+        assert_eq!(
+            logged_url(mixed, "Pairing URL: ").as_deref(),
+            Some("http://localhost:9/a")
+        );
+    }
 }

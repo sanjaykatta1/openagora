@@ -63,7 +63,7 @@ A listing describes an app in four parts. The full schema is in
 | `[install]` | what it provides (an executable on PATH or a path under `{app_dir}`), plus ordered steps per OS; a step can first download a file from the app's latest GitHub release, picked per CPU |
 | `[update]`, `[uninstall]` | the app's own commands for these |
 | `[run]` | command (same everywhere or per OS) and args, port (`auto`, fixed, or none), health check (`tcp` or `process`) |
-| `[ui]` | `web` (tab), `terminal` (terminal tab), `window` (own window) or `background` (menu-bar, tray or shortcut utility), plus URL for `web` |
+| `[ui]` | `web` (tab), `terminal` (terminal tab), `window` (own window) or `background` (menu-bar, tray or shortcut utility), plus URL for `web`, and optionally `url_from_log_after`: the text the app prints right before its real address at startup, for apps that hand out a one-time sign-in link (only 127.0.0.1/localhost addresses are accepted) |
 | `[agent]` | the app's MCP URL and auth, plus the permissions Hermes asks for |
 
 Placeholders the engine fills in: `{app_dir}` (the app's own folder under

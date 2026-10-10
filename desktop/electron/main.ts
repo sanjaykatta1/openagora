@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { readAgentPreferences, saveAgentPreferences } from "./preferences";
+import { registerUpdater } from "./updater";
 
 const EXE = process.platform === "win32" ? "openagora.exe" : "openagora";
 const LOCAL_URL = /^http:\/\/(127\.0\.0\.1|localhost):\d+(\/|$)/;
@@ -136,6 +137,7 @@ app.on("web-contents-created", (_event, contents) => {
 
 app.whenReady().then(() => {
   registerIpc();
+  registerUpdater();
   createWindow();
 });
 app.on("window-all-closed", () => {

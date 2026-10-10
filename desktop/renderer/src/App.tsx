@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { bridge, osName, type App as Listing, type EngineResult } from "./api";
+import { bridge, osName, type App as Listing, type EngineResult, type UpdateState } from "./api";
 import { NEW_AGENT_PREFERENCES, PERSONAL_AGENTS, parseAgentPreferences, type AgentPreferences } from "../../electron/agents";
 import { AgentChooser, PersonalAgentPage } from "./PersonalAgent";
 
@@ -194,6 +194,7 @@ export function App() {
             </nav>
           </>
         )}
+        <UpdateCard />
         <div className="sidebar-foot">{bridge ? `Running on ${osName(bridge.platform)}` : "Preview"}</div>
       </aside>
 
@@ -571,6 +572,69 @@ function InstallSteps({ app }: { app: Listing }) {
       ))}
     </ol>
   );
+}
+
+const RELEASES = "https://github.com/sanjaykatta1/openagora/releases/latest";
+
+/** OpenAgora's own update: shown only when there's something to do. */
+function UpdateCard() {
+  const [state, setState] = useState<UpdateState | null>(null);
+  useEffect(() => {
+    if (!bridge) return;
+    const stop = bridge.update.onState(setState);
+    void bridge.update.state().then(setState);
+    return stop;
+  }, []);
+  if (!bridge || !state) return null;
+  const update = bridge.update;
+  switch (state.kind) {
+    case "available":
+      return (
+        <div className="update-card">
+          <div>OpenAgora {state.version} is available.</div>
+          <button className="btn primary" onClick={() => void update.download()}>
+            Update
+          </button>
+        </div>
+      );
+    case "downloading":
+      return (
+        <div className="update-card">
+          <div>Downloading {state.version}…</div>
+          <div className="update-bar">
+            <div style={{ width: `${state.percent}%` }} />
+          </div>
+        </div>
+      );
+    case "ready":
+      return (
+        <div className="update-card">
+          <div>OpenAgora {state.version} is ready to install.</div>
+          <button className="btn primary" onClick={() => void update.install()}>
+            Restart to update
+          </button>
+        </div>
+      );
+    case "error":
+      return (
+        <div className="update-card">
+          <div>Couldn't update OpenAgora.</div>
+          <div className="update-error" title={state.message}>
+            {state.message}
+          </div>
+          <div className="actions">
+            <button className="btn" onClick={() => void update.check()}>
+              Try again
+            </button>
+            <button className="btn ghost" onClick={() => void bridge?.openExternal(RELEASES)}>
+              Download ↗
+            </button>
+          </div>
+        </div>
+      );
+    default:
+      return null;
+  }
 }
 
 function Permissions({ app }: { app: Listing }) {

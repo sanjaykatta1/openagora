@@ -1,7 +1,7 @@
 {
   "name": "openagora-desktop",
   "productName": "OpenAgora",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "An open-source app store for your desktop",
   "license": "MIT",
   "private": true,

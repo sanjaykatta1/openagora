@@ -1,6 +1,7 @@
 // What the window can ask the engine for. In the desktop app this is the
 // preload bridge; opened in a plain browser (`npm run preview`) it is null and
 // the UI says so instead of pretending.
+import type { AgentPreferences } from "../../electron/agents";
 
 export type Status = "not-installed" | "stopped" | "running";
 
@@ -46,6 +47,8 @@ export interface EngineResult {
 
 export interface Bridge {
   platform: string;
+  agentPreferences(): Promise<AgentPreferences>;
+  saveAgentPreferences(value: AgentPreferences): Promise<AgentPreferences>;
   catalog(): Promise<App[]>;
   install(id: string): Promise<EngineResult>;
   uninstall(id: string): Promise<EngineResult>;

@@ -5,8 +5,15 @@ An open-source app store for your desktop.
 - **Find open-source apps** in one store, and install them with one click from
   their official source.
 - **Use them side by side** in one window. Each app keeps its own interface.
-- **Bring your own agent** (coming next): pick the open-source personal agent you
-  like, and it works across every app you've installed.
+- **Choose your personal agent** on first launch, or choose later. Change your
+  preference anytime from **Personal agent** in the sidebar. Connections across
+  apps are coming next.
+
+The next desktop build offers Hermes, OpenClaw, Goose, nanobot, NanoClaw,
+PicoClaw, and ZeroClaw. Hermes has a Store installer; the other choices link to
+their official setup guides. Choosing an agent saves a preference on this
+computer; it doesn't install software or grant access to apps. The existing
+downloads below do not yet include this chooser.
 
 ## Download
 

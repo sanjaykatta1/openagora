@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { readAgentPreferences, saveAgentPreferences } from "./preferences";
 
 const EXE = process.platform === "win32" ? "openagora.exe" : "openagora";
 const LOCAL_URL = /^http:\/\/(127\.0\.0\.1|localhost):\d+(\/|$)/;
@@ -64,7 +65,7 @@ function runEngine(args: string[], onLine?: (line: string) => void): Promise<Eng
 
 const VALID_ID = /^[a-z][a-z0-9-]*$/;
 
-function registerIpc(window: BrowserWindow): void {
+function registerIpc(): void {
   const checkId = (id: unknown): string => {
     if (typeof id !== "string" || !VALID_ID.test(id)) throw new Error("invalid app id");
     return id;
@@ -74,10 +75,12 @@ function registerIpc(window: BrowserWindow): void {
     if (!r.ok) throw new Error(r.stderr || "could not read the catalog");
     return JSON.parse(r.stdout);
   });
-  ipcMain.handle("install", (_e, id: unknown) => {
+  ipcMain.handle("agent-preferences", () => readAgentPreferences(app.getPath("userData")));
+  ipcMain.handle("save-agent-preferences", (_e, value: unknown) => saveAgentPreferences(app.getPath("userData"), value));
+  ipcMain.handle("install", (event, id: unknown) => {
     const appId = checkId(id);
     return runEngine(["install", appId, "--yes"], (line) =>
-      window.webContents.send("progress", { id: appId, line }),
+      !event.sender.isDestroyed() && event.sender.send("progress", { id: appId, line }),
     );
   });
   for (const action of ["uninstall", "start", "stop"] as const) {
@@ -113,7 +116,6 @@ function createWindow(): void {
       webviewTag: true,
     },
   });
-  registerIpc(window);
   window.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
 }
 
@@ -132,7 +134,10 @@ app.on("web-contents-created", (_event, contents) => {
   });
 });
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  registerIpc();
+  createWindow();
+});
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });

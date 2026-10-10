@@ -77,6 +77,12 @@ jobs:
         working-directory: desktop
       - run: npm run typecheck
         working-directory: desktop
+      - run: npm test
+        working-directory: desktop
+      - name: Test first-launch agent choice
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:ui
+        working-directory: desktop
       - name: Package Windows and Linux
         if: runner.os != 'macOS'
         working-directory: desktop

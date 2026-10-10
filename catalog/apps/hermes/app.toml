@@ -1,14 +1,14 @@
 schema = "openagora/v1"
 id = "hermes"
 name = "Hermes"
-summary = "Nous Research's agent with persistent memory. OpenAgora's built-in agent across all apps."
+summary = "Nous Research's personal agent with persistent memory and reusable skills."
 category = "agents"
 homepage = "https://hermes-agent.nousresearch.com"
 source = "https://github.com/NousResearch/hermes-agent"
 license = "MIT"
 platforms = ["macos", "linux", "windows"]
-# Installed with OpenAgora itself and cannot be removed: it is the agent that
-# talks to every other app.
+# Keep engine removal protection for this externally managed installation.
+# This role does not select the user's personal agent.
 role = "agent"
 
 [install]

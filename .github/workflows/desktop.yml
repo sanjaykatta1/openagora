@@ -1,7 +1,8 @@
 name: desktop
 # Builds the OpenAgora desktop app (Electron) with the engine bundled inside:
 # .dmg for macOS (Apple Silicon and Intel), .exe installer for Windows, and
-# AppImage + .deb for Linux.
+# AppImage + .deb for Linux. Each release also carries the files the app's
+# Update button reads: latest*.yml, Mac .zip apps, and .blockmap files.
 #   - On every push to main that touches the app or engine: build and upload
 #     the installers as workflow artifacts.
 #   - Run by hand with a version (e.g. v0.3.0): also attach them to that
@@ -105,17 +106,26 @@ jobs:
           python3 - <<'PY'
           import pathlib, subprocess, sys
           for path in pathlib.Path('desktop/release').iterdir():
-              if path.suffix in {'.dmg', '.exe', '.AppImage', '.deb'}:
+              if path.suffix in {'.dmg', '.zip', '.exe', '.AppImage', '.deb'}:
                   subprocess.run([sys.executable, 'packaging/checksums.py', str(path)], check=True)
           PY
+      # The in-app updater reads latest*.yml from the release. Both Mac jobs
+      # write latest-mac.yml, so name each by architecture; publish merges them.
+      - name: Keep the update files
+        if: runner.os == 'macOS'
+        shell: bash
+        run: mv desktop/release/latest-mac.yml "desktop/release/latest-mac-${{ matrix.arch }}.yml"
       - uses: actions/upload-artifact@v4
         with:
           name: OpenAgora-${{ matrix.name }}
           path: |
             desktop/release/*.dmg
+            desktop/release/*.zip
             desktop/release/*.exe
             desktop/release/*.AppImage
             desktop/release/*.deb
+            desktop/release/*.blockmap
+            desktop/release/latest*.yml
             desktop/release/*.sha256
           if-no-files-found: error
 
@@ -126,16 +136,27 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: src
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
+      - name: Merge the Mac update files
+        run: |
+          python3 src/packaging/merge-mac-update.py latest-mac.yml latest-mac-arm64.yml latest-mac-x64.yml
+          rm latest-mac-arm64.yml latest-mac-x64.yml
+          ls latest.yml latest-mac.yml latest-linux.yml
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.version }}
           target_commitish: ${{ github.sha }}
           files: |
             *.dmg
+            *.zip
             *.exe
             *.AppImage
             *.deb
+            *.blockmap
+            latest*.yml
             *.sha256

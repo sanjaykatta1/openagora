@@ -106,6 +106,7 @@ export function App() {
       if (result.ok) {
         const done = { install: "installed", uninstall: "removed", start: "started", stop: "stopped" }[action];
         setToast({ text: `${app.name} ${done}.`, error: false });
+        if (action === "install" && app.id === preferences?.selectedAgent) setView({ kind: "personal-agent" });
         if (action === "stop" || action === "uninstall") setTabs((t) => t.filter((id) => id !== app.id));
         if (action === "start" && app.ui === "web") openTab(app.id);
       } else {
@@ -113,7 +114,7 @@ export function App() {
       }
     },
     // openTab only calls state setters, so it never goes stale.
-    [refresh],
+    [refresh, preferences?.selectedAgent],
   );
 
   const openTab = (id: string) => {
@@ -210,8 +211,10 @@ export function App() {
           <AgentChooser firstLaunch={false} selected={preferences.selectedAgent} saving={savingPreferences} error={preferenceError}
             onSave={(id) => void saveAgent(id)} onCancel={() => { setChoosingAgent(false); setPreferenceError(null); }} />
         ) : (
-          <PersonalAgentPage agent={personalAgent} listing={personalAgent?.catalogId ? byId.get(personalAgent.catalogId) : undefined}
-            onChange={() => setChoosingAgent(true)} onOpenListing={(id) => setView({ kind: "app", id })} />
+          <PersonalAgentPage key={personalAgent?.id ?? "none"} agent={personalAgent} listing={personalAgent?.catalogId ? byId.get(personalAgent.catalogId) : undefined}
+            busy={personalAgent?.catalogId ? busy[personalAgent.catalogId] : undefined}
+            onChange={() => setChoosingAgent(true)} onOpenListing={(id) => setView({ kind: "app", id })}
+            onOpenApp={(app) => app.status === "running" ? openTab(app.id) : void act(app, "start", "Starting…")} />
         ))}
 
         {view.kind === "store" && <Store apps={apps} busy={busy} onOpen={(id) => setView({ kind: "app", id })} onInstall={setConfirming} />}

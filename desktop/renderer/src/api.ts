@@ -57,6 +57,8 @@ export type UpdateState =
 
 export interface Bridge {
   platform: string;
+  agentAvailability(id: string): Promise<{ detected: boolean; launchable: boolean }>;
+  launchAgent(id: string, action: string): Promise<void>;
   agentPreferences(): Promise<AgentPreferences>;
   saveAgentPreferences(value: AgentPreferences): Promise<AgentPreferences>;
   catalog(): Promise<App[]>;

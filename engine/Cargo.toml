@@ -1,6 +1,6 @@
 [package]
 name = "openagora"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 description = "OpenAgora engine: installs, runs and supervises open-source apps from the OpenAgora catalog."
 license = "MIT"

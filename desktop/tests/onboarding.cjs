@@ -23,15 +23,16 @@ async function launch() {
   // Make catalog availability deterministic; leave the preference bridge real.
   await app.evaluate(({ ipcMain }) => {
     ipcMain.removeHandler('catalog');
-    ipcMain.handle('catalog', () => [{
+    globalThis.fixtureListing = {
       id: 'hermes', name: 'Hermes', summary: 'An agent with memory', category: 'agents',
       homepage: 'https://hermes-agent.nousresearch.com', source: 'https://github.com/NousResearch/hermes-agent',
       license: 'MIT', platforms: ['macos', 'linux', 'windows'], available: true, role: 'agent',
       ui: 'web', steps: [], permissions: [], installed: false, status: 'not-installed',
       pid: null, url: null, home_url: null,
-    }]);
+    };
+    ipcMain.handle('catalog', () => [globalThis.fixtureListing]);
     ipcMain.removeHandler('install');
-    ipcMain.handle('install', () => { throw new Error('Tests must not install agents'); });
+    ipcMain.handle('install', () => { globalThis.fixtureListing.installed = true; globalThis.fixtureListing.status = 'stopped'; return { ok: true, stdout: '', stderr: '' }; });
   });
   await page.reload();
 }
@@ -62,7 +63,28 @@ async function run() {
   if (process.env.ONBOARDING_SCREENSHOT) await page.screenshot({ path: process.env.ONBOARDING_SCREENSHOT, fullPage: true });
   await choose('OpenClaw');
   assert.equal(await page.getByRole('button', { name: /Review .* installation/ }).count(), 0);
-  assert.match(await page.locator('body').innerText(), /Setup outside OpenAgora/);
+  assert.match(await page.locator('body').innerText(), /Install through the official project/);
+  // Installed CLI detection is separate from being configured or connected.
+  await app.evaluate(({ ipcMain }) => {
+    globalThis.nativeAgentCalls = [];
+    ipcMain.removeHandler('agent-availability');
+    ipcMain.handle('agent-availability', () => ({ detected: true, launchable: true }));
+    ipcMain.removeHandler('launch-agent');
+    ipcMain.handle('launch-agent', (_event, id, action) => { globalThis.nativeAgentCalls.push({ id, action }); });
+  });
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await page.getByRole('button', { name: 'Open OpenClaw onboarding', exact: true }).click();
+  await page.getByRole('status').waitFor();
+  assert.deepEqual(await app.evaluate(() => globalThis.nativeAgentCalls), [{ id: 'openclaw', action: 'setup' }]);
+  assert.equal(await page.getByRole('textbox').count(), 0); // No OpenAgora credential/configuration forms.
+  await app.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler('launch-agent');
+    ipcMain.handle('launch-agent', () => { throw new Error('No terminal app was found'); });
+  });
+  await page.getByRole('button', { name: 'Open OpenClaw dashboard', exact: true }).click();
+  await page.getByRole('alert').waitFor();
+  assert.match(await page.getByRole('alert').innerText(), /No terminal app/);
+
 
   // A true application restart must bypass first-run onboarding.
   await app.close();
@@ -77,6 +99,10 @@ async function run() {
   await page.getByRole('button', { name: 'Install', exact: true }).click();
   await page.getByRole('dialog', { name: 'Install Hermes?' }).waitFor();
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: 'Install', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Install', exact: true }).click();
+  await heading('Personal agent');
+  await page.getByRole('button', { name: 'Start and open Hermes', exact: true }).waitFor();
 
   await page.getByRole('button', { name: /Personal agent/ }).click();
   await page.getByRole('button', { name: 'Change agent' }).click();

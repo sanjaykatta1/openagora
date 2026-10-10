@@ -97,6 +97,14 @@ repository. Local signing can alternatively use `NOTARY_KEY_PATH`,
 
 ## Install verification and publication
 
+For a combined desktop/CLI release, dispatch both `desktop.yml` and `release.yml`
+at the same verified commit with the matching version, `publish: true` and
+`draft: true`. Both workflows attach artifacts to the same draft release only
+after their platform checks pass. Verify that both runs succeeded, the expected
+desktop/CLI installers, checksums and updater metadata are present, then publish
+the draft. This avoids advertising a partial release while the other workflow
+is still signing or testing. Existing dispatches default to immediate publication.
+
 The release workflow runs on PRs, building artifacts and running clean
 install/run/uninstall tests. These
 events cannot publish. Tag pushes and publishing workflow dispatches also run

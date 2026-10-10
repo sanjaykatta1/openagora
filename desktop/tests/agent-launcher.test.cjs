@@ -45,12 +45,14 @@ test('native command preserves paths with spaces, quotes, and shell metacharacte
   const dir = directory(t);
   const args = ['setup', 'a b', "single'quote", '$(echo unwanted)', '$HOME', '; echo unsafe'];
   const script = path.join(dir, 'record.cjs');
-  fs.writeFileSync(script, 'process.stdout.write(JSON.stringify({args:process.argv.slice(2),cwd:process.cwd()}))');
+  fs.writeFileSync(path.join(dir, 'workspace-marker'), 'intended workspace');
+  fs.writeFileSync(script, 'process.stdout.write(JSON.stringify({args:process.argv.slice(2),workspace:require("node:fs").readFileSync("workspace-marker","utf8")}))');
   const command = nativeCommand(process.execPath, [script, ...args], dir);
   const actual = process.platform === 'win32'
     ? execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')], { encoding: 'utf8' })
     : execFileSync('/bin/sh', ['-c', command], { encoding: 'utf8' });
   const result = JSON.parse(actual);
   assert.deepEqual(result.args, args);
-  assert.equal(fs.realpathSync(result.cwd), fs.realpathSync(dir));
+  // Windows may spell the same directory with an 8.3 alias or its long name.
+  assert.equal(result.workspace, 'intended workspace');
 });

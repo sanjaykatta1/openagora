@@ -68,8 +68,10 @@ fn fresh_install_sets_up_sunday_and_opens_its_dashboard() {
         "{soul}"
     );
     assert!(soul.contains("Your name is Sunday"));
+    // Sunday says what it is built on, and who made it.
+    assert!(soul.contains("built on Hermes Agent, the open-source agent by Nous Research"));
     // Hermes's seeded text is kept under the block.
-    assert!(soul.contains("built by Nous Research"));
+    assert!(soul.contains("You are Hermes Agent, built by Nous Research."));
 
     let status = env.json(&["sunday", "status", "--json"]);
     assert_eq!(status["setup"], "ready");

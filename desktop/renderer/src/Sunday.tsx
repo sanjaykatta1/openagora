@@ -8,6 +8,7 @@ import { ExternalLink } from "./PersonalAgent";
 
 const HERMES_SOURCE = "https://github.com/NousResearch/hermes-agent";
 const HERMES_LICENSE = "https://github.com/NousResearch/hermes-agent/blob/main/LICENSE";
+const NOUS_RESEARCH = "https://nousresearch.com";
 
 /** Hermes's own dashboard pages for Sunday's profile, opened by Settings → Sunday. */
 export const DASHBOARD_PAGES: readonly { route: string; label: string; about: string }[] = [
@@ -46,9 +47,11 @@ export function sundayStage(status: SundayStatus | null): SundayStage {
   return status.dashboard === "running" && status.url ? "running" : "start";
 }
 
-function Credit() {
+/** Sunday is Hermes Agent, renamed. Wherever Sunday is shown, it says so: its
+ *  makers and its license. */
+export function HermesCredit() {
   return <span className="credit">
-    powered by <ExternalLink url={HERMES_SOURCE}>Hermes</ExternalLink> · <ExternalLink url={HERMES_LICENSE}>MIT license</ExternalLink>
+    powered by <ExternalLink url={HERMES_SOURCE}>Hermes Agent</ExternalLink> from <ExternalLink url={NOUS_RESEARCH}>Nous Research</ExternalLink> · <ExternalLink url={HERMES_LICENSE}>MIT license</ExternalLink>
   </span>;
 }
 
@@ -83,7 +86,7 @@ export function SundayHome(props: {
     <div className="sunday-mark" aria-hidden>☀</div>
     <div>
       <h1>Sunday</h1>
-      <p className="muted">OpenAgora’s personal agent · <Credit /></p>
+      <p className="muted">OpenAgora’s personal agent · <HermesCredit /></p>
     </div>
   </header>;
 
@@ -93,7 +96,7 @@ export function SundayHome(props: {
     {head}
     <div className="panel sunday-card">
       <h2>Meet Sunday</h2>
-      <p>Sunday remembers across your apps and carries your work to the coding agents you use. It runs on Hermes, in a Hermes profile of its own.</p>
+      <p>Sunday remembers across your apps and carries your work to the coding agents you use. It is Hermes Agent, the open-source agent by Nous Research, running in a Hermes profile of its own.</p>
       <button className="btn primary big" onClick={props.onChoose}>Use Sunday</button>
     </div>
   </section>;
@@ -106,7 +109,7 @@ export function SundayHome(props: {
     case "install":
       body = <div className="panel sunday-card">
         <h2>Install Hermes to meet Sunday</h2>
-        <p>Sunday remembers across your apps and carries your work to the coding agents you use. It runs on Hermes, an open-source agent by Nous Research, installed from its official source.</p>
+        <p>Sunday remembers across your apps and carries your work to the coding agents you use. It is Hermes Agent, the open-source agent by Nous Research, installed from its official source.</p>
         <p className="muted small">Hermes’s own setup then asks for your model provider. OpenAgora never sees your keys or sign-ins.</p>
         {listing && !listing.available ? <p className="muted">Hermes isn’t available on this computer.</p> : (
           <button className="btn primary big" disabled={!!props.busy || !listing} onClick={props.onInstall}>{props.busy ?? "Install Hermes"}</button>
@@ -234,7 +237,7 @@ export function SundayDashboard(props: { status: SundayStatus; visible: boolean;
   return <div className="webview-wrap" style={{ display: props.visible ? "flex" : "none" }} aria-hidden={!props.visible}>
     <div className="webview-bar">
       <span className="sunday-title"><span aria-hidden>☀</span> Sunday</span>
-      <Credit />
+      <HermesCredit />
       <span className="bar-actions">
         <button className="link" onClick={() => (setFailure(null), ref.current?.reload())}>Reload</button>
         <button className="link" onClick={() => void bridge?.openExternal(dashboardUrl(status.url!, props.route, status.profile))}>Open in browser ↗</button>
@@ -287,6 +290,7 @@ export function SundaySettings(props: {
 
     <div className="panel">
       <h3>Sunday</h3>
+      <p className="credits">Sunday is <ExternalLink url={HERMES_SOURCE}>Hermes Agent</ExternalLink>, the open-source agent by <ExternalLink url={NOUS_RESEARCH}>Nous Research</ExternalLink>, under the <ExternalLink url={HERMES_LICENSE}>MIT license</ExternalLink>. OpenAgora gives it Sunday’s name and shows Hermes’s own dashboard, setup and settings; the agent itself is Hermes.</p>
       {!status ? <p className="muted">Checking Sunday…</p> : !ready ? <p className="muted">Sunday isn’t set up yet. Open Sunday from the sidebar to set it up.</p> : <>
         <p>Runs in Hermes’s “{status.profile}” profile{status.version ? ` · Hermes ${status.version}` : ""} · <span className="muted small">{status.profile_dir}</span></p>
         <GatewayLine status={status} />
@@ -322,7 +326,7 @@ export function SundaySettings(props: {
 
     <div className="panel">
       <h3>Personal agent</h3>
-      <p>Sunday, powered by Hermes. More agents are coming soon.</p>
+      <p>Sunday, powered by Hermes Agent from Nous Research. More agents are coming soon.</p>
       <button className="btn ghost" onClick={props.onChangeAgent}>Change personal agent</button>
     </div>
 

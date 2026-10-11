@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { bridge, type ConfirmRequest, type ShortcutState, type SundayStatus } from "./api";
 import { AgentConfirm } from "./Confirm";
-import { dashboardUrl } from "./Sunday";
+import { dashboardUrl, HermesCredit } from "./Sunday";
 
 export const PROVIDER_NOTICE = "Anything Sunday looks at is sent to the model provider you chose for Sunday.";
 
@@ -120,7 +120,10 @@ export function Panel() {
       onDragLeave={() => setDragging(false)}
       onDrop={onDrop}>
       <header className="panel-head">
-        <span className="sunday-title"><span aria-hidden>☀</span> Sunday</span>
+        <span className="panel-title">
+          <span className="sunday-title"><span aria-hidden>☀</span> Sunday</span>
+          <HermesCredit />
+        </span>
         <span className="bar-actions">
           <button className="link" onClick={() => void bridge?.showMain()}>Open OpenAgora</button>
           <button className="link" aria-label="Close" title="Close (Esc)" onClick={() => void bridge?.panel.hide()}>×</button>

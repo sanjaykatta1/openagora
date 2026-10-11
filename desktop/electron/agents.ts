@@ -17,11 +17,11 @@ export interface PersonalAgent {
 
 export const PERSONAL_AGENTS: readonly PersonalAgent[] = [
   {
-    id: "hermes", name: "Sunday", poweredBy: "Hermes", license: "MIT",
+    id: "hermes", name: "Sunday", poweredBy: "Hermes Agent from Nous Research", license: "MIT",
     summary: "OpenAgora’s personal agent. Remembers across your apps and carries your work to the coding agents you use.",
     source: "https://github.com/NousResearch/hermes-agent",
     setup: "https://hermes-agent.nousresearch.com/docs/",
-    note: "Sunday runs on Hermes, in a Hermes profile of its own. Hermes’s own setup configures your model provider.",
+    note: "Sunday is Hermes Agent, the open-source agent by Nous Research, in a Hermes profile of its own. Hermes’s own setup configures your model provider.",
     catalogId: "hermes",
   },
   {

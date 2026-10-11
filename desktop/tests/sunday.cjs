@@ -20,7 +20,8 @@ async function freshUser(dashboard) {
   await page.getByRole('radio', { name: /^Sunday/ }).check();
   await page.getByRole('button', { name: 'Continue with Sunday' }).click();
   await heading(page, 'Install Hermes to meet Sunday');
-  assert.match(await page.locator('body').innerText(), /powered by Hermes/);
+  // Credit where it's due: Sunday is Hermes Agent, by Nous Research.
+  assert.match(await page.locator('body').innerText(), /powered by Hermes Agent( ↗)? from Nous Research( ↗)? · MIT license/);
 
   // Installing Hermes reviews the official installer first, then sets up
   // Sunday's own profile and opens Hermes's own model setup.
@@ -33,11 +34,12 @@ async function freshUser(dashboard) {
   assert.deepEqual(await fakeCalls(app), [['install', 'hermes'], ['sunday-setup', 'default'], ['start', 'hermes']]);
   const bar = page.locator('.webview-bar');
   assert.match(await bar.innerText(), /Sunday/);
-  assert.match(await bar.innerText(), /powered by Hermes/);
+  assert.match(await bar.innerText(), /powered by Hermes Agent( ↗)? from Nous Research/);
 
   // Settings → Sunday opens Hermes's own pages for Sunday's profile.
   await page.getByRole('button', { name: /^Settings/ }).click();
   await heading(page, 'Settings');
+  assert.match(await page.locator('body').innerText(), /Sunday is Hermes Agent( ↗)?, the open-source agent by Nous Research( ↗)?, under the MIT license/);
   assert.match(await page.locator('body').innerText(), /Messaging gateway stopped/);
   for (const name of ['Models', 'Channels', 'Pairing', 'Skills', 'Plugins', 'MCP', 'Cron', 'Config', 'Keys', 'Sessions', 'Logs']) {
     await page.getByRole('button', { name: new RegExp(`^${name}`) }).waitFor();

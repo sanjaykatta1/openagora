@@ -669,6 +669,8 @@ mod tests {
         assert_eq!(block.matches(END).count(), 1);
         assert!(block.contains("Your name is Sunday"));
         assert!(block.contains("coding agents"));
+        // Credit where it's due: Sunday is Hermes Agent, by Nous Research.
+        assert!(block.contains("Hermes Agent") && block.contains("give Nous Research the credit"));
     }
 
     #[test]

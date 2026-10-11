@@ -80,6 +80,7 @@ async function run() {
   const panel = await panelPage(app);
   await panel.getByText('Sunday can’t see Web notes yet.').waitFor();
   assert.equal(await panelVisible(app), true);
+  assert.match(await panel.locator('.panel-head').innerText(), /powered by Hermes Agent( ↗)? from Nous Research( ↗)? · MIT license/);
   assert.equal(await app.evaluate(() => globalThis.openagoraTest.panel().isAlwaysOnTop()), true);
   await waitFor(() => dashboard.requests.includes('/chat?profile=sunday'), 'Sunday’s chat in the panel');
   assert.match(await panel.locator('body').innerText(), /sent to the model provider/);

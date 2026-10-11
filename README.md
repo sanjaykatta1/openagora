@@ -5,8 +5,9 @@ An open-source app store for your desktop.
 - **Find open-source apps** in one store, and install them with one click from
   their official source.
 - **Use them side by side** in one window. Each app keeps its own interface.
-- **Meet Sunday**, OpenAgora's personal agent. Sunday runs on the open-source
-  [Hermes](https://github.com/NousResearch/hermes-agent) agent, in a Hermes
+- **Meet Sunday**, OpenAgora's personal agent. Sunday is
+  [Hermes Agent](https://github.com/NousResearch/hermes-agent), the open-source
+  agent by [Nous Research](https://nousresearch.com), running in a Hermes
   profile of its own, so a Hermes you already use is left exactly as it is.
   Sunday's home screen, setup and settings are Hermes's own; OpenAgora never sees
   your keys or sign-ins. Sunday can find, install and open apps from the store for
@@ -55,6 +56,13 @@ cd ../desktop && npm install && npm start  # the desktop app
 
 Design notes are in [docs/SPEC.md](docs/SPEC.md). Packaging and releases are in
 [packaging/README.md](packaging/README.md).
+
+## Credits
+
+Sunday is [Hermes Agent](https://github.com/NousResearch/hermes-agent) by
+[Nous Research](https://nousresearch.com), under the MIT license. OpenAgora gives
+it Sunday's name and a place on your desktop. The agent itself, with its
+dashboard, setup, memory, skills and messaging, is Hermes's work.
 
 ## License
 

@@ -308,7 +308,9 @@ logs.
   is kept.
 - **Home screen.** Hermes's dashboard for Sunday's profile
   (`hermes -p sunday dashboard --isolated …`, opened with `?profile=sunday`),
-  labelled Sunday, with "powered by Hermes" credit and license. An install,
+  labelled Sunday, with a "powered by Hermes Agent from Nous Research" credit
+  and its license (also in the dashboard's bar, Sunday's panel, Settings, the
+  agent chooser and OpenAgora's About box). An install,
   update, choice or start screen comes first when needed.
 - **Settings → Sunday** opens Hermes's own pages for the profile (Models,
   Channels, Pairing, Skills, Plugins, MCP, Cron, Config, Keys, Sessions, Logs,

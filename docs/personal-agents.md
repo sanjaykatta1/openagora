@@ -3,9 +3,16 @@
 Sunday is OpenAgora's personal agent. It remembers across your apps, can see the
 app you're working in when you call it with its shortcut, and will carry your
 work to the coding agents you use. Underneath, Sunday is
-[Hermes](https://hermes-agent.nousresearch.com/docs/) by Nous Research (MIT):
-OpenAgora does not implement its own agent, chat screen, setup or settings. It
-shows Hermes's own dashboard and pages, labelled Sunday.
+[Hermes Agent](https://hermes-agent.nousresearch.com/docs/) by
+[Nous Research](https://nousresearch.com) (MIT license): OpenAgora does not
+implement its own agent, chat screen, setup or settings. It shows Hermes's own
+dashboard and pages, labelled Sunday.
+
+**Credit where it's due.** OpenAgora says Sunday is Hermes Agent by Nous Research
+wherever Sunday appears: on the home screen, in the dashboard's bar, in Sunday's
+panel, in Settings, in the agent chooser and in OpenAgora's About box, each with
+a link to Hermes's source and its MIT license. Sunday says so itself when it
+describes who it is or what it runs on.
 
 Other personal agents (OpenClaw, Goose, nanobot, NanoClaw, PicoClaw and
 ZeroClaw) are shown in the chooser as **Coming soon**. If you chose one of them
@@ -66,7 +73,8 @@ keeps a marked block at the top of Sunday's `SOUL.md`
 (`<!-- openagora:sunday:begin -->` … `<!-- openagora:sunday:end -->`). The block's
 text lives in this repository, in [`sunday/SOUL.md`](../sunday/SOUL.md). It says:
 
-- its name is Sunday, on every surface and messaging channel;
+- its name is Sunday, on every surface and messaging channel, and it is built on
+  Hermes Agent by Nous Research, which it says when it describes itself;
 - what OpenAgora is, and Sunday's job: work across your apps and coding agents,
   carry context between them, install and manage apps with your confirmation, and
   remember across apps and sessions;
@@ -192,7 +200,8 @@ or change the shortcut, in **Settings → What Sunday can see**.
 ## Home screen and settings
 
 The home screen is Hermes's dashboard for Sunday's profile, labelled **Sunday**,
-with a "powered by Hermes" credit and a link to its MIT license. OpenAgora runs it
+with a "powered by Hermes Agent from Nous Research" credit and a link to its MIT
+license. OpenAgora runs it
 as `hermes -p sunday dashboard --isolated --host 127.0.0.1 --port <port> --no-open`.
 `--isolated` gives Sunday a dashboard server of its own, so OpenAgora never
 attaches to, or takes over, a Hermes dashboard you already run. Pages always open

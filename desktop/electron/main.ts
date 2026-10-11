@@ -288,7 +288,7 @@ function updateTray(): void {
   try {
     if (!tray) {
       tray = new Tray(trayIcon());
-      tray.setToolTip("OpenAgora");
+      tray.setToolTip("OpenAgora · Sunday, powered by Hermes Agent from Nous Research");
       tray.on("click", () => { if (process.platform !== "darwin") showMain(); });
     }
     tray.setContextMenu(Menu.buildFromTemplate([
@@ -578,6 +578,14 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on("second-instance", showMain);
   app.whenReady().then(() => {
+    // Sunday is Hermes Agent; OpenAgora's About box says so.
+    app.setAboutPanelOptions({
+      applicationName: "OpenAgora",
+      applicationVersion: app.getVersion(),
+      credits: "Sunday, OpenAgora’s personal agent, is Hermes Agent by Nous Research, used under the MIT license.",
+      authors: ["OpenAgora contributors", "Sunday: Hermes Agent by Nous Research (MIT license)"],
+      website: "https://github.com/sanjaykatta1/openagora",
+    });
     settings = readDesktopSettings(app.getPath("userData"));
     registerIpc();
     registerUpdater();

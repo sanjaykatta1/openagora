@@ -11,34 +11,41 @@ An open-source app store for your desktop.
   agent by [Nous Research](https://nousresearch.com), running in a Hermes
   profile of its own, so a Hermes you already use is left exactly as it is.
   Sunday's home screen, setup and settings are Hermes's own; OpenAgora never sees
-  your keys or sign-ins. Sunday can find, install and open apps from the store for
-  you, and OpenAgora asks you first every time. Press **Ctrl+Shift+Space**
-  (**Command+Shift+Space** on a Mac) in any app to call Sunday over it; Sunday sees
-  that app's window only if you allowed the app, and never sees password managers
-  or private browser windows. Ask Sunday to send what you're working on to
-  your coding agent (Claude Code, Codex, OpenCode, or a new T3 Code thread or
-  OpenCode session), each set up once with its own command. Ask it "what did I do in my coding
-  sessions today?" and it answers from those agents' own records, after asking
-  you; give it long-term memory on your computer with Holographic. Sunday can
-  read a window's text, and if you turn on background mode (off unless you do),
-  it can search what your allowed apps showed over the last days, all kept on
-  your computer; Settings → Activity shows everything Sunday and your agents did.
+  your keys or sign-ins.
+  - **Apps:** Sunday finds, installs and opens apps from the store for you, and
+    OpenAgora asks you first every time.
+  - **What you're looking at:** press **Ctrl+Shift+Space**
+    (**Command+Shift+Space** on a Mac) in any app to call Sunday over it. Sunday
+    sees that app's window, or reads its text, only if you allowed the app, and
+    never sees password managers or private browser windows.
+  - **Your coding agents:** ask Sunday to send what you're working on to Claude
+    Code, Codex or OpenCode, or to start a T3 Code thread or an OpenCode session.
+    Each agent is set up once, with its own command.
+  - **Memory:** ask "what did I do in my coding sessions today?" and Sunday
+    answers from those agents' own records, after asking you. Give it long-term
+    memory on your computer with Holographic.
+  - **Background mode**, off unless you turn it on: Sunday can search what your
+    allowed apps showed over the last days, all kept on your computer.
+  - **Activity:** Settings → Activity shows everything Sunday and your agents did.
+
   Other personal agents are coming soon. See [Sunday](docs/personal-agents.md).
 
 ## Download
 
-Version 0.3.2. All downloads are on the [release page](https://github.com/sanjaykatta1/openagora/releases/latest).
+Version 0.4.0, with Sunday across your apps and coding agents and a new app icon.
+All downloads are on the [release page](https://github.com/sanjaykatta1/openagora/releases/latest).
 
 | Your computer | Download |
 |---|---|
-| Mac with Apple Silicon (M1 or later) | [OpenAgora-0.3.2-mac-arm64.dmg](https://github.com/sanjaykatta1/openagora/releases/download/v0.3.2/OpenAgora-0.3.2-mac-arm64.dmg) |
-| Mac with Intel | [OpenAgora-0.3.2-mac-x64.dmg](https://github.com/sanjaykatta1/openagora/releases/download/v0.3.2/OpenAgora-0.3.2-mac-x64.dmg) |
-| Windows | [OpenAgora-0.3.2-win-x64.exe](https://github.com/sanjaykatta1/openagora/releases/download/v0.3.2/OpenAgora-0.3.2-win-x64.exe) |
-| Linux (any distribution) | [OpenAgora-0.3.2-linux-x86_64.AppImage](https://github.com/sanjaykatta1/openagora/releases/download/v0.3.2/OpenAgora-0.3.2-linux-x86_64.AppImage) |
-| Debian / Ubuntu | [OpenAgora-0.3.2-linux-amd64.deb](https://github.com/sanjaykatta1/openagora/releases/download/v0.3.2/OpenAgora-0.3.2-linux-amd64.deb) |
+| Mac with Apple Silicon (M1 or later) | [OpenAgora-0.4.0-mac-arm64.dmg](https://github.com/sanjaykatta1/openagora/releases/download/v0.4.0/OpenAgora-0.4.0-mac-arm64.dmg) |
+| Windows | [OpenAgora-0.4.0-win-x64.exe](https://github.com/sanjaykatta1/openagora/releases/download/v0.4.0/OpenAgora-0.4.0-win-x64.exe) |
+| Linux (any distribution) | [OpenAgora-0.4.0-linux-x86_64.AppImage](https://github.com/sanjaykatta1/openagora/releases/download/v0.4.0/OpenAgora-0.4.0-linux-x86_64.AppImage) |
+| Debian / Ubuntu | [OpenAgora-0.4.0-linux-amd64.deb](https://github.com/sanjaykatta1/openagora/releases/download/v0.4.0/OpenAgora-0.4.0-linux-amd64.deb) |
 
-Not sure which Mac you have? Apple menu → About This Mac: "Chip: Apple M…" means
-Apple Silicon; "Processor: Intel" means Intel.
+The Mac app needs Apple Silicon (M1 or later): Apple menu → About This Mac says
+"Chip: Apple M…". On a Mac with an Intel processor, use
+[OpenAgora on the command line](docs/command-line.md), or the Linux app if you
+run Linux on it.
 
 The Mac app is signed and notarized by Apple. The Windows installer isn't signed
 yet: if Windows shows "Windows protected your PC", choose **More info → Run

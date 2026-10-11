@@ -8,6 +8,7 @@ import path from "node:path";
 import { readAgentPreferences, saveAgentPreferences } from "./preferences";
 import { registerUpdater } from "./updater";
 import { agentAvailability, commandDirectories, launchAgent } from "./agent-launcher";
+import { EngineLink, type ConfirmRequest } from "./engine-link";
 
 const EXE = process.platform === "win32" ? "openagora.exe" : "openagora";
 const LOCAL_URL = /^http:\/\/(127\.0\.0\.1|localhost):\d+(\/|$)/;
@@ -61,6 +62,58 @@ function runEngine(args: string[], onLine?: (line: string) => void): Promise<Eng
 
 const VALID_ID = /^[a-z][a-z0-9-]*$/;
 
+/** The engine's questions waiting for the user's answer in the window. */
+const pendingConfirms = new Map<string, (allowed: boolean) => void>();
+/** How long a question stays up; the engine itself gives up after 300 s. */
+const CONFIRM_TIMEOUT_MS = 290_000;
+
+function mainWindow(): Promise<BrowserWindow> {
+  const existing = BrowserWindow.getAllWindows()[0];
+  if (existing) return Promise.resolve(existing);
+  const window = createWindow();
+  return new Promise((resolve) => window.webContents.once("did-finish-load", () => resolve(window)));
+}
+
+/** Shows the engine's question in OpenAgora's own window: the user's choice there is the permission. */
+async function askInWindow(request: ConfirmRequest): Promise<boolean> {
+  const window = await mainWindow();
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => finish(false), CONFIRM_TIMEOUT_MS);
+    const finish = (allowed: boolean) => {
+      clearTimeout(timer);
+      pendingConfirms.delete(request.id);
+      if (!window.isDestroyed()) window.webContents.send("confirm-done", request.id);
+      resolve(allowed);
+    };
+    pendingConfirms.set(request.id, finish);
+    window.webContents.send("confirm-ask", request);
+  });
+}
+
+function startEngineLink(): EngineLink {
+  const link = new EngineLink(async () => {
+    // Tests point the window at a stand-in for the engine service.
+    if (process.env.OPENAGORA_DAEMON_ADDRESS) return process.env.OPENAGORA_DAEMON_ADDRESS;
+    const r = await runEngine(["daemon", "start", "--json"]);
+    if (!r.ok) throw new Error(r.stderr || "the engine service did not start");
+    return JSON.parse(r.stdout).address as string;
+  }, {
+    confirm: askInWindow,
+    openApp: (id) => {
+      if (!VALID_ID.test(id)) return;
+      void mainWindow().then((window) => { window.show(); window.webContents.send("open-app", id); });
+    },
+    connected: (connected) => {
+      for (const window of BrowserWindow.getAllWindows()) window.webContents.send("engine-connected", connected);
+    },
+  });
+  link.start();
+  return link;
+}
+
 function registerIpc(): void {
   const checkId = (id: unknown): string => {
     if (typeof id !== "string" || !VALID_ID.test(id)) throw new Error("invalid app id");
@@ -105,6 +158,13 @@ function registerIpc(): void {
     if (!r.ok) throw new Error(r.stderr || "could not read Sunday's status");
     return JSON.parse(r.stdout);
   });
+  ipcMain.handle("confirm-answer", (event, id: unknown, allowed: unknown) => {
+    if (!BrowserWindow.fromWebContents(event.sender) || event.senderFrame !== event.sender.mainFrame) return;
+    if (typeof id === "string") pendingConfirms.get(id)?.(allowed === true);
+  });
+  // The window's own consent card is the confirmation for these.
+  ipcMain.handle("sunday-connect", () => runEngine(["sunday", "connect", "--yes"]));
+  ipcMain.handle("sunday-disconnect", () => runEngine(["sunday", "disconnect", "--yes"]));
   ipcMain.handle("sunday-setup", (_e, choice: unknown) => {
     // Only these fixed choices cross into the engine.
     const flags: Record<string, string[]> = {
@@ -126,7 +186,7 @@ function registerIpc(): void {
   });
 }
 
-function createWindow(): void {
+function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1240,
     height: 820,
@@ -144,6 +204,7 @@ function createWindow(): void {
     },
   });
   window.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
+  return window;
 }
 
 // Embedded app views may only show local apps, never get Node or our preload,
@@ -173,6 +234,7 @@ app.whenReady().then(() => {
   registerIpc();
   registerUpdater();
   createWindow();
+  startEngineLink();
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

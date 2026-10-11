@@ -4,9 +4,14 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Child, ChildStdin, Command, Output, Stdio};
+use std::sync::mpsc;
+use std::time::Duration;
+
+use serde_json::{Value, json};
 
 use openagora::github::sha256_hex;
 
@@ -137,6 +142,222 @@ impl Env {
         walk(&self.hermes_root(), &self.hermes_root(), &mut files);
         files.retain(|path, _| !path.starts_with("profiles/sunday"));
         files
+    }
+}
+
+impl Drop for Env {
+    fn drop(&mut self) {
+        // A test may have started the engine service; don't leave it running.
+        let _ = self.run(&["daemon", "stop"]);
+    }
+}
+
+impl Env {
+    /// Adds a small web app (python's http.server) to the catalog.
+    pub fn add_web_app(&self, id: &str) {
+        let os = this_os();
+        write_listing(
+            &self.catalog,
+            id,
+            &format!(
+                r#"
+schema = "openagora/v1"
+id = "{id}"
+name = "Web {id}"
+summary = "A tiny web server"
+category = "test"
+homepage = "https://example.com"
+source = "https://github.com/example/{id}"
+license = "MIT"
+platforms = ["{os}"]
+
+[install]
+provides = "{{app_dir}}/index.html"
+
+[[install.steps]]
+os = ["{os}"]
+shell = "sh"
+run = "echo hello-{id} > '{{app_dir}}/index.html'"
+
+[run]
+command = "python3"
+args = ["-m", "http.server", "{{port}}", "--bind", "127.0.0.1"]
+port = "auto"
+
+[run.health]
+tcp = true
+
+[ui]
+kind = "web"
+url = "http://127.0.0.1:{{port}}/"
+"#
+            ),
+        );
+    }
+
+    /// The engine service's socket, as the running service recorded it.
+    pub fn socket(&self) -> PathBuf {
+        let record = fs::read_to_string(self.data.join("run/daemon.toml"))
+            .expect("the engine service isn't running");
+        let record: toml::Value = toml::from_str(&record).unwrap();
+        PathBuf::from(record["address"].as_str().unwrap())
+    }
+
+    pub fn audit(&self) -> Vec<Value> {
+        let out = self.json(&["audit", "--json"]);
+        out.as_array().cloned().unwrap_or_default()
+    }
+}
+
+fn this_os() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    }
+}
+
+fn write_listing(catalog: &Path, id: &str, text: &str) {
+    let dir = catalog.join("apps").join(id);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("app.toml"), text).unwrap();
+}
+
+/// An MCP client talking to `openagora mcp --client <id>`, as Hermes would.
+pub struct McpClient {
+    child: Child,
+    stdin: ChildStdin,
+    incoming: mpsc::Receiver<Value>,
+    next_id: u64,
+}
+
+impl McpClient {
+    pub fn start(env: &Env, client: &str, elicitation: bool) -> McpClient {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_openagora"))
+            .arg("--catalog")
+            .arg(&env.catalog)
+            .args(["mcp", "--client", client])
+            .env("HOME", &env.home)
+            .env("OPENAGORA_HOME", &env.data)
+            .env("HERMES_CALLS", &env.calls)
+            .env("PATH", "/usr/bin:/bin")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let (tx, incoming) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let Ok(line) = line else { break };
+                if let Ok(message) = serde_json::from_str(&line) {
+                    if tx.send(message).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        let mut mcp = McpClient {
+            child,
+            stdin,
+            incoming,
+            next_id: 1,
+        };
+        let capabilities = if elicitation {
+            json!({"elicitation": {}})
+        } else {
+            json!({})
+        };
+        let init = mcp.request(
+            "initialize",
+            json!({"protocolVersion": "2025-06-18", "capabilities": capabilities, "clientInfo": {"name": "test"}}),
+            &mut |_| panic!("unexpected server request during initialize"),
+        );
+        assert_eq!(init["result"]["serverInfo"]["name"], "openagora", "{init}");
+        mcp.send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
+        mcp
+    }
+
+    fn send(&mut self, message: &Value) {
+        writeln!(self.stdin, "{message}").unwrap();
+        self.stdin.flush().unwrap();
+    }
+
+    /// Sends a request and waits for its reply. Requests the server sends in
+    /// the meantime (elicitation) are answered by `answer`.
+    pub fn request(
+        &mut self,
+        method: &str,
+        params: Value,
+        answer: &mut dyn FnMut(&Value) -> Value,
+    ) -> Value {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}));
+        loop {
+            let message = self
+                .incoming
+                .recv_timeout(Duration::from_secs(60))
+                .expect("no reply from openagora mcp");
+            if message["id"] == id && message.get("method").is_none() {
+                return message;
+            }
+            if message.get("method").is_some() && message.get("id").is_some() {
+                let result = answer(&message);
+                // `{"__error": "…"}` answers with a JSON-RPC error instead.
+                let reply = match result.get("__error") {
+                    Some(error) => {
+                        json!({"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32601, "message": error}})
+                    }
+                    None => json!({"jsonrpc": "2.0", "id": message["id"], "result": result}),
+                };
+                self.send(&reply);
+            }
+        }
+    }
+
+    pub fn tools(&mut self) -> Vec<String> {
+        let reply = self.request("tools/list", json!({}), &mut |_| json!({}));
+        reply["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// Calls a tool; returns (text, is_error).
+    pub fn call(
+        &mut self,
+        tool: &str,
+        arguments: Value,
+        answer: &mut dyn FnMut(&Value) -> Value,
+    ) -> (String, bool) {
+        let reply = self.request(
+            "tools/call",
+            json!({"name": tool, "arguments": arguments}),
+            answer,
+        );
+        let result = &reply["result"];
+        let text = result["content"]
+            .as_array()
+            .map(|c| {
+                c.iter()
+                    .filter_map(|b| b["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_else(|| reply.to_string());
+        (text, result["isError"] == true)
+    }
+}
+
+impl Drop for McpClient {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 

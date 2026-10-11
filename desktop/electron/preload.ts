@@ -17,6 +17,24 @@ contextBridge.exposeInMainWorld("openagora", {
   updateApp: (id: string) => ipcRenderer.invoke("update-app", id),
   sundayStatus: () => ipcRenderer.invoke("sunday-status"),
   sundaySetup: (choice: string) => ipcRenderer.invoke("sunday-setup", choice),
+  sundayConnect: () => ipcRenderer.invoke("sunday-connect"),
+  sundayDisconnect: () => ipcRenderer.invoke("sunday-disconnect"),
+  answerConfirm: (id: string, allowed: boolean) => ipcRenderer.invoke("confirm-answer", id, allowed),
+  onConfirm: (callback: (request: { id: string; client: string; title: string; message: string }) => void) => {
+    const handler = (_e: IpcRendererEvent, request: { id: string; client: string; title: string; message: string }) => callback(request);
+    ipcRenderer.on("confirm-ask", handler);
+    return () => ipcRenderer.removeListener("confirm-ask", handler);
+  },
+  onConfirmDone: (callback: (id: string) => void) => {
+    const handler = (_e: IpcRendererEvent, id: string) => callback(id);
+    ipcRenderer.on("confirm-done", handler);
+    return () => ipcRenderer.removeListener("confirm-done", handler);
+  },
+  onOpenApp: (callback: (id: string) => void) => {
+    const handler = (_e: IpcRendererEvent, id: string) => callback(id);
+    ipcRenderer.on("open-app", handler);
+    return () => ipcRenderer.removeListener("open-app", handler);
+  },
   logs: (id: string) => ipcRenderer.invoke("logs", id),
   openExternal: (url: string) => ipcRenderer.invoke("open-external", url),
   update: {

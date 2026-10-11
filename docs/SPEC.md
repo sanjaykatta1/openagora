@@ -30,7 +30,7 @@ Principles that hold everywhere:
    phases 2–4.)
 4. **The engine is the go-between.** Sunday never connects to apps directly. Its
    only MCP server is the engine's gateway, which enforces permissions and logs
-   every action. (Planned: phase 2.)
+   every action. (Built: phase 2.)
 5. **Private by default.** Capture only when asked, per-app permission,
    everything stored locally, background mode opt-in. (Planned: phases 3 and 6.)
 6. **OS-independent.** One codebase for macOS, Linux and Windows.
@@ -43,9 +43,9 @@ Principles that hold everywhere:
           │ OS window capture,             │ focus + tab screenshots
           ▼                                ▼
  ┌──────────────── OpenAgora engine (Rust) ─────────────────────────────────┐
- │  Catalog · install · run · supervise · update (built)                    │
- │  Desk · Capture · Focus tracker · Registry · Router · Broker · Audit log │
- │  MCP gateway: one server, many clients (planned)                         │
+ │  Catalog · install · run · supervise · update · audit log (built)        │
+ │  MCP gateway: one server, many clients (built: store tools)             │
+ │  Desk · Capture · Focus tracker · Registry · Router · Broker (planned)  │
  └────────┬───────────────────────────────┬────────────────────────────────┘
           │ MCP + per-reply hook          │ MCP (pull) / adapters (push)
           ▼                               ▼
@@ -55,7 +55,7 @@ Principles that hold everywhere:
 
 | Part | Language | Job |
 |---|---|---|
-| Engine | Rust | Catalog, install, run, supervise, update, uninstall; Sunday's profile. Later the daemon with the MCP gateway, desk, capture, broker and audit log. |
+| Engine | Rust | Catalog, install, run, supervise, update, uninstall; Sunday's profile; the daemon with the MCP gateway and the audit log. Later the desk, capture and broker. |
 | Shell | Electron (TypeScript) | The window: Sunday's home screen, sidebar, tabs, store, settings. Later the Sunday panel and tray presence. |
 | Sunday | Hermes (upstream) | The agent, under its own profile. Installed by the engine from the store, or adopted when already installed. |
 | Catalog | TOML files | One `app.toml` per app, in this repo under `catalog/apps/<id>/`. |
@@ -119,6 +119,12 @@ openagora logs <id>
 openagora uninstall <id>
 openagora sunday status       Hermes, Sunday's profile, its dashboard and gateway (--json)
 openagora sunday setup        create Sunday's profile and SOUL.md
+openagora sunday connect      let Sunday use OpenAgora (gateway, hook, skills), after asking
+openagora serve               the daemon: the MCP gateway, over a local socket
+openagora daemon start|stop|status
+openagora mcp --client <id>   an MCP client's stdio, relayed to the daemon
+openagora context --hook      Sunday's per-reply Hermes hook
+openagora audit               the audit log
 ```
 
 Details as built:
@@ -146,14 +152,54 @@ Details as built:
   profile with the agent's own command (`hermes profile delete sunday --yes`),
   and only if OpenAgora created that profile.
 
-### Daemon and MCP gateway (planned: phase 2)
+### Daemon and MCP gateway (built: phase 2)
 
-`openagora serve` becomes a long-running service started by the desktop app,
-reached over a local socket (a named pipe on Windows). `openagora mcp` is the
-stdio MCP entry point every MCP client uses; it connects to the daemon. Store
-tools, desk tools and each connected app's own tools (namespaced) are served
-through it. Install, update and uninstall pause for the user's confirmation; the
-engine enforces this, not Sunday's instructions.
+- `openagora serve` is a long-running service. The desktop app starts it
+  (`openagora daemon start`); so does `openagora mcp` when it isn't running, so
+  Sunday reaches it from a messaging channel with OpenAgora's window closed. It
+  keeps running after the window closes.
+- It listens on a local socket: `<data>/run/engine.sock`, in a folder only this
+  user can open (a private folder under `/tmp` when that path is too long for a
+  Unix socket), or a named pipe on Windows. Every connection opens with a hello
+  naming its role: `mcp` (an MCP client, with its client id), or `desktop`
+  (OpenAgora's window).
+- `openagora mcp --client <id>` is the stdio MCP entry point every MCP client
+  uses. It is a plain relay to the daemon, so there is no network port or token
+  to manage. Clients are trusted to name themselves; anything that can reach the
+  socket already runs as this user.
+- The gateway speaks MCP 2025-06-18 (also 2025-03-26 and 2024-11-05). It offers
+  tools, sends `notifications/tools/list_changed`, and asks the user through
+  `elicitation/create`. Tool results carry text content only (no
+  `structuredContent`, which some clients use instead of images).
+- **Store tools for Sunday:** `store_search`, `store_show`, `app_install`,
+  `app_update`, `app_uninstall`, `app_start`, `app_stop`, `app_status`,
+  `app_open`. Other clients get no store tools; coding agents get their own tools
+  in phase 4.
+- **Confirmation is the engine's.** Install, update and uninstall always wait for
+  an explicit yes, which the engine asks for itself:
+  - first through the client's own chat, by MCP elicitation, when the client
+    supports it (Hermes shows its approval prompt wherever the conversation is);
+  - otherwise in OpenAgora's window (`confirm/ask` to the desktop);
+  - otherwise the action is refused.
+  A decline, a cancel or no answer within 300 s is a no. The agent can't approve
+  for the user, and the agent listing can't be updated, stopped or removed through
+  the gateway.
+- `app_open` asks the window to show the app in its tab (`app/open`).
+- **Audit log:** every app action is appended to `<data>/audit/audit.jsonl` with
+  the client, action, target, decision (`allowed`, `confirmed`, `declined`,
+  `refused`), where the user answered, and the outcome.
+- **Per-reply hook:** `openagora context --hook --client sunday` is Sunday's Hermes
+  `pre_llm_call` shell hook. It prints `{"context": …}` marked as data, with only
+  what changed since that session's previous turn (installed apps and their state
+  for now), and nothing at all when nothing changed.
+- **Sunday's connection:** `openagora sunday connect` uses
+  `hermes -p sunday config set` to add `mcp_servers.openagora`, the hook,
+  OpenAgora's skills folder (`skills.external_dirs`) and `hooks_auto_accept: true`
+  to Sunday's profile only, after asking. It points them at a copy of the engine
+  at `<data>/bin/openagora`, kept current, because the desktop app's own copy can
+  move. `disconnect` removes only those.
+- **Skills:** `sunday/skills/` in this repo, written to `<data>/sunday/skills/`.
+  Each is shown only when its tools are present (`metadata.hermes.requires_tools`).
 
 ### Toolchain
 
@@ -198,14 +244,16 @@ logs.
   System) and shows the gateway status Hermes reports.
 - **Removing Sunday** deletes only the `sunday` profile, after confirmation.
 
+**Built (phase 2).** The engine's MCP gateway is the only MCP server OpenAgora adds
+to Sunday's profile. Through it Sunday searches the store and installs, updates,
+removes, starts, stops and opens apps, with the engine asking the user first
+(§4). The per-reply hook tells Sunday which apps are installed and running, and
+the `openagora-apps` skill teaches it the store tools. OpenAgora asks before
+connecting Sunday (the issue's default for hook consent: ask during setup, then
+`hooks_auto_accept` for Sunday's profile only).
+
 **Planned.**
 
-- *Phase 2:* the engine's MCP gateway becomes Sunday's only MCP server, with the
-  store tools (`store_search`, `store_show`, `app_install`, `app_update`,
-  `app_uninstall`, `app_start`, `app_stop`, `app_status`, `app_open`); install,
-  update and uninstall pause for confirmation enforced by the engine. A Hermes
-  `pre_llm_call` shell hook gives Sunday what changes per reply (installed apps
-  first). OpenAgora ships Hermes skills for its apps and agents.
 - *Phase 3:* the desk, capture from any app, the focus tracker, the global
   shortcut and Sunday panel, and the broker with its audit log.
 - *Phase 4:* coding agents as destinations: the pull path through MCP for every
@@ -220,7 +268,7 @@ logs.
 - Sunday gets only the permissions the user granted per app.
 - Installing an app from outside the catalog needs an extra, explicit
   confirmation with a warning.
-- Every agent action against an app is logged (planned with the broker, phase 3).
+- Every agent action against an app is logged in the audit log.
 
 ## 6. Permissions
 
@@ -260,7 +308,7 @@ real accounts are checked by hand.
 | Phase | Scope | Done when | Status |
 |---|---|---|---|
 | 1. Sunday basics | Hermes only; the `sunday` profile; identity; home screen; settings | Tests 1–4 and 14 | Built |
-| 2. Engine daemon + gateway | daemon, MCP gateway with store tools, per-reply hook, first skills | Test 5 | Planned |
+| 2. Engine daemon + gateway | daemon, MCP gateway with store tools, per-reply hook, first skills | Test 5 | Built |
 | 3. Capture | desk, capture, focus tracker, shortcut and panel, broker basics | Tests 6, 8, 10 | Planned |
 | 4. Coding agents | registry, destinations, pull path, T3 Code push adapter | Test 7 | Planned |
 | 5. Memory | live lookup, memory provider, refresh job | Tests 11, 12 | Planned |

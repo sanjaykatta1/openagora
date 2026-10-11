@@ -31,10 +31,33 @@ case "$1" in
     echo "Install directory: $root/hermes-agent"
     exit 0 ;;
   config)
-    if [ "$2" = path ]; then
-      echo "$home/config.yaml"
-      exit 0
-    fi ;;
+    # Values live one per file under .fake-config, exactly as given.
+    store="$home/.fake-config"
+    case "$2" in
+      path)
+        echo "$home/config.yaml"
+        exit 0 ;;
+      set)
+        mkdir -p "$store"
+        printf '%s' "$4" > "$store/$3"
+        echo "✓ Set $3 in $home/config.yaml"
+        exit 0 ;;
+      get)
+        if [ -f "$store/$3" ]; then
+          cat "$store/$3"
+          echo
+          exit 0
+        fi
+        echo "Config key not set: $3" >&2
+        exit 1 ;;
+      unset)
+        if [ -f "$store/$3" ]; then
+          rm "$store/$3"
+          exit 0
+        fi
+        echo "Config key not set: $3" >&2
+        exit 1 ;;
+    esac ;;
   profile)
     case "$2" in
       create)

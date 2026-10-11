@@ -61,6 +61,8 @@ export interface SundayStatus {
   version_ok: boolean | null;
   setup: "ready" | "missing" | "foreign" | "unknown";
   profile_dir: string | null;
+  /** Sunday's profile uses OpenAgora's MCP gateway, per-reply hook and skills. */
+  connected: boolean;
   dashboard: "running" | "stopped";
   url: string | null;
   pid: number | null;
@@ -69,6 +71,14 @@ export interface SundayStatus {
 }
 
 export type SundaySetupChoice = "default" | "fresh" | "clone" | "clone-channels" | "existing";
+
+/** The engine asking the user to confirm something an agent wants to do. */
+export interface ConfirmRequest {
+  id: string;
+  client: string;
+  title: string;
+  message: string;
+}
 
 export interface EngineResult {
   ok: boolean;
@@ -100,6 +110,12 @@ export interface Bridge {
   updateApp(id: string): Promise<EngineResult>;
   sundayStatus(): Promise<SundayStatus>;
   sundaySetup(choice: SundaySetupChoice): Promise<EngineResult>;
+  sundayConnect(): Promise<EngineResult>;
+  sundayDisconnect(): Promise<EngineResult>;
+  answerConfirm(id: string, allowed: boolean): Promise<void>;
+  onConfirm(callback: (request: ConfirmRequest) => void): () => void;
+  onConfirmDone(callback: (id: string) => void): () => void;
+  onOpenApp(callback: (id: string) => void): () => void;
   logs(id: string): Promise<EngineResult>;
   openExternal(url: string): Promise<void>;
   update: {

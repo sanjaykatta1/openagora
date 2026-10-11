@@ -63,6 +63,7 @@ export function SundayHome(props: {
   onSetup: (choice: SundaySetupChoice) => void;
   onUpdate: () => void;
   onStart: () => void;
+  onConnect: () => void;
   onRetry: () => void;
 }) {
   const { status, listing } = props;
@@ -158,11 +159,14 @@ export function SundayHome(props: {
       body = <p className="muted" role="status">{props.busy ?? "Setting up Sunday’s profile…"}</p>;
       break;
     case "start":
-      body = <div className="panel sunday-card">
-        <h2>Sunday is ready</h2>
-        <p>Sunday lives in Hermes’s “{status!.profile}” profile. Starting it opens Hermes’s dashboard for Sunday here.</p>
-        <button className="btn primary big" disabled={!!props.busy} onClick={props.onStart}>{props.busy ?? "Start Sunday"}</button>
-      </div>;
+      body = <>
+        {!status!.connected && <ConnectCard busy={props.busy} onConnect={props.onConnect} />}
+        <div className="panel sunday-card">
+          <h2>Sunday is ready</h2>
+          <p>Sunday lives in Hermes’s “{status!.profile}” profile. Starting it opens Hermes’s dashboard for Sunday here.</p>
+          <button className="btn primary big" disabled={!!props.busy} onClick={props.onStart}>{props.busy ?? "Start Sunday"}</button>
+        </div>
+      </>;
       break;
     case "running":
       return null; // The dashboard itself is shown (see SundayDashboard).
@@ -176,6 +180,20 @@ export function SundayHome(props: {
   </section>;
 }
 
+/** Asks before OpenAgora changes Sunday's Hermes profile to use OpenAgora. */
+function ConnectCard(props: { busy?: string; onConnect: () => void; compact?: boolean }) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+  return <div className={props.compact ? "notice connect-notice" : "panel sunday-card connect-card"}>
+    {!props.compact && <h2>Let Sunday use OpenAgora</h2>}
+    <p>{props.compact ? "Let Sunday use OpenAgora: " : ""}Sunday can then find, install and open apps for you (OpenAgora asks you first every time), and knows which apps you have. This adds three things to Sunday’s Hermes profile, using Hermes’s own settings command: OpenAgora’s MCP server, a hook that tells Sunday about your apps with each reply, and OpenAgora’s skills. It also lets that profile run hooks without asking (<code>hooks_auto_accept</code>), for Sunday’s profile only.</p>
+    <div className="actions">
+      <button className="btn primary" disabled={!!props.busy} onClick={props.onConnect}>{props.busy ?? "Connect Sunday"}</button>
+      <button className="btn ghost" onClick={() => setDismissed(true)}>Not now</button>
+    </div>
+  </div>;
+}
+
 /** The subset of Electron's <webview> element used here. */
 interface WebviewElement extends HTMLElement {
   reload(): void;
@@ -183,7 +201,7 @@ interface WebviewElement extends HTMLElement {
 }
 
 /** Hermes's dashboard for Sunday's profile, labelled Sunday. */
-export function SundayDashboard(props: { status: SundayStatus; visible: boolean; route: string }) {
+export function SundayDashboard(props: { status: SundayStatus; visible: boolean; route: string; busy?: string; onConnect: () => void }) {
   const { status } = props;
   const ref = useRef<WebviewElement | null>(null);
   const [src] = useState(() => dashboardUrl(status.url!, props.route, status.profile));
@@ -222,6 +240,7 @@ export function SundayDashboard(props: { status: SundayStatus; visible: boolean;
         <button className="link" onClick={() => void bridge?.openExternal(dashboardUrl(status.url!, props.route, status.profile))}>Open in browser ↗</button>
       </span>
     </div>
+    {!status.connected && <ConnectCard compact busy={props.busy} onConnect={props.onConnect} />}
     {failure && <div className="notice error tab-notice">Sunday’s dashboard didn’t load: {failure}. <button className="link" onClick={() => (setFailure(null), ref.current?.reload())}>Retry</button></div>}
     {/* Sunday's own saved session, separate from every app tab. */}
     <webview ref={ref} src={src} partition="persist:sunday" className="webview" />
@@ -243,6 +262,7 @@ function GatewayLine({ status }: { status: SundayStatus }) {
 export function SundaySettings(props: {
   status: SundayStatus | null;
   busy?: string;
+  onConnect: (connect: boolean) => void;
   onOpenPage: (route: string) => void;
   onChangeAgent: () => void;
   onRemove: () => void;
@@ -270,6 +290,14 @@ export function SundaySettings(props: {
         <p>Runs in Hermes’s “{status.profile}” profile{status.version ? ` · Hermes ${status.version}` : ""} · <span className="muted small">{status.profile_dir}</span></p>
         <GatewayLine status={status} />
         <p className="muted small">Hermes runs its messaging gateway; OpenAgora only shows its status. Gateway controls are on the System page.</p>
+        <div className="settings-row">
+          <p>{status.connected
+            ? "Sunday uses OpenAgora: its MCP server (the only one OpenAgora adds), a per-reply hook and OpenAgora’s skills."
+            : "Sunday doesn’t use OpenAgora’s tools yet."}</p>
+          <button className="btn ghost" disabled={!!props.busy} onClick={() => props.onConnect(!status.connected)}>
+            {props.busy ?? (status.connected ? "Disconnect" : "Connect Sunday")}
+          </button>
+        </div>
         <div className="settings-pages">
           {DASHBOARD_PAGES.map((page) => (
             <button key={page.route} className="settings-page" onClick={() => props.onOpenPage(page.route)}>

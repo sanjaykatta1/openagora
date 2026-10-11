@@ -166,6 +166,51 @@ impl Hermes {
         let args = ["profile", "delete", self.profile.as_str(), "--yes"];
         check(self.run(&args, SLOW)?, &args)
     }
+
+    /// `hermes -p <profile> config set <key> <value>`; a JSON value is read by
+    /// Hermes as a list or mapping.
+    pub fn config_set(&self, key: &str, value: &str) -> Result<()> {
+        let out = self.run_in_profile(&["config", "set", key, value], QUICK)?;
+        check(out, &["-p", &self.profile, "config", "set", key])
+    }
+
+    /// The profile's own value for `key`, or None when it isn't set. Read raw,
+    /// so writing a list back never stores Hermes's masked display of a secret.
+    pub fn config_get(&self, key: &str) -> Result<Option<serde_json::Value>> {
+        let out = self.run_in_profile(&["config", "get", key, "--json", "--raw"], QUICK)?;
+        if !out.status.success() {
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            if text.contains("not set") {
+                return Ok(None);
+            }
+            bail!(
+                "hermes -p {} config get {key} failed: {}",
+                self.profile,
+                text.trim()
+            );
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        let json = text
+            .lines()
+            .map(str::trim)
+            .rfind(|line| !line.is_empty())
+            .unwrap_or("null");
+        Ok(Some(serde_json::from_str(json).with_context(|| {
+            format!("unexpected output from hermes config get {key}: {text}")
+        })?))
+    }
+
+    pub fn config_unset(&self, key: &str) -> Result<()> {
+        let out = self.run_in_profile(&["config", "unset", key], QUICK)?;
+        if out.status.success() || String::from_utf8_lossy(&out.stderr).contains("not set") {
+            return Ok(());
+        }
+        check(out, &["-p", &self.profile, "config", "unset", key])
+    }
 }
 
 fn check(out: Output, args: &[&str]) -> Result<()> {
@@ -381,14 +426,150 @@ pub fn setup(
         }
     };
     write_soul(&dir)?;
+    let previous = record(engine, m)?;
     let profile = AgentProfile {
         profile: hermes.profile.clone(),
         dir: dir.display().to_string(),
         version: version.map(|v| v.to_string()),
         set_up_at: state::now(),
+        connected: previous.as_ref().is_some_and(|p| p.connected),
+        hooks_auto_accept_before: previous.and_then(|p| p.hooks_auto_accept_before),
     };
     state::write(&engine.paths.agent_profile_file(&m.id), &profile)?;
     Ok(profile)
+}
+
+/// Skills OpenAgora ships for Sunday, as (path under the skills folder, text).
+const SKILLS: &[(&str, &str)] = &[(
+    "openagora/openagora-apps/SKILL.md",
+    include_str!("../../sunday/skills/openagora-apps/SKILL.md"),
+)];
+
+/// The hook command Hermes runs before each of Sunday's replies.
+fn hook_command(exe: &Path) -> String {
+    format!("\"{}\" context --hook --client sunday", exe.display())
+}
+
+fn is_our_hook(entry: &serde_json::Value) -> bool {
+    entry["command"]
+        .as_str()
+        .is_some_and(|c| c.ends_with("context --hook --client sunday"))
+}
+
+/// Writes OpenAgora's skills for Sunday into OpenAgora's own folder.
+pub fn install_skills(paths: &crate::paths::Paths) -> Result<PathBuf> {
+    let root = paths.sunday_skills();
+    for (path, text) in SKILLS {
+        let file = root.join(path);
+        if let Some(dir) = file.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        if fs::read_to_string(&file).ok().as_deref() != Some(*text) {
+            fs::write(&file, text).with_context(|| format!("writing {}", file.display()))?;
+        }
+    }
+    Ok(root)
+}
+
+/// What `connect` configures in Sunday's profile, all through Hermes's own
+/// `config set`: OpenAgora's gateway as an MCP server, the per-reply hook,
+/// OpenAgora's skills folder, and `hooks_auto_accept` for this profile only.
+/// Returns the names of other MCP servers the profile already had (from a
+/// copied setup): they are left alone, and the user is told.
+pub fn connect(engine: &Engine, m: &Manifest) -> Result<Vec<String>> {
+    let mut saved = record(engine, m)?
+        .context("Sunday isn't set up yet. Set it up first: openagora sunday setup")?;
+    let hermes = Hermes::find(engine, m).with_context(|| format!("{} is not installed", m.name))?;
+    let exe = crate::paths::install_stable_exe(&engine.paths)?;
+    let skills = install_skills(&engine.paths)?;
+
+    let server = serde_json::json!({
+        "command": exe.display().to_string(),
+        "args": ["mcp", "--client", "sunday"],
+        // Installs can take a while, and the user may take time to confirm.
+        "timeout": 1800,
+        "connect_timeout": 60,
+        "elicitation": {"enabled": true, "timeout": 300},
+    });
+    hermes.config_set("mcp_servers.openagora", &server.to_string())?;
+
+    let mut hooks = match hermes.config_get("hooks.pre_llm_call")? {
+        Some(serde_json::Value::Array(hooks)) => hooks,
+        _ => Vec::new(),
+    };
+    hooks.retain(|h| !is_our_hook(h));
+    hooks.push(serde_json::json!({"command": hook_command(&exe), "timeout": 20}));
+    hermes.config_set(
+        "hooks.pre_llm_call",
+        &serde_json::Value::Array(hooks).to_string(),
+    )?;
+
+    if !saved.connected {
+        saved.hooks_auto_accept_before = hermes
+            .config_get("hooks_auto_accept")?
+            .and_then(|v| v.as_bool());
+    }
+    hermes.config_set("hooks_auto_accept", "true")?;
+
+    let skills_dir = skills.display().to_string();
+    let mut dirs = match hermes.config_get("skills.external_dirs")? {
+        Some(serde_json::Value::Array(dirs)) => dirs,
+        _ => Vec::new(),
+    };
+    if !dirs.iter().any(|d| d.as_str() == Some(skills_dir.as_str())) {
+        dirs.push(serde_json::Value::String(skills_dir));
+    }
+    hermes.config_set(
+        "skills.external_dirs",
+        &serde_json::Value::Array(dirs).to_string(),
+    )?;
+
+    saved.connected = true;
+    state::write(&engine.paths.agent_profile_file(&m.id), &saved)?;
+    let others = match hermes.config_get("mcp_servers")? {
+        Some(serde_json::Value::Object(servers)) => servers
+            .keys()
+            .filter(|name| name.as_str() != "openagora")
+            .cloned()
+            .collect(),
+        _ => Vec::new(),
+    };
+    Ok(others)
+}
+
+/// Undoes `connect`, leaving every other setting in the profile as it is.
+pub fn disconnect(engine: &Engine, m: &Manifest) -> Result<()> {
+    let Some(mut saved) = record(engine, m)? else {
+        return Ok(());
+    };
+    let hermes = Hermes::find(engine, m).with_context(|| format!("{} is not installed", m.name))?;
+    hermes.config_unset("mcp_servers.openagora")?;
+    if let Some(serde_json::Value::Array(mut hooks)) = hermes.config_get("hooks.pre_llm_call")? {
+        hooks.retain(|h| !is_our_hook(h));
+        if hooks.is_empty() {
+            hermes.config_unset("hooks.pre_llm_call")?;
+        } else {
+            hermes.config_set(
+                "hooks.pre_llm_call",
+                &serde_json::Value::Array(hooks).to_string(),
+            )?;
+        }
+    }
+    match saved.hooks_auto_accept_before {
+        Some(before) => hermes.config_set("hooks_auto_accept", &before.to_string())?,
+        None => hermes.config_unset("hooks_auto_accept")?,
+    }
+    let skills_dir = engine.paths.sunday_skills().display().to_string();
+    if let Some(serde_json::Value::Array(mut dirs)) = hermes.config_get("skills.external_dirs")? {
+        dirs.retain(|d| d.as_str() != Some(skills_dir.as_str()));
+        hermes.config_set(
+            "skills.external_dirs",
+            &serde_json::Value::Array(dirs).to_string(),
+        )?;
+    }
+    saved.connected = false;
+    saved.hooks_auto_accept_before = None;
+    state::write(&engine.paths.agent_profile_file(&m.id), &saved)
 }
 
 /// Called before the agent starts: its profile must exist, and its SOUL.md
@@ -405,6 +586,11 @@ pub fn prepare_start(engine: &Engine, m: &Manifest) -> Result<()> {
         );
     }
     write_soul(&dir)?;
+    if saved.connected {
+        // Keep what Sunday's config points at current with this OpenAgora.
+        crate::paths::install_stable_exe(&engine.paths)?;
+        install_skills(&engine.paths)?;
+    }
     Ok(())
 }
 

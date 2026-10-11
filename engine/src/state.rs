@@ -35,6 +35,13 @@ pub struct AgentProfile {
     /// The agent version seen at setup or update, if it could be read.
     pub version: Option<String>,
     pub set_up_at: u64,
+    /// The profile uses OpenAgora's MCP gateway, per-reply hook and skills.
+    #[serde(default)]
+    pub connected: bool,
+    /// `hooks_auto_accept` as it was before OpenAgora turned it on, so
+    /// disconnecting can put it back.
+    #[serde(default)]
+    pub hooks_auto_accept_before: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

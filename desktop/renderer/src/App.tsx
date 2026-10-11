@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { bridge, osName, type App as Listing, type EngineResult, type SundaySetupChoice, type SundayStatus, type UpdateState } from "./api";
+import { bridge, osName, type App as Listing, type ConfirmRequest, type EngineResult, type SundaySetupChoice, type SundayStatus, type UpdateState } from "./api";
+import { AgentConfirm } from "./Confirm";
 import { NEW_AGENT_PREFERENCES, PERSONAL_AGENTS, SUNDAY_ID, parseAgentPreferences, type AgentPreferences } from "../../electron/agents";
 import { AgentChooser } from "./PersonalAgent";
 import { SundayDashboard, SundayHome, SundaySettings, sundayStage } from "./Sunday";
@@ -33,6 +34,7 @@ export function App() {
   const [sunday, setSunday] = useState<SundayStatus | null>(null);
   const [sundayError, setSundayError] = useState<string | null>(null);
   const [dashboardRoute, setDashboardRoute] = useState("/");
+  const [asks, setAsks] = useState<ConfirmRequest[]>([]);
   const landed = useRef(false);
 
   const loadPreferences = useCallback(async () => {
@@ -124,6 +126,23 @@ export function App() {
     return () => window.clearTimeout(t);
   }, [toast]);
 
+  // The engine's questions, one at a time, and agents asking to show an app.
+  useEffect(() => {
+    if (!bridge) return;
+    const offAsk = bridge.onConfirm((request) => setAsks((a) => [...a, request]));
+    const offDone = bridge.onConfirmDone((id) => setAsks((a) => a.filter((r) => r.id !== id)));
+    const offOpen = bridge.onOpenApp(async (id) => {
+      await refresh();
+      openTabRef.current(id);
+    });
+    return () => { offAsk(); offDone(); offOpen(); };
+  }, [refresh]);
+
+  const answer = (request: ConfirmRequest, allowed: boolean) => {
+    setAsks((a) => a.filter((r) => r.id !== request.id));
+    void bridge?.answerConfirm(request.id, allowed);
+  };
+
   const byId = useMemo(() => new Map(apps.map((a) => [a.id, a])), [apps]);
   const agentListing = byId.get(SUNDAY_ID);
 
@@ -189,6 +208,24 @@ export function App() {
     }
     setTabs((t) => (t.includes(id) ? t : [...t, id]));
     setView({ kind: "tab", id });
+  };
+  const openTabRef = useRef(openTab);
+  openTabRef.current = openTab;
+
+  const connectSunday = async (connect: boolean) => {
+    if (!bridge) return;
+    setBusy((b) => ({ ...b, [SUNDAY_ID]: connect ? "Connecting…" : "Disconnecting…" }));
+    let result: EngineResult;
+    try {
+      result = await (connect ? bridge.sundayConnect() : bridge.sundayDisconnect());
+    } catch (e) {
+      result = { ok: false, stdout: "", stderr: String(e) };
+    }
+    setBusy(({ [SUNDAY_ID]: _done, ...rest }) => rest);
+    await refreshSunday();
+    setToast(result.ok
+      ? { text: result.stdout.trim() || (connect ? "Sunday now uses OpenAgora. New Sunday chats pick it up." : "Sunday no longer uses OpenAgora."), error: false }
+      : { text: result.stderr.trim() || "That didn’t work.", error: true });
   };
 
   const closeTab = (id: string) => {
@@ -302,6 +339,7 @@ export function App() {
             onSetup={(choice) => void setupSunday(choice)}
             onUpdate={() => agentListing && void act(agentListing, "updateApp", "Updating Hermes…")}
             onStart={() => agentListing && void act(agentListing, "start", "Starting Sunday…")}
+            onConnect={() => void connectSunday(true)}
             onRetry={() => { setSundayError(null); void refreshSunday(); }} />
         )}
 
@@ -310,6 +348,7 @@ export function App() {
             onSave={(id) => void saveAgent(id)} onCancel={() => { setChoosingAgent(false); setPreferenceError(null); }} />
         ) : (
           <SundaySettings status={sunday} busy={busy[SUNDAY_ID]}
+            onConnect={(connect) => void connectSunday(connect)}
             onOpenPage={(route) => void openDashboardPage(route)}
             onChangeAgent={() => setChoosingAgent(true)}
             onRemove={() => agentListing && void act(agentListing, "uninstall", "Removing Sunday…")} />
@@ -345,7 +384,8 @@ export function App() {
 
         {/* Sunday's dashboard stays loaded while you look at other pages. */}
         {sunday && stage === "running" && (
-          <SundayDashboard key={`${sunday.pid}`} status={sunday} visible={showingDashboard} route={dashboardRoute} />
+          <SundayDashboard key={`${sunday.pid}`} status={sunday} visible={showingDashboard} route={dashboardRoute}
+            busy={busy[SUNDAY_ID]} onConnect={() => void connectSunday(true)} />
         )}
 
         {tabs.map((id) => {
@@ -385,6 +425,10 @@ export function App() {
             void act(app, "install", app.role === "agent" ? "Installing Hermes…" : "Installing…");
           }}
         />
+      )}
+
+      {asks.length > 0 && (
+        <AgentConfirm key={asks[0].id} request={asks[0]} waiting={asks.length - 1} onAnswer={(allowed) => answer(asks[0], allowed)} />
       )}
 
       {toast && (

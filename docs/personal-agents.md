@@ -80,8 +80,52 @@ but uses the name Sunday. A test checks that the block passes Hermes's own
 prompt-injection scan, so Hermes loads it without warnings.
 
 What changes from turn to turn (installed apps, connected coding agents, what's on
-screen) is not written to `SOUL.md`. A per-reply Hermes hook will supply it in a
-later release.
+screen) is not written to `SOUL.md`; the per-reply hook below supplies it.
+
+## Sunday and your apps
+
+Sunday reaches your apps only through OpenAgora. Once Sunday is set up, OpenAgora
+asks **Let Sunday use OpenAgora?** and explains what that changes in Sunday's
+Hermes profile. It makes the changes only after you agree, using Hermes's own
+`hermes -p sunday config set`:
+
+- **One MCP server: OpenAgora's gateway** (`openagora mcp --client sunday`). It is
+  the only MCP server OpenAgora adds. Sunday gets the store tools through it: it
+  can search the store, show a listing, install, update, remove, start, stop and
+  open apps. If Sunday's profile has other MCP servers from a copied setup,
+  OpenAgora names them and leaves them; you can remove them on Hermes's MCP page.
+- **A per-reply hook.** Before each reply, Hermes runs
+  `openagora context --hook --client sunday`. It tells Sunday what changed since its
+  last reply: for now, which apps are installed and running. It is marked as data,
+  not instructions, and says nothing when nothing changed, because Hermes keeps
+  the text in the conversation.
+- **OpenAgora's skills**, in OpenAgora's own folder, added to
+  `skills.external_dirs`. The first one teaches Sunday the store tools. Hermes shows
+  it only when those tools are there.
+- **`hooks_auto_accept: true`, for Sunday's profile only**, so Hermes runs the hook
+  without asking at the start of every session, including when Sunday answers on a
+  messaging channel. This is the issue's default for hook consent: OpenAgora asks
+  once, during setup.
+
+**OpenAgora asks you, not just Sunday.** Installing, updating and removing an app
+always wait for your yes, and the engine itself asks: in Sunday's chat (Hermes
+shows its own approval prompt, wherever you are talking to Sunday, Telegram
+included), or in OpenAgora's window when the asking agent can't ask in its chat.
+Sunday can't answer that question for you. A decline, a cancel or no answer within
+five minutes means no. Sunday can't update, stop or remove itself.
+
+**The audit log.** Every app action Sunday asks for is written to
+`<data folder>/audit/audit.jsonl`: who asked, what, the decision, where you
+answered, and the outcome. `openagora audit` shows it. It stays on this computer.
+
+**Disconnect** in Settings → Sunday (or `openagora sunday disconnect`) removes only
+what OpenAgora added and puts `hooks_auto_accept` back as it was.
+
+OpenAgora keeps a copy of its engine at `<data folder>/bin/openagora` for Sunday's
+configuration to point at, because the desktop app's own copy can move (a Linux
+AppImage runs from a new folder each time). The engine service the copy talks to is
+started by the desktop app, or by the first agent that needs it, and keeps running
+after the window closes so Sunday can still reach OpenAgora from your phone.
 
 ## Home screen and settings
 
@@ -114,6 +158,14 @@ profile named `sunday` that OpenAgora didn't set up is never deleted.
 
 ## Verification and limits
 
+Phase 2 (the gateway): Rust tests drive `openagora mcp` exactly as Hermes does.
+They cover: a decline, a cancel and an accept of the engine's in-chat question, then
+install, start and open with OpenAgora's window receiving the request; the
+window's own confirmation when the agent can't ask; refusal when nobody can be
+asked; Sunday unable to remove or stop itself; the audit log's entries; the hook
+saying only what changed; and `connect`/`disconnect` touching only Sunday's profile
+and keeping the user's own hooks. A UI test covers the window's side.
+
 Automated tests use a fake Hermes and a fake dashboard; they need no network and
 no accounts. They cover: a fresh install through to Sunday's dashboard opening
 Hermes's model setup; adopting an existing Hermes without reinstalling it; start
@@ -127,6 +179,8 @@ page with `?profile=sunday`.
 Not tested automatically, and to be checked by hand with a real Hermes: Hermes's
 own installer and `hermes update`; signing in to a model provider in Hermes's
 setup; Sunday answering "who are you?" as Sunday; connecting a real Discord or
-Telegram bot and getting a reply from Sunday; and the gateway status shown for a
-real gateway. Native assistant features and channels depend on the installed
-Hermes version.
+Telegram bot and getting a reply from Sunday; the gateway status shown for a
+real gateway; Hermes loading the `openagora` MCP server, the hook and the skill
+after **Connect Sunday**; and asking Sunday to install an app, with Hermes's
+approval prompt in the dashboard chat and on a messaging channel. Native assistant
+features and channels depend on the installed Hermes version.

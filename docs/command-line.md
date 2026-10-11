@@ -100,6 +100,52 @@ Sunday needs Hermes 0.21.3 or later; `openagora update hermes` runs Hermes's own
 `hermes update`. `openagora sunday status --json` prints the same information as
 JSON for scripts and the desktop app.
 
+### Letting Sunday use OpenAgora
+
+```sh
+openagora sunday connect      # asks first, then configures Sunday's profile
+openagora sunday disconnect   # removes only what connect added
+```
+
+`connect` uses Hermes's own `hermes -p sunday config set` to add four things to
+Sunday's profile, and nothing else:
+
+- `mcp_servers.openagora`: OpenAgora's MCP gateway, run as
+  `<data folder>/bin/openagora mcp --client sunday` (a copy of the engine at a
+  fixed place, because the desktop app's own copy can move);
+- a `pre_llm_call` hook, `openagora context --hook --client sunday`, that tells
+  Sunday what changed in OpenAgora since its last reply (your own hooks are kept);
+- OpenAgora's skills folder in `skills.external_dirs`;
+- `hooks_auto_accept: true`, for Sunday's profile only, so Hermes runs the hook
+  without asking each session (also when Sunday answers on a messaging channel).
+
+If Sunday's profile already had other MCP servers (from a copied setup), `connect`
+names them and leaves them alone.
+
+## The engine service
+
+The desktop app starts the engine as a service; `openagora mcp` starts it too
+when needed. It listens on a local socket only this user can reach
+(`<data folder>/run/engine.sock`; a named pipe on Windows).
+
+```sh
+openagora daemon start        # start it in the background (no-op if running)
+openagora daemon status       # pid and address
+openagora daemon stop
+openagora serve               # run it in the foreground instead
+openagora mcp --client sunday # the MCP server on stdin/stdout, for an agent's config
+openagora context             # what the per-reply hook would tell Sunday now
+openagora audit               # every app action, who asked and who confirmed
+```
+
+Through the MCP gateway, Sunday gets the store tools: `store_search`,
+`store_show`, `app_install`, `app_update`, `app_uninstall`, `app_start`,
+`app_stop`, `app_status` and `app_open`. Install, update and uninstall always
+wait for your confirmation, which the engine asks for itself: in Sunday's chat
+(Hermes shows its own approval prompt, wherever the conversation is), or in
+OpenAgora's window when the asking agent can't ask in chat. If neither can ask,
+nothing happens. Sunday can't update, stop or remove itself this way.
+
 ## Uninstall the command line tool
 
 - macOS `.pkg`: `sudo rm /usr/local/bin/openagora && sudo pkgutil --forget app.openagora.cli`

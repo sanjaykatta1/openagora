@@ -207,3 +207,10 @@ a.link:hover { text-decoration: underline; }
 .pill.soon { margin-left: 8px; font-weight: 600; vertical-align: 2px; }
 .agent-option.coming-soon { opacity: 0.6; }
 .agent-option.coming-soon label { cursor: default; }
+.connect-card code, .connect-notice code { font-size: 11px; }
+.connect-notice { margin: 10px 14px 0; display: flex; flex-direction: column; gap: 8px; }
+.connect-notice p { margin: 0; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 8px 0; margin: 8px 0; }
+.settings-row p { margin: 0; }
+.confirm-message { white-space: pre-wrap; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px; max-height: 260px; overflow: auto; }
+.small-mark { width: 36px; height: 36px; border-radius: 10px; font-size: 20px; }

@@ -65,6 +65,69 @@ impl Paths {
     pub fn tmp(&self) -> PathBuf {
         self.root.join("tmp")
     }
+
+    /// A copy of the engine at a fixed place, for other tools' configs (Sunday's
+    /// MCP server and hook). The desktop app's own copy can move: a Linux
+    /// AppImage runs from a new folder every time.
+    pub fn stable_exe(&self) -> PathBuf {
+        let name = if cfg!(windows) {
+            "openagora.exe"
+        } else {
+            "openagora"
+        };
+        self.root.join("bin").join(name)
+    }
+
+    /// The daemon's record of itself while it runs.
+    pub fn daemon_file(&self) -> PathBuf {
+        self.root.join("run").join("daemon.toml")
+    }
+
+    /// Skills OpenAgora ships for Sunday (Hermes's `skills.external_dirs`).
+    pub fn sunday_skills(&self) -> PathBuf {
+        self.root.join("sunday").join("skills")
+    }
+}
+
+/// Puts a copy of the running engine at `paths.stable_exe()`, unless it is
+/// already there and identical. Returns its path.
+pub fn install_stable_exe(paths: &Paths) -> Result<PathBuf> {
+    let target = paths.stable_exe();
+    let current = env::current_exe().context("finding the openagora executable")?;
+    let same_file = |a: &PathBuf, b: &PathBuf| matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b);
+    if same_file(&current, &target) {
+        return Ok(target);
+    }
+    let bytes =
+        std::fs::read(&current).with_context(|| format!("reading {}", current.display()))?;
+    if std::fs::read(&target).is_ok_and(|existing| existing == bytes) {
+        return Ok(target);
+    }
+    let dir = target.parent().context("no folder for the engine copy")?;
+    std::fs::create_dir_all(dir)?;
+    let fresh = target.with_extension("new");
+    std::fs::write(&fresh, &bytes).with_context(|| format!("writing {}", fresh.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fresh, std::fs::Permissions::from_mode(0o755))?;
+    }
+    if std::fs::rename(&fresh, &target).is_err() {
+        // Windows can't replace an executable that is running, but it can
+        // rename it out of the way.
+        let aside = target.with_extension(format!("old-{}", crate::state::now()));
+        std::fs::rename(&target, &aside)?;
+        std::fs::rename(&fresh, &target)?;
+    }
+    // Copies set aside earlier go once nothing runs them any more.
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().contains(".old-") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+    Ok(target)
 }
 
 pub fn home() -> Result<PathBuf> {

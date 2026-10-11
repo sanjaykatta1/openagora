@@ -9,8 +9,9 @@ An open-source app store for your desktop.
   [Hermes](https://github.com/NousResearch/hermes-agent) agent, in a Hermes
   profile of its own, so a Hermes you already use is left exactly as it is.
   Sunday's home screen, setup and settings are Hermes's own; OpenAgora never sees
-  your keys or sign-ins. Working across your apps and coding agents is coming
-  next. Other personal agents are coming soon. See [Sunday](docs/personal-agents.md).
+  your keys or sign-ins. Sunday can find, install and open apps from the store for
+  you, and OpenAgora asks you first every time. Carrying your work to coding agents
+  is coming next. Other personal agents are coming soon. See [Sunday](docs/personal-agents.md).
 
 ## Download
 

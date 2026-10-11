@@ -4,6 +4,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { _electron: electron } = require('playwright-core');
@@ -21,20 +22,63 @@ async function fakeDashboard() {
   return { url: `http://127.0.0.1:${port}/`, requests, close: () => server.close() };
 }
 
+/** A stand-in for the engine service (`openagora serve`) that the window
+ *  connects to: the test plays the engine's side of the conversation. */
+async function fakeDaemon() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oa-daemon-'));
+  const address = process.platform === 'win32'
+    ? `\\\\.\\pipe\\openagora-test-${process.pid}-${Date.now()}`
+    : path.join(dir, 'engine.sock');
+  const sockets = [];
+  const received = [];
+  const server = net.createServer((socket) => {
+    let buffer = '';
+    socket.setEncoding('utf8');
+    socket.on('data', (chunk) => {
+      buffer += chunk;
+      let i;
+      while ((i = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, i).trim();
+        buffer = buffer.slice(i + 1);
+        if (!line) continue;
+        const message = JSON.parse(line);
+        if (message.hello) sockets.push(socket); else received.push(message);
+      }
+    });
+    socket.on('error', () => {});
+  });
+  await new Promise((resolve) => server.listen(address, resolve));
+  return {
+    address,
+    connected: () => sockets.length > 0,
+    send: (message) => sockets.at(-1).write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n'),
+    /** The window's reply to request `id`, once it arrives. */
+    reply: async (id) => {
+      await waitFor(() => received.some((m) => m.id === id), `the window's answer to ${id}`, 30000);
+      return received.find((m) => m.id === id);
+    },
+    close: () => { for (const s of sockets) s.destroy(); server.close(); fs.rmSync(dir, { recursive: true, force: true }); },
+  };
+}
+
 /** Where Hermes and Sunday stand in the fake engine. */
 function freshFakeState(overrides = {}) {
   return {
     present: false, installed: false, adopted: false, clean: false, version: '0.21.6',
-    setup: 'unknown', running: false, dashboardUrl: null, pid: null,
-    calls: [], ...overrides,
+    setup: 'unknown', running: false, dashboardUrl: null, pid: null, connected: false,
+    extraApps: [], calls: [], ...overrides,
   };
 }
 
-async function launch({ directory, fake }) {
+async function launch({ directory, fake, daemon }) {
+  // Never start a real engine service from a test: talk to a stand-in.
+  const ownDaemon = daemon ? null : await fakeDaemon();
   const app = await electron.launch({
     args: ['.', `--user-data-dir=${directory}`, ...(process.platform === 'linux' ? ['--no-sandbox'] : [])],
     cwd: path.resolve(__dirname, '..'),
+    env: { ...process.env, OPENAGORA_DAEMON_ADDRESS: (daemon ?? ownDaemon).address },
   });
+  if (ownDaemon) app.on('close', () => ownDaemon.close());
   assert.equal(fs.realpathSync(await app.evaluate(({ app }) => app.getPath('userData'))), fs.realpathSync(directory));
   const page = await app.firstWindow();
   const errors = [];
@@ -61,7 +105,7 @@ async function installFakeEngine(app, state) {
     });
     const ok = { ok: true, stdout: '', stderr: '' };
     const handle = (channel, fn) => { ipcMain.removeHandler(channel); ipcMain.handle(channel, fn); };
-    handle('catalog', () => [listing()]);
+    handle('catalog', () => [listing(), ...f().extraApps]);
     handle('sunday-status', () => ({
       id: 'hermes', name: 'Hermes', profile: 'sunday',
       hermes: f().present ? '/home/test/.local/bin/hermes' : null,
@@ -70,6 +114,7 @@ async function installFakeEngine(app, state) {
       version_ok: f().present ? f().version >= '0.21.3' : null,
       setup: f().present ? f().setup : 'unknown',
       profile_dir: f().setup === 'missing' ? null : '/home/test/.hermes/profiles/sunday',
+      connected: f().connected,
       dashboard: f().running ? 'running' : 'stopped', url: f().running ? f().dashboardUrl : null, pid: f().running ? f().pid : null,
       gateway: f().running ? { running: false, state: 'stopped', platforms: {} } : null,
     }));
@@ -100,13 +145,14 @@ async function installFakeEngine(app, state) {
       f().installed = false; f().adopted = false; f().running = false; f().setup = 'missing';
       return ok;
     });
+    handle('sunday-connect', () => { f().calls.push(['sunday-connect']); f().connected = true; return ok; });
+    handle('sunday-disconnect', () => { f().calls.push(['sunday-disconnect']); f().connected = false; return ok; });
     handle('agent-availability', () => ({ detected: true, launchable: true }));
     handle('launch-agent', (_e, id, action) => { f().calls.push(['launch-agent', id, action]); });
   }, state);
 }
 
 const fakeCalls = (app) => app.evaluate(() => globalThis.fake.calls);
-const setFake = (app, changes) => app.evaluate((_electron, c) => Object.assign(globalThis.fake, c), changes);
 
 function tempProfile(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -125,4 +171,4 @@ async function waitFor(check, what, timeout = 10000) {
   throw new Error(`timed out waiting for ${what}`);
 }
 
-module.exports = { fakeDashboard, freshFakeState, launch, fakeCalls, setFake, tempProfile, heading, waitFor };
+module.exports = { fakeDashboard, fakeDaemon, freshFakeState, launch, fakeCalls, tempProfile, heading, waitFor };

@@ -5,7 +5,9 @@ use clap::{Parser, Subcommand};
 use openagora::apps::{Engine, Status, tail};
 use openagora::catalog::{Catalog, load_listing};
 use openagora::manifest::{Arch, Manifest, Os, Role};
+use openagora::paths::Paths;
 use openagora::sunday::{self, MIN_VERSION, Start};
+use openagora::{audit, context, daemon, ipc};
 use std::io::{BufRead, IsTerminal, Write};
 
 #[derive(Parser)]
@@ -83,6 +85,58 @@ enum Cmd {
         #[arg(short = 'n', long, default_value_t = 50)]
         lines: usize,
     },
+    /// Run the engine as a service (the desktop app starts it): the MCP
+    /// gateway Sunday connects to, over a local socket.
+    Serve,
+    /// Start, stop or check the engine service.
+    Daemon {
+        #[command(subcommand)]
+        action: DaemonCmd,
+    },
+    /// The MCP server for an agent, on stdin/stdout. Starts the engine service
+    /// if it isn't running.
+    Mcp {
+        /// Who this connection is for, e.g. `sunday`.
+        #[arg(long)]
+        client: String,
+    },
+    /// What changed since the agent's previous reply: installed apps and more.
+    Context {
+        /// Act as a Hermes `pre_llm_call` shell hook: read Hermes's event on
+        /// stdin and print `{"context": …}`, or nothing when nothing changed.
+        #[arg(long)]
+        hook: bool,
+        /// Who the context is for, e.g. `sunday`.
+        #[arg(long, default_value = "sunday")]
+        client: String,
+    },
+    /// Show the audit log: every app action, with who asked and who confirmed.
+    Audit {
+        /// Number of entries.
+        #[arg(short = 'n', long, default_value_t = 50)]
+        lines: usize,
+        /// Print JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum DaemonCmd {
+    /// Start the engine service in the background, if it isn't running.
+    Start {
+        /// Print JSON (for the desktop app).
+        #[arg(long)]
+        json: bool,
+    },
+    /// Stop the engine service.
+    Stop,
+    /// Whether the engine service is running, and where.
+    Status {
+        /// Print JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -111,6 +165,20 @@ enum SundayCmd {
         /// Use a profile with Sunday's name that OpenAgora didn't create.
         #[arg(long)]
         use_existing: bool,
+    },
+    /// Let Sunday use OpenAgora: adds OpenAgora's MCP gateway, a per-reply
+    /// hook and OpenAgora's skills to Sunday's Hermes profile, through Hermes's
+    /// own `config set` (asks first).
+    Connect {
+        /// Don't ask for confirmation.
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Undo `connect`: removes only what it added.
+    Disconnect {
+        /// Don't ask for confirmation.
+        #[arg(short, long)]
+        yes: bool,
     },
 }
 
@@ -275,6 +343,120 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     println!(
                         "Sunday is set up in {}'s {:?} profile ({}). Start it with: openagora start {}",
                         m.name, profile.profile, profile.dir, m.id
+                    );
+                }
+                SundayCmd::Connect { yes } => {
+                    let question = format!(
+                        "Let Sunday use OpenAgora? This adds to {}'s \"sunday\" profile, with Hermes's own `config set`: OpenAgora's MCP server, a hook that tells Sunday about your apps with each reply, OpenAgora's skills, and hooks_auto_accept for that profile only.",
+                        m.name
+                    );
+                    if !confirm(&question, yes)? {
+                        println!("Nothing was changed.");
+                        return Ok(());
+                    }
+                    let others = sunday::connect(&engine, m)?;
+                    println!(
+                        "Sunday now uses OpenAgora. Start a new Sunday session to pick it up."
+                    );
+                    if !others.is_empty() {
+                        println!(
+                            "Sunday's profile also has MCP servers from your earlier setup: {}. They don't go through OpenAgora, so OpenAgora can't check what Sunday does with them. Remove them on Hermes's MCP page if OpenAgora's should be Sunday's only one.",
+                            others.join(", ")
+                        );
+                    }
+                }
+                SundayCmd::Disconnect { yes } => {
+                    if !confirm(
+                        "Stop Sunday using OpenAgora's MCP server, hook and skills?",
+                        yes,
+                    )? {
+                        println!("Nothing was changed.");
+                        return Ok(());
+                    }
+                    sunday::disconnect(&engine, m)?;
+                    println!("Sunday no longer uses OpenAgora.");
+                }
+            }
+        }
+        Cmd::Serve => {
+            daemon::serve(Paths::from_env()?, cli.catalog.clone())?;
+        }
+        Cmd::Daemon { action } => {
+            let paths = Paths::from_env()?;
+            match action {
+                DaemonCmd::Start { json } => {
+                    // A service left running by an older or newer OpenAgora is
+                    // replaced by this one (agents reconnect on their own).
+                    if daemon::info(&paths)?.is_some_and(|i| i.version != env!("CARGO_PKG_VERSION"))
+                    {
+                        daemon::stop(&paths)?;
+                    }
+                    ipc::start_daemon(&paths, cli.catalog.as_deref())?;
+                    let info = daemon::info(&paths)?
+                        .ok_or_else(|| anyhow::anyhow!("the engine service did not start"))?;
+                    if json {
+                        println!("{}", serde_json::to_string(&info)?);
+                    } else {
+                        println!(
+                            "The engine is running (pid {}) at {}",
+                            info.pid, info.address
+                        );
+                    }
+                }
+                DaemonCmd::Stop => {
+                    if daemon::stop(&paths)? {
+                        println!("Stopped the engine service.");
+                    } else {
+                        println!("The engine service was not running.");
+                    }
+                }
+                DaemonCmd::Status { json } => {
+                    let info = daemon::info(&paths)?;
+                    if json {
+                        println!("{}", serde_json::to_string(&info)?);
+                    } else {
+                        match info {
+                            Some(i) => {
+                                println!("The engine is running (pid {}) at {}", i.pid, i.address)
+                            }
+                            None => println!("The engine service is not running."),
+                        }
+                    }
+                }
+            }
+        }
+        Cmd::Mcp { client } => {
+            daemon::bridge(&Paths::from_env()?, cli.catalog.as_deref(), &client)?;
+        }
+        Cmd::Context { hook, client } => {
+            let catalog = load_catalog(&cli.catalog)?;
+            let engine = Engine::new()?;
+            let payload = if hook {
+                let mut input = String::new();
+                std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
+                serde_json::from_str(&input).unwrap_or(serde_json::Value::Null)
+            } else {
+                serde_json::json!({"extra": {"is_first_turn": true}})
+            };
+            let text = context::for_turn(&engine, &catalog, &client, &payload)?;
+            match (hook, text) {
+                (true, Some(text)) => println!("{}", serde_json::json!({ "context": text })),
+                (true, None) => {}
+                (false, text) => println!("{}", text.unwrap_or_default()),
+            }
+        }
+        Cmd::Audit { lines, json } => {
+            let entries = audit::read(&Paths::from_env()?, lines)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+            } else if entries.is_empty() {
+                println!("The audit log is empty.");
+            } else {
+                for e in entries {
+                    let via = e.via.map(|v| format!(" in {v}")).unwrap_or_default();
+                    println!(
+                        "{}  {:<10} {:<14} {:<10} {}{via}: {}",
+                        e.at, e.client, e.action, e.target, e.decision, e.outcome
                     );
                 }
             }
@@ -482,6 +664,7 @@ fn sunday_json(engine: &Engine, m: &Manifest) -> anyhow::Result<serde_json::Valu
         "version_ok": report.version_ok(),
         "setup": report.profile.as_str(),
         "profile_dir": report.dir.as_ref().map(|p| p.display().to_string()),
+        "connected": sunday::record(engine, m)?.is_some_and(|r| r.connected),
         "dashboard": dashboard,
         "url": url,
         "pid": pid,

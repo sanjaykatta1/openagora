@@ -544,6 +544,124 @@ fn an_app_in_an_openagora_tab_is_captured_by_the_window_itself() {
     assert_eq!(pressed["result"]["pick"], false);
 }
 
+/// Acceptance test 13: an app popped out of its tab into a window of its own.
+#[test]
+fn an_app_popped_out_into_its_own_window_is_tracked_and_sunday_knows_it() {
+    let (env, focus) = setup();
+    env.add_web_app("notes");
+    const POPOUT: u64 = 902;
+    let popout = window(
+        POPOUT,
+        OPENAGORA_PID,
+        "OpenAgora",
+        "app.openagora.desktop",
+        "Web notes",
+    );
+    // The user works in the popped-out window; OpenAgora's main window and
+    // Firefox are behind it.
+    on_screen(&focus, json!([popout, openagora_main(), firefox("Docs")]));
+    let mut sunday = McpClient::start(&env, "sunday", true);
+    let (mut window, captures) = connect_window(&env, None, png(8, 8));
+    window.notify(
+        "focus/openagora",
+        json!({
+            "tab": null,
+            "popouts": [{"window": format!("window:{POPOUT}:0"), "app": "notes"}],
+            "focused": {"window": "popout", "app": "notes"},
+        }),
+    );
+    let pressed = window.request("shortcut/pressed", json!({}));
+    assert_eq!(pressed["result"]["target"]["kind"], "tab", "{pressed}");
+    assert_eq!(pressed["result"]["target"]["app"], "Web notes");
+    assert_eq!(pressed["result"]["target"]["key"], "openagora:notes");
+    // Sunday hears which app it is, and where, even before it may see it.
+    let told = env.hook("s1", true, "cli");
+    assert!(
+        told.contains("Web notes, in its own OpenAgora window (not allowed"),
+        "{told}"
+    );
+    // Captured by OpenAgora's window, as a tab is: the app's own page.
+    let captured = window.request(
+        "shortcut/capture",
+        json!({"allow": "always", "key": "openagora:notes"}),
+    );
+    assert!(captured["result"]["item"]["id"].is_string(), "{captured}");
+    assert_eq!(
+        captures.lock().unwrap()[0]["target"],
+        json!({"kind": "tab", "app": "notes"})
+    );
+    let told = env.hook("s2", true, "cli");
+    assert!(
+        told.contains("The app the user is working in (the window behind Sunday): Web notes, in its own OpenAgora window."),
+        "{told}"
+    );
+    let (text, error) = sunday.call("capture_window", json!({}), &mut no_questions);
+    assert!(!error, "{text}");
+    assert_eq!(
+        captures.lock().unwrap()[1]["target"],
+        json!({"kind": "tab", "app": "notes"})
+    );
+
+    // Back in its tab, in the main window: still the same app.
+    window.notify(
+        "focus/openagora",
+        json!({"tab": "notes", "popouts": [], "focused": {"window": "main"}}),
+    );
+    on_screen(&focus, json!([openagora_main(), firefox("Docs")]));
+    let told = env.hook("s3", true, "cli");
+    assert!(told.contains("Web notes, in an OpenAgora tab."), "{told}");
+
+    // Where the OS can't say which window is in front (Wayland), OpenAgora's
+    // window still knows when one of its own windows has focus.
+    fs::write(
+        &focus,
+        json!({"unavailable": "Wayland doesn't let apps see which window is in front", "pick": true})
+            .to_string(),
+    )
+    .unwrap();
+    window.notify(
+        "focus/openagora",
+        json!({
+            "tab": null,
+            "popouts": [{"window": format!("window:{POPOUT}:0"), "app": "notes"}],
+            "focused": {"window": "popout", "app": "notes"},
+        }),
+    );
+    let pressed = window.request("shortcut/pressed", json!({}));
+    assert_eq!(pressed["result"]["target"]["app"], "Web notes", "{pressed}");
+    assert_eq!(pressed["result"]["verdict"], "allowed");
+    let told = env.hook("s4", true, "cli");
+    assert!(
+        told.contains("Web notes, in its own OpenAgora window."),
+        "{told}"
+    );
+    // Behind Sunday's panel, it can't tell: the user picks.
+    window.notify("focus/openagora", json!({"focused": {"window": "panel"}}));
+    let pressed = window.request("shortcut/pressed", json!({}));
+    assert!(pressed["result"]["target"].is_null(), "{pressed}");
+    assert_eq!(pressed["result"]["pick"], true);
+
+    // Every capture is in the audit log, with the app it came from: the press
+    // before it was allowed, the user's capture and Sunday's.
+    let audit = env.audit();
+    let captures: Vec<String> = audit
+        .iter()
+        .filter(|e| e["action"] == "capture" && e["target"] == "openagora:notes")
+        .map(|e| {
+            format!(
+                "{}:{}",
+                e["client"].as_str().unwrap(),
+                e["decision"].as_str().unwrap()
+            )
+        })
+        .collect();
+    assert_eq!(
+        captures,
+        ["user:refused", "user:allowed", "sunday:allowed"],
+        "{audit:?}"
+    );
+}
+
 #[test]
 fn where_the_os_hides_windows_only_the_user_picks_one() {
     let (env, focus) = setup();

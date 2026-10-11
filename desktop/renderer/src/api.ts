@@ -232,6 +232,21 @@ export type UpdateState =
   | { kind: "ready"; current: string; version: string }
   | { kind: "error"; current: string; message: string };
 
+/** Where the main window shows an app's tab, in the page's pixels. */
+export interface TabBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** What happened to an app's tab; mirrors electron/tabs.ts. */
+export interface TabEvent {
+  id: string;
+  kind: "loaded" | "failed" | "popped" | "returned";
+  description?: string;
+}
+
 export interface Bridge {
   platform: string;
   agentAvailability(id: string): Promise<{ detected: boolean; launchable: boolean }>;
@@ -252,8 +267,23 @@ export interface Bridge {
   onConfirm(callback: (request: ConfirmRequest) => void): () => void;
   onConfirmDone(callback: (id: string) => void): () => void;
   onOpenApp(callback: (id: string) => void): () => void;
-  /** Tells OpenAgora what the main window shows (for Sunday's shortcut). */
-  viewChanged(view: { kind: string; app?: string }): void;
+  /** App tabs. OpenAgora's main process owns each app's page; this page only
+   *  says where it shows one, so a tab can pop out and back without reloading. */
+  tabs: {
+    open(id: string, name: string, url: string, pid: number): Promise<void>;
+    place(id: string, bounds: TabBounds | null): void;
+    /** A dialog is open over the tabs, which would cover it. */
+    cover(covered: boolean): void;
+    popOut(id: string): Promise<void>;
+    bringBack(id: string): Promise<void>;
+    showWindow(id: string): Promise<void>;
+    reload(id: string): Promise<void>;
+    close(id: string): Promise<void>;
+    url(id: string): Promise<string | null>;
+    /** Apps popped out into their own windows (they outlive the main window). */
+    popped(): Promise<string[]>;
+    onEvent(callback: (event: TabEvent) => void): () => void;
+  };
   showMain(): Promise<void>;
   panel: {
     state(): Promise<ShortcutState | null>;

@@ -66,6 +66,28 @@ pub struct WindowState {
     pub panel: Option<u64>,
     /// The app in the main window's tab, while one shows.
     pub tab: Option<String>,
+    /// Apps popped out of their tabs into windows of their own.
+    pub popouts: Vec<Popout>,
+    /// Which of OpenAgora's windows has focus, as OpenAgora's window knows it
+    /// (the OS doesn't always say: Wayland).
+    pub focused: Option<Focused>,
+}
+
+/// An app popped out of its tab into a window of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Popout {
+    /// The window's OS id (see `focus::Window::id`).
+    pub window: u64,
+    pub app: String,
+}
+
+/// One of OpenAgora's windows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Focused {
+    Main,
+    Panel,
+    /// The window of a popped-out app.
+    Popout(String),
 }
 
 /// What something would be captured from.
@@ -73,8 +95,13 @@ pub struct WindowState {
 pub enum Target {
     /// A window of another app.
     Window(focus::Window),
-    /// An app in an OpenAgora tab.
-    Tab { id: String, name: String },
+    /// An app in an OpenAgora tab, or popped out of it into a window of its
+    /// own.
+    Tab {
+        id: String,
+        name: String,
+        popped: bool,
+    },
 }
 
 impl Target {
@@ -267,11 +294,36 @@ impl Gateway {
         if params.get("panel").is_some() {
             window.panel = id(&params["panel"]);
         }
-        if params.get("tab").is_some() {
-            window.tab = params["tab"]
-                .as_str()
+        let app_id = |v: &Value| {
+            v.as_str()
                 .filter(|t| crate::manifest::valid_id(t))
-                .map(str::to_string);
+                .map(str::to_string)
+        };
+        if params.get("tab").is_some() {
+            window.tab = app_id(&params["tab"]);
+        }
+        if let Some(popouts) = params.get("popouts") {
+            window.popouts = popouts
+                .as_array()
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|p| {
+                            Some(Popout {
+                                window: id(&p["window"])?,
+                                app: app_id(&p["app"])?,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
+        if let Some(focused) = params.get("focused") {
+            window.focused = match focused["window"].as_str() {
+                Some("main") => Some(Focused::Main),
+                Some("panel") => Some(Focused::Panel),
+                Some("popout") => app_id(&focused["app"]).map(Focused::Popout),
+                _ => None,
+            };
         }
     }
 
@@ -282,19 +334,40 @@ impl Gateway {
     fn tab_target(&self, id: &str) -> Option<Target> {
         let catalog = self.catalog().ok()?;
         let m = &catalog.listings.get(id)?.manifest;
+        let popped = self.window_state().popouts.iter().any(|p| p.app == m.id);
         (m.role != Role::Agent).then(|| Target::Tab {
             id: m.id.clone(),
             name: m.name.clone(),
+            popped,
         })
     }
 
     /// The window the user is working in: the front-most window that isn't
-    /// OpenAgora's own, where an app in an OpenAgora tab counts as that app.
-    /// None when only OpenAgora is on screen; an error when the OS can't say.
+    /// OpenAgora's own, where an app in an OpenAgora tab, or popped out of it
+    /// into a window of its own, counts as that app. None when only OpenAgora
+    /// is on screen; an error when the OS can't say.
     pub fn current_target(&self) -> Result<Option<Target>, String> {
-        let windows = focus::windows()?;
         let me = self.window_state();
+        let windows = match focus::windows() {
+            Ok(windows) => windows,
+            // The OS can't say (Wayland), but OpenAgora's window knows when
+            // one of its own windows, showing an app, has focus.
+            Err(why) => {
+                let shown = match &me.focused {
+                    Some(Focused::Popout(app)) => self.tab_target(app),
+                    Some(Focused::Main) => me.tab.as_deref().and_then(|t| self.tab_target(t)),
+                    _ => None,
+                };
+                return shown.map(Some).ok_or(why);
+            }
+        };
         for w in windows {
+            if let Some(popout) = me.popouts.iter().find(|p| p.window == w.id) {
+                if let Some(tab) = self.tab_target(&popout.app) {
+                    return Ok(Some(tab));
+                }
+                continue;
+            }
             let ours = me.pid == Some(w.pid) || Some(w.id) == me.main || Some(w.id) == me.panel;
             if !ours {
                 return Ok(Some(Target::Window(w)));
@@ -337,6 +410,7 @@ impl Gateway {
                 return Ok(Some(Target::Tab {
                     id: m.id.clone(),
                     name: m.name.clone(),
+                    popped: me.popouts.iter().any(|p| p.app == m.id),
                 }));
             }
         }
@@ -1097,6 +1171,15 @@ fn refusal_text(refusal: &Refusal, what: &str) -> String {
 /// The app the user is in, for Sunday's per-reply hook. Only apps Sunday may
 /// see are named, and only always-allowed apps' window titles are given.
 /// Installed apps in OpenAgora's tabs are no secret from Sunday.
+/// Where OpenAgora shows an app of its own.
+fn where_shown(popped: bool) -> &'static str {
+    if popped {
+        "in its own OpenAgora window"
+    } else {
+        "in an OpenAgora tab"
+    }
+}
+
 fn describe_target(target: &Target, verdict: Option<&Verdict>) -> String {
     match (verdict, target) {
         (Some(Verdict::Never(_)), _) => {
@@ -1109,14 +1192,17 @@ fn describe_target(target: &Target, verdict: Option<&Verdict>) -> String {
             }
             _ => w.app.clone(),
         },
-        (Some(Verdict::Allowed(Scope::Always)), Target::Tab { name, .. }) => {
-            format!("{name}, in an OpenAgora tab")
+        (Some(Verdict::Allowed(Scope::Always)), Target::Tab { name, popped, .. }) => {
+            format!("{name}, {}", where_shown(*popped))
         }
         (Some(Verdict::Allowed(Scope::Once)), _) => {
             format!("{} (allowed for one capture)", target.app())
         }
-        (_, Target::Tab { name, .. }) => {
-            format!("{name}, in an OpenAgora tab (not allowed: you can't see it)")
+        (_, Target::Tab { name, popped, .. }) => {
+            format!(
+                "{name}, {} (not allowed: you can't see it)",
+                where_shown(*popped)
+            )
         }
         (_, Target::Window(_)) => "an app you aren't allowed to see".into(),
     }

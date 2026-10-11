@@ -1,8 +1,8 @@
 // Pictures of windows, taken only when the engine asks (it checks first that
 // the user allowed the app and that it isn't on the never-capture list).
 //
-// - An app in an OpenAgora tab: the tab's own capturePage, which needs no OS
-//   permission.
+// - An app in an OpenAgora tab, or popped out into a window of its own: its
+//   page's own capturePage, which needs no OS permission.
 // - Any other window: Chromium's window capture of that one window, through a
 //   hidden page that calls getDisplayMedia while OpenAgora's handler hands it
 //   exactly that window. No other window is captured, not even as a thumbnail.
@@ -10,10 +10,11 @@
 //   Graphics Capture; on Wayland the system's own dialog lets the user pick
 //   the window.
 
-import { app, BrowserWindow, desktopCapturer, nativeImage, session, systemPreferences, webContents, type NativeImage, type WebContents } from "electron";
+import { app, BrowserWindow, desktopCapturer, nativeImage, session, systemPreferences, type NativeImage, type WebContents } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { CaptureTarget, Picture } from "./engine-link";
+import { tabContents } from "./tabs";
 
 const CAPTURE_PARTITION = "openagora-capture";
 const CAPTURE_PAGE = path.join(__dirname, "..", "renderer", "capture.html");
@@ -48,14 +49,6 @@ export function encode(image: NativeImage, maxEdge: number): Picture {
     type = "image/jpeg";
   }
   return { type, data: bytes.toString("base64"), width, height };
-}
-
-/** The web view showing an app's tab, if it is open. */
-export function tabContents(appId: string): WebContents | undefined {
-  const partition = session.fromPartition(`persist:app-${appId}`);
-  return webContents.getAllWebContents().find((contents) =>
-    !contents.isDestroyed() && contents.getType() === "webview"
-    && (contents.session === partition || (!!partition.storagePath && contents.session.storagePath === partition.storagePath)));
 }
 
 /** The window currently being handed to the hidden capture page. */

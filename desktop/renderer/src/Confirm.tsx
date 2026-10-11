@@ -3,6 +3,7 @@
 // default and the safe way out (Escape too).
 import { useEffect, useRef } from "react";
 import type { ConfirmRequest } from "./api";
+import { CoversTabs } from "./Covers";
 
 const CLIENT_NAMES: Record<string, string> = {
   sunday: "Sunday",
@@ -26,6 +27,7 @@ export function AgentConfirm(props: { request: ConfirmRequest; waiting: number; 
   const choices = request.choices ?? [];
   return (
     <div className="modal-backdrop">
+      <CoversTabs />
       <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="agent-confirm-title" aria-describedby="agent-confirm-message">
         <header className="modal-head">
           <div className="sunday-mark small-mark" aria-hidden>☀</div>

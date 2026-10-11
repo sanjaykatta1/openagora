@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { bridge, osName, type App as Listing, type ConfirmRequest, type EngineResult, type SundaySetupChoice, type SundayStatus, type UpdateState } from "./api";
 import { AgentConfirm } from "./Confirm";
+import { CoversTabs } from "./Covers";
 import { NEW_AGENT_PREFERENCES, PERSONAL_AGENTS, SUNDAY_ID, parseAgentPreferences, type AgentPreferences } from "../../electron/agents";
 import { AgentChooser } from "./PersonalAgent";
 import { SeeingSettings } from "./Seeing";
@@ -147,10 +148,13 @@ export function App() {
     void bridge?.answerConfirm(request.id, allowed, choice);
   };
 
-  // Sunday's shortcut needs to know which app the main window shows.
+  // Apps popped out into their own windows outlive the main window: a main
+  // window that opens again lists them as tabs.
   useEffect(() => {
-    bridge?.viewChanged(view.kind === "tab" ? { kind: "tab", app: view.id } : { kind: view.kind });
-  }, [view]);
+    void bridge?.tabs.popped().then((ids) => {
+      if (ids.length > 0) setTabs((t) => [...t, ...ids.filter((id) => !t.includes(id))]);
+    }, () => {});
+  }, []);
 
   const byId = useMemo(() => new Map(apps.map((a) => [a.id, a])), [apps]);
   const agentListing = byId.get(SUNDAY_ID);
@@ -309,7 +313,7 @@ export function App() {
                     <button className="tab-open" onClick={() => setView({ kind: "tab", id })}>
                       <Monogram app={app} size="xs" /> {app.name}
                     </button>
-                    <button className="tab-close" title={`Close ${app.name} tab`} onClick={() => closeTab(id)}>
+                    <button className="tab-close" title={`Close ${app.name} tab`} aria-label={`Close ${app.name} tab`} onClick={() => closeTab(id)}>
                       ×
                     </button>
                   </div>
@@ -831,6 +835,7 @@ function ConfirmInstall(props: { app: Listing; onCancel: () => void; onConfirm: 
   }, [props]);
   return (
     <div className="modal-backdrop" onClick={props.onCancel}>
+      <CoversTabs />
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onClick={(e) => e.stopPropagation()}>
         <header className="modal-head">
           <Monogram app={app} />
@@ -898,12 +903,6 @@ function StoppedTab(props: { app: Listing; visible: boolean; busy?: string; onSt
   );
 }
 
-/** The subset of Electron's <webview> element this page uses. */
-interface WebviewElement extends HTMLElement {
-  reload(): void;
-  loadURL(url: string): Promise<void>;
-}
-
 /** Each start of an app may print a one-time sign-in link (`url`). Use it for
  *  the first visit only; after that the tab's saved session is signed in, so
  *  later visits go to the app's plain address (`home_url`). */
@@ -922,34 +921,60 @@ function entryUrl(app: Listing): string {
 }
 
 function AppTab({ app, visible }: { app: Listing; visible: boolean }) {
-  const ref = useRef<WebviewElement | null>(null);
+  const host = useRef<HTMLDivElement | null>(null);
   const [src] = useState(() => entryUrl(app));
   const [failure, setFailure] = useState<string | null>(null);
+  const [popped, setPopped] = useState(false);
   const [log, setLog] = useState<string | null>(null);
+  const tabs = bridge?.tabs;
 
-  useEffect(() => {
-    const view = ref.current;
-    if (!view) return;
-    const failed = (event: Event) => {
-      const { errorCode, errorDescription, isMainFrame } = event as Event & {
-        errorCode: number;
-        errorDescription: string;
-        isMainFrame: boolean;
-      };
-      // -3 is an aborted load (a redirect or a new navigation), not a failure.
-      if (isMainFrame && errorCode !== -3) setFailure(errorDescription || `error ${errorCode}`);
-    };
-    const loaded = () => setFailure(null);
-    view.addEventListener("did-fail-load", failed);
-    view.addEventListener("did-finish-load", loaded);
+  // The app's page lives in OpenAgora's main process, one per start of the
+  // app, with a saved session per app (sign-ins survive restarts, and apps
+  // don't share cookies). Opened before it is placed.
+  useLayoutEffect(() => {
+    if (!tabs) return;
+    const off = tabs.onEvent((event) => {
+      if (event.id !== app.id) return;
+      if (event.kind === "failed") setFailure(event.description ?? "it didn't answer");
+      else if (event.kind === "loaded") setFailure(null);
+      else setPopped(event.kind === "popped");
+    });
+    tabs.open(app.id, app.name, src, app.pid ?? 0).catch((e: unknown) => setFailure(e instanceof Error ? e.message : String(e)));
     return () => {
-      view.removeEventListener("did-fail-load", failed);
-      view.removeEventListener("did-finish-load", loaded);
+      off();
+      void tabs.close(app.id);
     };
-  }, []);
+  }, [tabs, app.id, app.pid, src]);
+
+  // Where this page shows it: the main process draws it there.
+  useLayoutEffect(() => {
+    const element = host.current;
+    if (!tabs) return;
+    if (!element || !visible || popped) {
+      tabs.place(app.id, null);
+      return;
+    }
+    const place = () => {
+      const r = element.getBoundingClientRect();
+      tabs.place(app.id, { x: r.left, y: r.top, width: r.width, height: r.height });
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(element);
+    window.addEventListener("resize", place);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", place);
+      tabs.place(app.id, null);
+    };
+  }, [tabs, app.id, visible, popped, failure, log]);
 
   const shownAddress = app.home_url ?? src.split("#")[0];
   const openInBrowser = () => void window.openagora?.openExternal(app.home_url ?? src);
+  const reload = () => {
+    setFailure(null);
+    void tabs?.reload(app.id);
+  };
   const showLog = async () => {
     const result = await window.openagora?.logs(app.id);
     setLog(result ? (result.ok ? result.stdout : result.stderr) || "(the log is empty)" : null);
@@ -961,9 +986,12 @@ function AppTab({ app, visible }: { app: Listing; visible: boolean }) {
         <span>{app.name}</span>
         <span className="muted">{shownAddress}</span>
         <span className="bar-actions">
-          <button className="link" onClick={() => (setFailure(null), ref.current?.reload())}>
+          <button className="link" onClick={reload}>
             Reload
           </button>
+          {popped
+            ? <button className="link" onClick={() => void tabs?.bringBack(app.id)}>Bring back</button>
+            : <button className="link" onClick={() => void tabs?.popOut(app.id)}>Pop out</button>}
           <button className="link" onClick={openInBrowser}>
             Open in browser ↗
           </button>
@@ -975,7 +1003,7 @@ function AppTab({ app, visible }: { app: Listing; visible: boolean }) {
       {failure && (
         <div className="notice error tab-notice">
           {app.name} didn't load: {failure}.{" "}
-          <button className="link" onClick={() => (setFailure(null), ref.current?.reload())}>
+          <button className="link" onClick={reload}>
             Retry
           </button>
         </div>
@@ -991,8 +1019,21 @@ function AppTab({ app, visible }: { app: Listing; visible: boolean }) {
           <pre className="log">{log}</pre>
         </div>
       )}
-      {/* A saved session per app, so sign-ins survive restarts and apps don't share cookies. */}
-      <webview ref={ref} src={src} partition={`persist:app-${app.id}`} className="webview" />
+      {popped ? (
+        <div className="popped-tab">
+          <p>{app.name} is open in its own window.</p>
+          <div className="actions">
+            <button className="btn primary" onClick={() => void tabs?.showWindow(app.id)}>
+              Show its window
+            </button>
+            <button className="btn ghost" onClick={() => void tabs?.bringBack(app.id)}>
+              Bring it back here
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div ref={host} className="webview" aria-label={`${app.name}'s page`} role="region" />
+      )}
     </div>
   );
 }

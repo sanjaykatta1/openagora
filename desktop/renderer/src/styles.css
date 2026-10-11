@@ -148,6 +148,7 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .tab-log { margin: 10px 14px 0; max-height: 40%; overflow: auto; }
 .tab-log-head { display: flex; justify-content: space-between; align-items: center; }
 .stopped-tab { align-items: center; justify-content: center; }
+.popped-tab { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
 .stopped-card { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; max-width: 640px; padding: 24px; }
 .stopped-card h2 { font-size: 20px; margin-top: 6px; }
 .stopped-card p { margin: 0; }

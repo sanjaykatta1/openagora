@@ -258,9 +258,14 @@ engine decides what may be captured, keeps the result, and logs it.
   use. `OPENAGORA_FOCUS_FILE` replaces the OS with a file in tests.
 - **The window the user is in** is the front-most window that isn't OpenAgora's
   own: the window reports its process id, the OS ids of its main window and the
-  Sunday panel (`getMediaSourceId`, the same ids the OS query returns), and which
-  app its tab shows (`focus/openagora`). An app in an OpenAgora tab counts as that
-  app; the panel and OpenAgora's own pages are looked behind.
+  Sunday panel (`getMediaSourceId`, the same ids the OS query returns), which
+  app its tab shows, the apps popped out into windows of their own (each with
+  its window's id), and which of its windows has focus (`focus/openagora`). An
+  app in an OpenAgora tab, or popped out of it, counts as that app (Sunday is
+  told "in an OpenAgora tab" or "in its own OpenAgora window"); the panel and
+  OpenAgora's own pages are looked behind. Where the OS can't say which window
+  is in front (Wayland), OpenAgora's own focus still names the app when one of
+  its windows showing an app has focus (built: phase 6).
 - **Broker** (`engine/src/broker.rs`): grants keyed by client × source app ×
   destination × type family (`image/*` for now), allowed once or always, in
   `<data>/broker/grants.toml`; the never-capture list, built in
@@ -556,8 +561,13 @@ who asked and by words (built: phase 6).
 
 - **Sunday** (built): the home screen, as above.
 - **Sidebar** (built): Sunday, the store, the library, open apps, settings.
-- **Tabs** (built): each app's own web UI. Embedded views are loopback-only:
-  navigation away from 127.0.0.1/localhost opens in the default browser instead.
+- **Tabs** (built): each app's own web UI, in a view OpenAgora's main process
+  owns (`WebContentsView`, `desktop/electron/tabs.ts`), drawn where the main
+  window's page shows the tab; the page only says where. A saved session per
+  app, sandboxed, no preload. Embedded views are loopback-only: navigation or a
+  redirect away from 127.0.0.1/localhost opens in the default browser instead.
+  OpenAgora's own dialogs hide the app's view while they are open, so it never
+  covers them.
 - **Settings** (built): Sunday's Hermes pages; What Sunday can see (the
   shortcut, keeping OpenAgora in the menu bar or tray, macOS Screen Recording
   permission, allowed apps and handoffs, the never-capture list); Coding agents
@@ -577,9 +587,12 @@ who asked and by words (built: phase 6).
   page of OpenAgora's own whose display-media handler grants exactly that window
   (no thumbnails of other windows are taken). Pictures are scaled to 1920 pixels
   at most.
-- **Detach** (planned: phase 6): pop an app out into its own window without
-  reloading it, with focus tracking across windows. Closing that window returns it
-  to its tab.
+- **Pop out** (built: phase 6): "Pop out" in an app's tab moves its page into a
+  window of its own without reloading it (the same view, moved), with focus
+  tracking across windows (above). Closing that window, or "Bring it back
+  here", returns it to its tab; closing the tab closes it. Popped-out apps stay
+  open when the main window closes, and a main window that opens again lists
+  them.
 - **Notifications:** one notification center for all apps.
 
 OS features go through Electron's cross-platform APIs only: `safeStorage` for

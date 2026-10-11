@@ -3,7 +3,7 @@
 // Sunday's shortcut and panel, and the menu bar or tray icon that keeps
 // OpenAgora running after its window closes.
 
-import { app, BrowserWindow, clipboard, ClipboardItem, globalShortcut, ipcMain, Menu, nativeImage, screen, session, shell, Tray } from "electron";
+import { app, BaseWindow, BrowserWindow, clipboard, ClipboardItem, globalShortcut, ipcMain, Menu, nativeImage, screen, session, shell, Tray } from "electron";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -14,6 +14,7 @@ import { EngineLink, type ConfirmAnswer, type ConfirmRequest, type Picture } fro
 import { capture, mayCapture, screenAccess } from "./capture";
 import { readDesktopSettings, saveDesktopSettings, type DesktopSettings } from "./desktop-settings";
 import { TRAY_ICON } from "./tray-icon";
+import { bringBack, closeTab, configureTabs, coverTabs, describeTabs, focusedPopout, mainClosed, openTab, placeTab, poppedTabs, popouts, popOut, reloadTab, showPopout, shownInMain, tabUrl } from "./tabs";
 
 const EXE = process.platform === "win32" ? "openagora.exe" : "openagora";
 const LOCAL_URL = /^http:\/\/(127\.0\.0\.1|localhost):\d+(\/|$)/;
@@ -75,8 +76,6 @@ let link: EngineLink | null = null;
 let settings: DesktopSettings;
 let shortcutError: string | null = null;
 let quitting = false;
-/** The app in the main window's tab, while one shows. */
-let currentTab: string | null = null;
 
 /** The engine's questions waiting for the user's answer, and the window showing each. */
 const pendingConfirms = new Map<string, { window: BrowserWindow; request: ConfirmRequest; finish: (answer: ConfirmAnswer) => void }>();
@@ -118,10 +117,16 @@ async function askInWindow(request: ConfirmRequest): Promise<ConfirmAnswer> {
 }
 
 /** What the engine needs to know about OpenAgora's own windows: which are
- *  ours, and which app the main window shows. */
+ *  ours, which app the main window shows, the apps popped out into windows
+ *  of their own, and which of OpenAgora's windows has focus (the engine
+ *  can't always ask the OS: Wayland). */
 function windowReport(): Record<string, unknown> {
   const id = (window: BrowserWindow | null) => (window && !window.isDestroyed() ? window.getMediaSourceId() : null);
-  return { pid: process.pid, main: id(mainWin), panel: id(panelWin), tab: currentTab };
+  const front = BaseWindow.getFocusedWindow();
+  const is = (window: BrowserWindow | null) => !!front && !!window && !window.isDestroyed() && window.id === front.id;
+  const popped = focusedPopout();
+  const focused = is(mainWin) ? { window: "main" } : is(panelWin) ? { window: "panel" } : popped ? { window: "popout", app: popped } : null;
+  return { pid: process.pid, main: id(mainWin), panel: id(panelWin), tab: shownInMain(), popouts: popouts(), focused };
 }
 
 function reportWindows(): void {
@@ -187,6 +192,8 @@ function createPanel(): BrowserWindow {
   window.on("closed", () => { if (panelWin === window) panelWin = null; });
   window.on("show", reportWindows);
   window.on("hide", reportWindows);
+  window.on("focus", reportWindows);
+  window.on("blur", reportWindows);
   window.loadFile(path.join(__dirname, "..", "renderer", "index.html"), { hash: "panel" });
   return window;
 }
@@ -502,12 +509,33 @@ function registerIpc(): void {
     }
   });
 
-  // What the main window shows: an app's tab, or OpenAgora's own pages.
-  ipcMain.on("view-changed", (event, view: unknown) => {
-    if (!mainWin || event.sender !== mainWin.webContents) return;
-    const v = view && typeof view === "object" ? view as Record<string, unknown> : {};
-    currentTab = v.kind === "tab" && typeof v.app === "string" && VALID_ID.test(v.app) ? v.app : null;
-    reportWindows();
+  // App tabs: only the main window's own page says where it shows them.
+  const fromMain = (event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent) =>
+    !!mainWin && !mainWin.isDestroyed() && event.sender === mainWin.webContents && event.senderFrame === event.sender.mainFrame;
+  const mainOnly = (channel: string, listener: (...args: unknown[]) => unknown) =>
+    ipcMain.handle(channel, (event, ...args: unknown[]) => {
+      if (!fromMain(event)) throw new Error("only OpenAgora's main window can do this");
+      return listener(...args);
+    });
+  mainOnly("tab-open", (id, name, url, pid) => {
+    if (typeof name !== "string" || typeof url !== "string" || typeof pid !== "number") throw new Error("invalid tab");
+    openTab(checkId(id), name.slice(0, 200), url, pid);
+  });
+  mainOnly("tab-pop-out", (id) => popOut(checkId(id)));
+  mainOnly("tab-bring-back", (id) => bringBack(checkId(id)));
+  mainOnly("tab-show-window", (id) => showPopout(checkId(id)));
+  mainOnly("tab-reload", (id) => reloadTab(checkId(id)));
+  mainOnly("tab-close", (id) => closeTab(checkId(id)));
+  mainOnly("tab-url", (id) => tabUrl(checkId(id)));
+  mainOnly("tabs-popped", () => poppedTabs());
+  ipcMain.on("tab-place", (event, id: unknown, bounds: unknown) => {
+    if (!fromMain(event) || typeof id !== "string" || !VALID_ID.test(id)) return;
+    const b = bounds && typeof bounds === "object" ? bounds as Record<string, unknown> : null;
+    const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.min(v, 100_000)) : 0);
+    placeTab(id, b ? { x: n(b.x), y: n(b.y), width: n(b.width), height: n(b.height) } : null);
+  });
+  ipcMain.on("tab-cover", (event, covered: unknown) => {
+    if (fromMain(event)) coverTabs(covered === true);
   });
 
   // Sunday's panel.
@@ -660,9 +688,14 @@ function createWindow(): BrowserWindow {
   });
   window.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
   mainWin = window;
+  // The page's tabs go with the page: when it reloads, and when the window
+  // closes (apps popped out into their own windows stay).
+  window.webContents.on("did-navigate", () => { if (mainWin === window) mainClosed(); });
+  window.on("focus", reportWindows);
+  window.on("blur", reportWindows);
   window.on("closed", () => {
     if (mainWin === window) mainWin = null;
-    currentTab = null;
+    mainClosed();
     reportWindows();
     // Without the menu bar or tray icon, closing the window ends OpenAgora
     // (on macOS, apps stay in the Dock as usual).
@@ -725,6 +758,11 @@ if (!app.requestSingleInstanceLock()) {
     });
     lockDown(session.defaultSession);
     settings = readDesktopSettings(app.getPath("userData"));
+    configureTabs({
+      main: () => (mainWin && !mainWin.isDestroyed() ? mainWin : null),
+      send: (event) => { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send("tab-event", event); },
+      changed: reportWindows,
+    });
     registerIpc();
     registerUpdater();
     createWindow();
@@ -737,6 +775,9 @@ if (!app.requestSingleInstanceLock()) {
         openagoraTest: {
           pressShortcut: () => onShortcut(),
           panel: () => panelWin,
+          main: () => mainWin,
+          showMain,
+          tabs: describeTabs,
           tray: () => tray,
           shortcutRegistered: () => shortcutError === null,
         },

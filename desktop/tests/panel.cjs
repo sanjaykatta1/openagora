@@ -162,7 +162,7 @@ async function run() {
   for (const partition of ['persist:app-notes', 'persist:sunday']) {
     const media = await app.evaluate(async ({ webContents, session, BrowserWindow }, partition) => {
       const ses = session.fromPartition(partition);
-      const view = webContents.getAllWebContents().find((c) => c.getType() === 'webview' && c.session === ses);
+      const view = webContents.getAllWebContents().find((c) => !c.isDestroyed() && c.session === ses);
       if (!view) return 'no view';
       const id = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith('index.html')).getMediaSourceId();
       const desktop = { audio: false, video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: id } } };

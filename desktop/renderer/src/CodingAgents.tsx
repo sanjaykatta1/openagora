@@ -4,6 +4,7 @@
 // both, and writes them to the audit log.
 import { useCallback, useEffect, useState } from "react";
 import { bridge, type App, type CodingAgent, type CodingAgentsState, type EngineResult } from "./api";
+import { CoversTabs } from "./Covers";
 
 interface Asking {
   title: string;
@@ -146,6 +147,7 @@ export function CodingAgentsSettings(props: { apps: App[] }) {
 
       {asking && (
         <div className="modal-backdrop" onClick={() => !busy && setAsking(null)}>
+          <CoversTabs />
           <div className="modal" role="dialog" aria-modal="true" aria-labelledby="coding-ask-title" onClick={(e) => e.stopPropagation()}>
             <h2 id="coding-ask-title">{asking.title}</h2>
             {asking.lines.slice(0, 1).map((line) => <p key={line}>{line}</p>)}

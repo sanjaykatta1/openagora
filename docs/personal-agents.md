@@ -166,8 +166,10 @@ stays on top.
   OpenAgora's window saw it while capturing, so a private window opened in an
   allowed browser after you pressed the shortcut is still refused.
 - **Apps in OpenAgora's tabs** are captured by OpenAgora itself, without any
-  system permission. They need allowing too. Apps in tabs (and Sunday's chat)
-  can't use your camera, microphone or screen themselves.
+  system permission, and so are apps you popped out of their tab ("Pop out" in
+  the tab's bar) into a window of their own. They need allowing too. Sunday
+  knows which app such a window shows, even on Wayland. Apps in tabs (and
+  Sunday's chat) can't use your camera, microphone or screen themselves.
 
 Sunday is told the names of apps it may see, with their window titles for apps
 you always allowed. Other apps stay unnamed unless you press the shortcut over

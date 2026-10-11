@@ -35,7 +35,25 @@ contextBridge.exposeInMainWorld("openagora", {
     ipcRenderer.on("open-app", handler);
     return () => ipcRenderer.removeListener("open-app", handler);
   },
-  viewChanged: (view: { kind: string; app?: string }) => ipcRenderer.send("view-changed", view),
+  /** App tabs: the main process owns each app's page; this page only says
+   *  where it shows one. */
+  tabs: {
+    open: (id: string, name: string, url: string, pid: number) => ipcRenderer.invoke("tab-open", id, name, url, pid),
+    place: (id: string, bounds: { x: number; y: number; width: number; height: number } | null) => ipcRenderer.send("tab-place", id, bounds),
+    cover: (covered: boolean) => ipcRenderer.send("tab-cover", covered),
+    popOut: (id: string) => ipcRenderer.invoke("tab-pop-out", id),
+    bringBack: (id: string) => ipcRenderer.invoke("tab-bring-back", id),
+    showWindow: (id: string) => ipcRenderer.invoke("tab-show-window", id),
+    reload: (id: string) => ipcRenderer.invoke("tab-reload", id),
+    close: (id: string) => ipcRenderer.invoke("tab-close", id),
+    url: (id: string) => ipcRenderer.invoke("tab-url", id),
+    popped: () => ipcRenderer.invoke("tabs-popped"),
+    onEvent: (callback: (event: unknown) => void) => {
+      const handler = (_e: IpcRendererEvent, event: unknown) => callback(event);
+      ipcRenderer.on("tab-event", handler);
+      return () => ipcRenderer.removeListener("tab-event", handler);
+    },
+  },
   showMain: () => ipcRenderer.invoke("show-main"),
   panel: {
     state: () => ipcRenderer.invoke("panel-state"),

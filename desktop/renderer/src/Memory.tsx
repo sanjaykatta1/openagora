@@ -4,6 +4,7 @@
 // The engine runs them, and writes them to the audit log.
 import { useCallback, useEffect, useState } from "react";
 import { bridge, type EngineResult, type MemoryState } from "./api";
+import { CoversTabs } from "./Covers";
 
 interface Asking {
   title: string;
@@ -135,6 +136,7 @@ export function MemorySettings() {
 
       {asking && (
         <div className="modal-backdrop" onClick={() => !busy && setAsking(null)}>
+          <CoversTabs />
           <div className="modal" role="dialog" aria-modal="true" aria-labelledby="memory-ask-title" onClick={(e) => e.stopPropagation()}>
             <h2 id="memory-ask-title">{asking.title}</h2>
             <p>{asking.lines[0]}</p>

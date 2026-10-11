@@ -7,12 +7,13 @@ export interface AgentWorkflow {
 }
 
 export const AGENT_WORKFLOWS: Record<string, AgentWorkflow> = {
+  // Sunday is Hermes under its own profile; every command names that profile.
   hermes: {
     executable: "hermes",
-    note: "Hermes’s dashboard contains its own chat, model settings, channels, pairing, and gateway controls. Complete all account and phone setup there, or open Hermes’s own terminal setup wizard.",
+    note: "Sunday’s dashboard has its own chat, model settings, channels, pairing, and gateway controls. Complete account and phone setup there, or in Hermes’s own terminal setup for Sunday.",
     commands: {
-      open: { label: "Open Hermes dashboard", args: ["dashboard"] },
-      setup: { label: "Open Hermes setup", args: ["setup"] },
+      setup: { label: "Run Sunday’s setup in Terminal", args: ["-p", "sunday", "setup"] },
+      chat: { label: "Chat with Sunday in Terminal", args: ["-p", "sunday", "chat"] },
     },
   },
   openclaw: {

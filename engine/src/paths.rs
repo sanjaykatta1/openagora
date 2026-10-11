@@ -3,6 +3,7 @@
 //! ```text
 //! <root>/apps/<id>/      the app's own folder ({app_dir})
 //! <root>/state/<id>.toml what was installed
+//! <root>/state/<id>.profile.toml  the personal agent's own profile
 //! <root>/run/<id>.toml   the running process, while it runs
 //! <root>/logs/<id>.log   the app's output
 //! <root>/tmp/            downloads in progress
@@ -50,6 +51,11 @@ impl Paths {
 
     pub fn run_file(&self, id: &str) -> PathBuf {
         self.root.join("run").join(format!("{id}.toml"))
+    }
+
+    /// The personal agent's profile record (see `state::AgentProfile`).
+    pub fn agent_profile_file(&self, id: &str) -> PathBuf {
+        self.root.join("state").join(format!("{id}.profile.toml"))
     }
 
     pub fn log_file(&self, id: &str) -> PathBuf {

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use crate::manifest::Manifest;
+use crate::manifest::{Manifest, Role};
 
 #[derive(Debug)]
 pub struct Listing {
@@ -68,10 +68,30 @@ impl Catalog {
                 Err(e) => errors.push(format!("{e:#}")),
             }
         }
+        let agents: Vec<&str> = catalog
+            .listings
+            .values()
+            .filter(|l| l.manifest.role == Role::Agent)
+            .map(|l| l.manifest.id.as_str())
+            .collect();
+        if agents.len() > 1 {
+            errors.push(format!(
+                "only one listing can have role = \"agent\", found {}",
+                agents.join(", ")
+            ));
+        }
         if !errors.is_empty() {
             bail!("{}", errors.join("\n"));
         }
         Ok(catalog)
+    }
+
+    /// OpenAgora's personal agent, if the catalog has one.
+    pub fn agent(&self) -> Option<&Manifest> {
+        self.listings
+            .values()
+            .map(|l| &l.manifest)
+            .find(|m| m.role == Role::Agent)
     }
 
     pub fn search(&self, query: &str) -> Vec<&Listing> {

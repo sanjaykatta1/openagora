@@ -5,13 +5,76 @@
 //! helper processes it started.
 
 use std::fs::{self, OpenOptions};
+use std::io::Read;
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
-use std::thread::sleep;
+use std::process::{Child, Command, Output, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, sleep};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+
+/// Runs `cmd` to completion with no input, capturing its output, and kills it
+/// if it takes longer than `timeout`.
+pub fn output_within(cmd: &mut Command, timeout: Duration) -> Result<Output> {
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    // Read into shared buffers: a helper the command leaves running in the
+    // background can keep a pipe open long after the command itself exits.
+    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&buffer);
+        let reader = thread::spawn(move || {
+            let Some(mut pipe) = pipe else { return };
+            let mut chunk = [0u8; 8192];
+            while let Ok(n) = pipe.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                sink.lock().unwrap().extend_from_slice(&chunk[..n]);
+            }
+        });
+        (buffer, reader)
+    };
+    let stdout = drain(
+        child
+            .stdout
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let stderr = drain(
+        child
+            .stderr
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("timed out after {}s", timeout.as_secs());
+        }
+        sleep(Duration::from_millis(50));
+    };
+    let settle = Instant::now() + Duration::from_secs(2);
+    while !(stdout.1.is_finished() && stderr.1.is_finished()) && Instant::now() < settle {
+        sleep(Duration::from_millis(20));
+    }
+    let take = |buffer: &Arc<Mutex<Vec<u8>>>| std::mem::take(&mut *buffer.lock().unwrap());
+    Ok(Output {
+        status,
+        stdout: take(&stdout.0),
+        stderr: take(&stderr.0),
+    })
+}
 
 pub fn spawn(program: &Path, args: &[String], cwd: &Path, log: &Path) -> Result<Child> {
     if let Some(dir) = log.parent() {

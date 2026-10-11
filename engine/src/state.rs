@@ -15,6 +15,26 @@ pub struct Installed {
     /// Release assets downloaded during the install.
     #[serde(default)]
     pub assets: Vec<String>,
+    /// Already on this computer, so OpenAgora recorded it without running its
+    /// installer.
+    #[serde(default)]
+    pub adopted: bool,
+    /// OpenAgora ran the installer on a computer that didn't have the app, so
+    /// there is no earlier setup of it to bring along. False for records made
+    /// before OpenAgora tracked this.
+    #[serde(default)]
+    pub clean: bool,
+}
+
+/// The personal agent's own profile, once OpenAgora has set it up.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentProfile {
+    pub profile: String,
+    /// The profile's folder, as the agent reported it.
+    pub dir: String,
+    /// The agent version seen at setup or update, if it could be read.
+    pub version: Option<String>,
+    pub set_up_at: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +43,9 @@ pub struct Running {
     pub port: Option<u16>,
     pub url: Option<String>,
     pub started_at: u64,
+    /// The agent's profile it was started under (personal agent only).
+    #[serde(default)]
+    pub profile: Option<String>,
 }
 
 pub fn now() -> u64 {

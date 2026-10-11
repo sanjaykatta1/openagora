@@ -1,0 +1,101 @@
+#!/bin/sh
+# A stand-in for Hermes in OpenAgora's tests. Like the real one, it keeps the
+# default profile in $HOME/.hermes and named profiles in
+# $HOME/.hermes/profiles/<name>. Every call is appended to $HERMES_CALLS.
+root="$HOME/.hermes"
+[ -n "$HERMES_CALLS" ] && printf '%s\n' "$*" >> "$HERMES_CALLS"
+
+profile=default
+if [ "$1" = "-p" ]; then
+  profile="$2"
+  shift 2
+fi
+home="$root"
+[ "$profile" = default ] || home="$root/profiles/$profile"
+
+live() {
+  for f in config.yaml .env SOUL.md profile.yaml auth.json state.db; do
+    [ -e "$1/$f" ] && return 0
+  done
+  return 1
+}
+
+if [ "$profile" != default ] && ! live "$home"; then
+  echo "Error: Profile '$profile' does not exist. Create it with: hermes profile create $profile" >&2
+  exit 1
+fi
+
+case "$1" in
+  --version)
+    echo "Hermes Agent v$(cat "$root/.fake-version" 2>/dev/null || echo 0.21.6) (2026.10.8)"
+    echo "Install directory: $root/hermes-agent"
+    exit 0 ;;
+  config)
+    if [ "$2" = path ]; then
+      echo "$home/config.yaml"
+      exit 0
+    fi ;;
+  profile)
+    case "$2" in
+      create)
+        name="$3"
+        shift 3
+        dir="$root/profiles/$name"
+        clone=
+        channels=
+        for flag in "$@"; do
+          case "$flag" in
+            --no-alias) ;;
+            --clone) clone=1 ;;
+            --clone-channels) channels=1 ;;
+            *) echo "fake hermes: unexpected flag $flag" >&2; exit 2 ;;
+          esac
+        done
+        if live "$dir"; then
+          echo "Error: profile '$name' already exists" >&2
+          exit 1
+        fi
+        mkdir -p "$dir/memories" "$dir/skills"
+        if [ -n "$clone" ]; then
+          cp "$root/config.yaml" "$dir/config.yaml"
+          [ -f "$root/SOUL.md" ] && cp "$root/SOUL.md" "$dir/SOUL.md"
+          [ -f "$root/memories/MEMORY.md" ] && cp "$root/memories/MEMORY.md" "$dir/memories/MEMORY.md"
+          if [ -n "$channels" ]; then
+            cp "$root/.env" "$dir/.env"
+          else
+            grep -v '_BOT_TOKEN=' "$root/.env" > "$dir/.env" || true
+          fi
+        else
+          echo "model: {}" > "$dir/config.yaml"
+          echo "You are Hermes Agent, built by Nous Research." > "$dir/SOUL.md"
+        fi
+        echo "Profile '$name' created at $dir"
+        exit 0 ;;
+      delete)
+        if [ "$4" != "--yes" ]; then
+          echo "fake hermes: delete needs --yes without a terminal" >&2
+          exit 2
+        fi
+        rm -rf "$root/profiles/$3"
+        echo "Deleted profile '$3'"
+        exit 0 ;;
+    esac ;;
+  dashboard)
+    shift
+    port=
+    while [ $# -gt 0 ]; do
+      [ "$1" = --port ] && port="$2"
+      shift
+    done
+    site="$HOME/.fake-dashboard-$profile"
+    mkdir -p "$site/api"
+    printf '{"gateway_running": false, "gateway_state": "stopped", "gateway_platforms": {}}' > "$site/api/status"
+    echo "Hermes dashboard for $profile" > "$site/index.html"
+    exec python3 -m http.server "$port" --bind 127.0.0.1 --directory "$site" ;;
+  update)
+    echo "${FAKE_UPDATE_TO:-0.21.6}" > "$root/.fake-version"
+    echo "Hermes updated"
+    exit 0 ;;
+esac
+echo "fake hermes: unsupported command: $*" >&2
+exit 2

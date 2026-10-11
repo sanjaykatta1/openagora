@@ -5,10 +5,12 @@ An open-source app store for your desktop.
 - **Find open-source apps** in one store, and install them with one click from
   their official source.
 - **Use them side by side** in one window. Each app keeps its own interface.
-- **Choose your personal agent** from several open-source assistants, on first
-  launch or later from **Personal agent** in the sidebar. Its own logins and
-  settings stay in the assistant; OpenAgora never sees them. Working across your
-  apps is coming next. See [personal agents](docs/personal-agents.md).
+- **Meet Sunday**, OpenAgora's personal agent. Sunday runs on the open-source
+  [Hermes](https://github.com/NousResearch/hermes-agent) agent, in a Hermes
+  profile of its own, so a Hermes you already use is left exactly as it is.
+  Sunday's home screen, setup and settings are Hermes's own; OpenAgora never sees
+  your keys or sign-ins. Working across your apps and coding agents is coming
+  next. Other personal agents are coming soon. See [Sunday](docs/personal-agents.md).
 
 ## Download
 

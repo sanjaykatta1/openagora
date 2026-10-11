@@ -23,4 +23,5 @@ toml = "0.8"
 libc = "0.2"
 
 [dev-dependencies]
+regex = "1"
 tempfile = "3"

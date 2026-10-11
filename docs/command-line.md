@@ -57,8 +57,14 @@ openagora start handy        # runs it in the background
 openagora ps                 # installed apps and whether they're running
 openagora logs handy         # the app's recent output
 openagora stop handy
+openagora update handy       # runs the app's own update command, after asking
 openagora uninstall handy    # stops it and removes its folder
+openagora adopt t3code       # an app that's already on this computer: use it as it is
 ```
+
+`adopt` records an app you installed yourself, without running its installer.
+Removing an adopted app only makes OpenAgora forget it; its own uninstaller is
+not run.
 
 Apps live in their own folder under `~/Library/Application Support/OpenAgora`
 (macOS), `~/.local/share/openagora` (Linux) or `%APPDATA%\OpenAgora`
@@ -66,6 +72,33 @@ Apps live in their own folder under `~/Library/Application Support/OpenAgora`
 
 The catalog is built into the binary. `--catalog <dir>` reads a local copy
 instead.
+
+## Sunday
+
+Sunday, OpenAgora's personal agent, is Hermes running under its own `sunday`
+profile. See [Sunday](personal-agents.md).
+
+```sh
+openagora install hermes      # official installer; a Hermes already here is used as it is
+openagora sunday status       # Hermes, Sunday's profile, its dashboard and gateway
+openagora sunday setup        # create the `sunday` profile and Sunday's SOUL.md
+openagora start hermes        # Hermes's dashboard for Sunday's profile
+openagora uninstall hermes    # remove Sunday: deletes only the `sunday` profile
+```
+
+`openagora sunday setup` options:
+
+- `--fresh`: a new, empty setup. This is the default when OpenAgora installed
+  Hermes itself.
+- `--clone`: bring your current Hermes setup (settings, keys, `SOUL.md`, skills
+  and memory; not history). Required, or `--fresh`, when you already used Hermes.
+- `--clone-channels` (with `--clone`): also copy your messaging bots. A bot can
+  answer for only one profile at a time.
+- `--use-existing`: use a profile named `sunday` that OpenAgora didn't create.
+
+Sunday needs Hermes 0.21.3 or later; `openagora update hermes` runs Hermes's own
+`hermes update`. `openagora sunday status --json` prints the same information as
+JSON for scripts and the desktop app.
 
 ## Uninstall the command line tool
 

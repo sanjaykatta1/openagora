@@ -23,7 +23,9 @@ test('every choice has an upstream interface; unsupported IDs and arbitrary comm
   const dir = directory(t);
   await assert.rejects(launchAgent('hermes', 'arbitrary-shell', dir), /Unsupported/);
   assert.deepEqual(fs.readdirSync(dir), []);
-  assert.deepEqual(agentCommand('hermes', 'setup').args, ['setup']);
+  // Sunday's shortcuts always name its own Hermes profile.
+  assert.deepEqual(agentCommand('hermes', 'setup').args, ['-p', 'sunday', 'setup']);
+  for (const command of Object.values(agentWorkflow('hermes').commands)) assert.deepEqual(command.args.slice(0, 2), ['-p', 'sunday']);
   assert.deepEqual(agentCommand('openclaw', 'setup').args, ['onboard']);
 });
 

@@ -13,6 +13,13 @@ fn shipped_catalog_is_valid() {
     let catalog = Catalog::load(repo_catalog()).expect("catalog should load");
     let hermes = &catalog.listings["hermes"].manifest;
     assert_eq!(hermes.role, Role::Agent);
+    assert_eq!(catalog.agent().map(|m| m.id.as_str()), Some("hermes"));
+    // Sunday: Hermes only ever runs under its own profile, in a dashboard of
+    // its own rather than the user's machine-wide one.
+    assert_eq!(hermes.profile.as_deref(), Some("sunday"));
+    assert!(hermes.run.args.windows(2).any(|w| w == ["-p", "{profile}"]));
+    assert!(hermes.run.args.contains(&"--isolated".to_string()));
+    assert!(hermes.uninstall.is_none());
     let t3 = &catalog.listings["t3code"].manifest;
     assert!(
         t3.agent.is_some(),
@@ -240,4 +247,101 @@ fn folder_must_match_id() {
     fs::write(app.join("app.toml"), VALID).unwrap();
     let err = Catalog::load(dir.path()).unwrap_err().to_string();
     assert!(err.contains("must match its folder"), "{err}");
+}
+
+const AGENT: &str = r#"
+schema = "openagora/v1"
+id = "helper"
+name = "Helper"
+summary = "A personal agent"
+category = "agents"
+homepage = "https://example.com"
+source = "https://github.com/example/helper"
+license = "MIT"
+platforms = ["linux"]
+role = "agent"
+profile = "sunday"
+
+[install]
+provides = "helper"
+
+[[install.steps]]
+os = ["linux"]
+shell = "sh"
+run = "echo install"
+
+[run]
+command = "helper"
+args = ["--profile", "{profile}", "--port", "{port}"]
+port = "auto"
+
+[run.health]
+tcp = true
+
+[ui]
+kind = "web"
+url = "http://127.0.0.1:{port}/"
+"#;
+
+#[test]
+fn agent_listings_run_only_under_their_own_profile() {
+    Manifest::parse(AGENT).unwrap();
+    let agent_problems =
+        |edit: &dyn Fn(&str) -> String| Manifest::parse(&edit(AGENT)).err().unwrap_or_default();
+    let cases: &[(&Edit, &str)] = &[
+        (
+            &|s| s.replace("profile = \"sunday\"\n", ""),
+            "needs a profile",
+        ),
+        (
+            &|s| s.replace("\"--profile\", \"{profile}\", ", ""),
+            "run must use {profile}",
+        ),
+        (
+            &|s| s.replace("profile = \"sunday\"", "profile = \"Sun Day\""),
+            "profile \"Sun Day\"",
+        ),
+        (
+            &|s| format!("{s}\n[uninstall]\nrun = \"helper uninstall\"\n"),
+            "cannot declare uninstall",
+        ),
+    ];
+    for (edit, expected) in cases {
+        let problems = agent_problems(edit);
+        assert!(
+            problems.contains(expected),
+            "expected {expected:?} in {problems:?}"
+        );
+    }
+    // Only the agent has a profile, and {profile} means nothing elsewhere.
+    assert!(
+        problems(|s| s.replace("license = \"MIT\"", "license = \"MIT\"\nprofile = \"x\""))
+            .contains("profile is only for role")
+    );
+    assert!(
+        problems(|s| s.replace(
+            "\"--port\", \"{port}\"",
+            "\"--port\", \"{port}\", \"{profile}\""
+        ))
+        .contains("unknown placeholder {profile}")
+    );
+}
+
+#[test]
+fn a_catalog_has_at_most_one_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    for id in ["helper", "other"] {
+        let app = dir.path().join("apps").join(id);
+        fs::create_dir_all(&app).unwrap();
+        fs::write(
+            app.join("app.toml"),
+            AGENT.replace("id = \"helper\"", &format!("id = \"{id}\"")),
+        )
+        .unwrap();
+    }
+    let err = Catalog::load(dir.path()).unwrap_err().to_string();
+    assert!(
+        err.contains("only one listing can have role = \"agent\""),
+        "{err}"
+    );
 }

@@ -14,6 +14,7 @@ use crate::manifest::{Arch, Health, Manifest, Os, Port, Role, Shell};
 use crate::paths::{self, Paths};
 use crate::process;
 use crate::state::{self, Installed, Running};
+use crate::sunday;
 
 /// How long a web app gets to start listening.
 const START_TIMEOUT: Duration = Duration::from_secs(90);
@@ -48,12 +49,31 @@ impl Engine {
         state::read(&self.paths.state_file(id))
     }
 
+    /// Whether what the listing provides is on this computer.
+    pub fn present(&self, m: &Manifest) -> bool {
+        let Some(provides) = m.install.provides.for_os(self.os) else {
+            return false;
+        };
+        let provides = fill(provides, &vars(&[("app_dir", &self.paths.app_dir(&m.id))]));
+        resolve(&provides).is_some()
+    }
+
     pub fn install(&self, m: &Manifest) -> Result<Installed> {
         if !m.platforms.contains(&self.os) {
             bail!("{} is not available on {}", m.name, self.os);
         }
         if self.installed(&m.id)?.is_some() {
-            bail!("{} is already installed", m.name);
+            if self.present(m) {
+                bail!("{} is already installed", m.name);
+            }
+            // Removed outside OpenAgora since: the record is stale.
+            state::remove(&self.paths.state_file(&m.id))?;
+        }
+        // The personal agent may already be on this computer. Never reinstall
+        // it over the user's own setup; use it as it is.
+        let was_present = self.present(m);
+        if m.role == Role::Agent && was_present {
+            return self.adopt(m);
         }
         let app_dir = self.paths.app_dir(&m.id);
         // Leftovers from an interrupted install would confuse the new one.
@@ -71,6 +91,8 @@ impl Engine {
                     id: m.id.clone(),
                     installed_at: state::now(),
                     assets,
+                    adopted: false,
+                    clean: !was_present,
                 };
                 state::write(&self.paths.state_file(&m.id), &installed)?;
                 Ok(installed)
@@ -116,28 +138,77 @@ impl Engine {
         Ok(assets)
     }
 
-    pub fn uninstall(&self, m: &Manifest) -> Result<()> {
-        if m.role == Role::Agent {
+    /// Records an app that is already on this computer, without running its
+    /// installer.
+    pub fn adopt(&self, m: &Manifest) -> Result<Installed> {
+        if !m.platforms.contains(&self.os) {
+            bail!("{} is not available on {}", m.name, self.os);
+        }
+        if let Some(installed) = self.installed(&m.id)? {
+            return Ok(installed);
+        }
+        if !self.present(m) {
             bail!(
-                "{} is OpenAgora's built-in agent and cannot be removed",
-                m.name
+                "{} is not on this computer. Install it with: openagora install {}",
+                m.name,
+                m.id
             );
         }
+        let installed = Installed {
+            id: m.id.clone(),
+            installed_at: state::now(),
+            assets: Vec::new(),
+            adopted: true,
+            clean: false,
+        };
+        state::write(&self.paths.state_file(&m.id), &installed)?;
+        Ok(installed)
+    }
+
+    /// Runs the app's own update command.
+    pub fn update(&self, m: &Manifest) -> Result<()> {
         if self.installed(&m.id)?.is_none() {
             bail!("{} is not installed", m.name);
         }
+        let Some(cmd) = &m.update else {
+            bail!("{} has no update command", m.name);
+        };
+        let app_dir = self.paths.app_dir(&m.id);
+        fs::create_dir_all(&app_dir).with_context(|| format!("creating {}", app_dir.display()))?;
+        run_shell(
+            self.shell(),
+            &fill(&cmd.run, &vars(&[("app_dir", &app_dir)])),
+            &app_dir,
+        )?;
+        if m.role == Role::Agent {
+            sunday::refresh_version(self, m)?;
+        }
+        Ok(())
+    }
+
+    /// Stops and removes an app. An app OpenAgora adopted rather than
+    /// installed is only forgotten: its own uninstaller is not run. Removing
+    /// the personal agent deletes its OpenAgora profile and nothing else.
+    /// Returns a note for the user when something was deliberately kept.
+    pub fn uninstall(&self, m: &Manifest) -> Result<Option<String>> {
+        let Some(installed) = self.installed(&m.id)? else {
+            bail!("{} is not installed", m.name);
+        };
         if let Status::Running(_) = self.status(&m.id)? {
             self.stop(m)?;
         }
         let app_dir = self.paths.app_dir(&m.id);
-        if let Some(cmd) = &m.uninstall {
-            let shell = if self.os == Os::Windows {
-                Shell::Powershell
-            } else {
-                Shell::Sh
-            };
+        let mut note = None;
+        if m.role == Role::Agent {
+            note = sunday::remove_profile(self, m)?;
+        } else if installed.adopted {
+            note = Some(format!(
+                "OpenAgora didn't install {}, so it stays on this computer.",
+                m.name
+            ));
+        } else if let Some(cmd) = &m.uninstall {
             run_shell(
-                shell,
+                self.shell(),
                 &fill(&cmd.run, &vars(&[("app_dir", &app_dir)])),
                 &app_dir,
             )?;
@@ -148,7 +219,15 @@ impl Engine {
         }
         state::remove(&self.paths.state_file(&m.id))?;
         state::remove(&self.paths.run_file(&m.id))?;
-        Ok(())
+        Ok(note)
+    }
+
+    fn shell(&self) -> Shell {
+        if self.os == Os::Windows {
+            Shell::Powershell
+        } else {
+            Shell::Sh
+        }
     }
 
     /// Running only if the recorded process is still alive; clears stale records.
@@ -169,9 +248,18 @@ impl Engine {
             bail!("{} is not installed (openagora install {})", m.name, m.id);
         }
         if let Status::Running(running) = self.status(&m.id)? {
-            return Ok(running);
+            if running.profile == m.profile {
+                return Ok(running);
+            }
+            // Started by an earlier OpenAgora outside the agent's own profile.
+            self.stop(m)?;
+        }
+        if m.role == Role::Agent {
+            sunday::prepare_start(self, m)?;
         }
         let app_dir = self.paths.app_dir(&m.id);
+        // Tools that put their commands in the app's folder expect it to exist.
+        fs::create_dir_all(&app_dir).with_context(|| format!("creating {}", app_dir.display()))?;
         let port = match &m.run.port {
             Some(Port::Fixed(port)) => Some(*port),
             Some(Port::Named(_)) => Some(process::free_port()?),
@@ -180,6 +268,9 @@ impl Engine {
         let mut vars = vars(&[("app_dir", &app_dir)]);
         if let Some(port) = port {
             vars.insert("port", port.to_string());
+        }
+        if let Some(profile) = &m.profile {
+            vars.insert("profile", profile.clone());
         }
         let command = m
             .run
@@ -199,6 +290,7 @@ impl Engine {
             port,
             url: m.ui.url.as_ref().map(|u| fill(u, &vars)),
             started_at: state::now(),
+            profile: m.profile.clone(),
         };
         state::write(&self.paths.run_file(&m.id), &running)?;
 
@@ -290,27 +382,42 @@ fn run_shell(shell: Shell, script: &str, cwd: &Path) -> Result<()> {
     let status = cmd
         .current_dir(cwd)
         .env("OPENAGORA_APP_DIR", cwd)
+        .env("PATH", search_path())
         .status()
-        .context("running an install step")?;
+        .with_context(|| format!("running {script}"))?;
     if !status.success() {
-        bail!("install step failed ({status}): {script}");
+        bail!("command failed ({status}): {script}");
     }
     Ok(())
 }
 
-/// A path that exists, or a command name found on PATH. Official installers
-/// often put commands in ~/.local/bin, which may not be on PATH yet.
+/// PATH plus ~/.local/bin: official installers often put commands there
+/// before it is on the user's PATH.
+fn search_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = env::var_os("PATH")
+        .map(|p| env::split_paths(&p).collect())
+        .unwrap_or_default();
+    if let Ok(home) = paths::home() {
+        let local = home.join(".local/bin");
+        if !dirs.contains(&local) {
+            dirs.push(local);
+        }
+    }
+    dirs
+}
+
+/// The PATH apps' own commands (install, update, uninstall) run with.
+pub fn search_path() -> std::ffi::OsString {
+    env::join_paths(search_dirs()).unwrap_or_else(|_| env::var_os("PATH").unwrap_or_default())
+}
+
+/// A path that exists, or a command name found on PATH or in ~/.local/bin.
 pub fn resolve(target: &str) -> Option<PathBuf> {
     let path = Path::new(target);
     if path.components().count() > 1 || path.is_absolute() {
         return path.exists().then(|| path.to_path_buf());
     }
-    let mut dirs: Vec<PathBuf> = env::var_os("PATH")
-        .map(|p| env::split_paths(&p).collect())
-        .unwrap_or_default();
-    if let Ok(home) = paths::home() {
-        dirs.push(home.join(".local/bin"));
-    }
+    let dirs = search_dirs();
     let exts: Vec<String> = if cfg!(windows) {
         env::var("PATHEXT")
             .unwrap_or_else(|_| ".EXE;.CMD;.BAT".into())

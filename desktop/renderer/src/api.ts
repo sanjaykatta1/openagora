@@ -27,10 +27,16 @@ export interface App {
   platforms: string[];
   available: boolean;
   role: "app" | "agent";
+  /** The agent's own profile (Sunday's, for Hermes). */
+  profile: string | null;
   ui: "web" | "terminal" | "window" | "background";
   steps: Step[];
   permissions: Permission[];
   installed: boolean;
+  /** Already on this computer when OpenAgora started using it. */
+  adopted: boolean;
+  /** What the app provides is on this computer, whoever installed it. */
+  present: boolean;
   status: Status;
   pid: number | null;
   /** Where to open the app: may be a one-time sign-in link it printed at startup. */
@@ -38,6 +44,31 @@ export interface App {
   /** The app's plain address while it runs. */
   home_url: string | null;
 }
+
+/** Where Sunday stands; mirrors `openagora sunday status --json`. */
+export interface SundayStatus {
+  id: string;
+  name: string;
+  profile: string;
+  /** Hermes's command on this computer, if it is installed. */
+  hermes: string | null;
+  installed: boolean;
+  adopted: boolean;
+  /** Fresh or cloned is the user's choice: there may be an earlier Hermes setup. */
+  ask_how_to_start: boolean;
+  version: string | null;
+  min_version: string;
+  version_ok: boolean | null;
+  setup: "ready" | "missing" | "foreign" | "unknown";
+  profile_dir: string | null;
+  dashboard: "running" | "stopped";
+  url: string | null;
+  pid: number | null;
+  /** Hermes's messaging gateway, as Hermes reports it (while the dashboard runs). */
+  gateway: { running: boolean | null; state: string | null; platforms: Record<string, { state?: string } | undefined> | null } | null;
+}
+
+export type SundaySetupChoice = "default" | "fresh" | "clone" | "clone-channels" | "existing";
 
 export interface EngineResult {
   ok: boolean;
@@ -66,6 +97,9 @@ export interface Bridge {
   uninstall(id: string): Promise<EngineResult>;
   start(id: string): Promise<EngineResult>;
   stop(id: string): Promise<EngineResult>;
+  updateApp(id: string): Promise<EngineResult>;
+  sundayStatus(): Promise<SundayStatus>;
+  sundaySetup(choice: SundaySetupChoice): Promise<EngineResult>;
   logs(id: string): Promise<EngineResult>;
   openExternal(url: string): Promise<void>;
   update: {

@@ -4,7 +4,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use openagora::apps::{Engine, Status, tail};
 use openagora::catalog::{Catalog, load_listing};
-use openagora::manifest::{Arch, Manifest, Os};
+use openagora::manifest::{Arch, Manifest, Os, Role};
+use openagora::sunday::{self, MIN_VERSION, Start};
 use std::io::{BufRead, IsTerminal, Write};
 
 #[derive(Parser)]
@@ -47,12 +48,27 @@ enum Cmd {
         #[arg(short, long)]
         yes: bool,
     },
-    /// Stop and remove an app (asks for confirmation first).
+    /// Record an app that is already on this computer, without reinstalling it.
+    Adopt { id: String },
+    /// Run an app's own update command (asks for confirmation first).
+    Update {
+        id: String,
+        /// Don't ask for confirmation.
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Stop and remove an app (asks for confirmation first). For Sunday, this
+    /// deletes only its own Hermes profile.
     Uninstall {
         id: String,
         /// Don't ask for confirmation.
         #[arg(short, long)]
         yes: bool,
+    },
+    /// Sunday, OpenAgora's personal agent (Hermes under its own profile).
+    Sunday {
+        #[command(subcommand)]
+        action: SundayCmd,
     },
     /// Start an installed app in the background.
     Start { id: String },
@@ -66,6 +82,35 @@ enum Cmd {
         /// Number of lines.
         #[arg(short = 'n', long, default_value_t = 50)]
         lines: usize,
+    },
+}
+
+#[derive(Subcommand)]
+enum SundayCmd {
+    /// Where Sunday stands: Hermes, its profile, the dashboard and the
+    /// messaging gateway.
+    Status {
+        /// Print JSON (for the desktop app).
+        #[arg(long)]
+        json: bool,
+    },
+    /// Set Sunday up: use the Hermes already on this computer (or the one
+    /// OpenAgora installed), create its `sunday` profile and Sunday's SOUL.md.
+    Setup {
+        /// Start with a new, empty setup.
+        #[arg(long, conflicts_with = "clone")]
+        fresh: bool,
+        /// Bring your current Hermes setup: settings, keys, SOUL.md, skills and
+        /// memory. History and messaging bots stay behind.
+        #[arg(long)]
+        clone: bool,
+        /// With --clone, also copy your messaging bots. A bot answers for one
+        /// profile at a time, so turn it off in your other setup.
+        #[arg(long, requires = "clone")]
+        clone_channels: bool,
+        /// Use a profile with Sunday's name that OpenAgora didn't create.
+        #[arg(long)]
+        use_existing: bool,
     },
 }
 
@@ -143,16 +188,96 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 m.name, m.id
             );
         }
+        Cmd::Adopt { id } => {
+            let catalog = load_catalog(&cli.catalog)?;
+            let m = listing(&catalog, &id)?;
+            let installed = Engine::new()?.adopt(m)?;
+            if installed.adopted {
+                println!(
+                    "{} is on this computer; OpenAgora will use it as it is.",
+                    m.name
+                );
+            } else {
+                println!("{} is already installed.", m.name);
+            }
+        }
+        Cmd::Update { id, yes } => {
+            let catalog = load_catalog(&cli.catalog)?;
+            let m = listing(&catalog, &id)?;
+            let engine = Engine::new()?;
+            let Some(command) = m.update.as_ref().map(|u| u.run.as_str()) else {
+                anyhow::bail!("{} has no update command", m.name);
+            };
+            if !confirm(&format!("Update {} by running `{command}`?", m.name), yes)? {
+                println!("Nothing was updated.");
+                return Ok(());
+            }
+            engine.update(m)?;
+            println!("Updated {}.", m.name);
+        }
         Cmd::Uninstall { id, yes } => {
             let catalog = load_catalog(&cli.catalog)?;
             let m = listing(&catalog, &id)?;
             let engine = Engine::new()?;
-            if !confirm(&format!("Remove {} and its folder?", m.name), yes)? {
+            let question = if m.role == Role::Agent {
+                format!(
+                    "Remove Sunday? This deletes {}'s {:?} profile: its settings, keys, memory, sessions and skills. {} itself and your other profiles are kept.",
+                    m.name,
+                    m.profile.as_deref().unwrap_or_default(),
+                    m.name
+                )
+            } else {
+                format!("Remove {} and its folder?", m.name)
+            };
+            if !confirm(&question, yes)? {
                 println!("Nothing was removed.");
                 return Ok(());
             }
-            engine.uninstall(m)?;
-            println!("Removed {}.", m.name);
+            let note = engine.uninstall(m)?;
+            if m.role == Role::Agent {
+                println!("Removed Sunday. {} is still installed.", m.name);
+            } else {
+                println!("Removed {}.", m.name);
+            }
+            if let Some(note) = note {
+                println!("{note}");
+            }
+        }
+        Cmd::Sunday { action } => {
+            let catalog = load_catalog(&cli.catalog)?;
+            let m = catalog
+                .agent()
+                .ok_or_else(|| anyhow::anyhow!("this catalog has no personal agent"))?;
+            let engine = Engine::new()?;
+            match action {
+                SundayCmd::Status { json } => {
+                    let status = sunday_json(&engine, m)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&status)?);
+                    } else {
+                        print_sunday(&status);
+                    }
+                }
+                SundayCmd::Setup {
+                    fresh,
+                    clone,
+                    clone_channels,
+                    use_existing,
+                } => {
+                    let start = match (fresh, clone) {
+                        (true, _) => Some(Start::Fresh),
+                        (_, true) => Some(Start::Clone {
+                            channels: clone_channels,
+                        }),
+                        _ => None,
+                    };
+                    let profile = sunday::setup(&engine, m, start, use_existing)?;
+                    println!(
+                        "Sunday is set up in {}'s {:?} profile ({}). Start it with: openagora start {}",
+                        m.name, profile.profile, profile.dir, m.id
+                    );
+                }
+            }
         }
         Cmd::Start { id } => {
             let catalog = load_catalog(&cli.catalog)?;
@@ -283,7 +408,8 @@ fn listing_json(engine: &Engine, m: &Manifest) -> anyhow::Result<serde_json::Val
             })
         })
         .collect();
-    let installed = engine.installed(&m.id)?.is_some();
+    let record = engine.installed(&m.id)?;
+    let installed = record.is_some();
     let (status, pid, url, port) = match engine.status(&m.id)? {
         Status::Running(r) => ("running", Some(r.pid), r.url, r.port),
         Status::Stopped if installed => ("stopped", None, None, None),
@@ -306,13 +432,98 @@ fn listing_json(engine: &Engine, m: &Manifest) -> anyhow::Result<serde_json::Val
         "platforms": m.platforms.iter().map(|o| o.to_string()).collect::<Vec<_>>(),
         "available": available,
         "role": format!("{:?}", m.role).to_lowercase(),
+        "profile": m.profile,
         "ui": format!("{:?}", m.ui.kind).to_lowercase(),
         "steps": steps,
         "permissions": permissions,
         "installed": installed,
+        "adopted": record.as_ref().is_some_and(|i| i.adopted),
+        "present": engine.present(m),
         "status": status,
         "pid": pid,
         "url": url,
         "home_url": home_url,
     }))
+}
+
+/// Sunday's state for the desktop app: Hermes, its profile, the dashboard and,
+/// while the dashboard runs, Hermes's messaging gateway as Hermes reports it.
+fn sunday_json(engine: &Engine, m: &Manifest) -> anyhow::Result<serde_json::Value> {
+    let report = sunday::report(engine, m)?;
+    // A dashboard an earlier OpenAgora started outside Sunday's profile isn't
+    // Sunday's; starting Sunday replaces it.
+    let (dashboard, url, pid, port) = match engine.status(&m.id)? {
+        Status::Running(r) if r.profile == m.profile => ("running", r.url, Some(r.pid), r.port),
+        _ => ("stopped", None, None, None),
+    };
+    // Hermes's dashboard reports its own gateway; OpenAgora only shows it.
+    let gateway = port
+        .and_then(|port| {
+            let profile = m.profile.as_deref().unwrap_or("default");
+            openagora::http::get_json(port, &format!("/api/status?profile={profile}"))
+        })
+        .map(|s| {
+            serde_json::json!({
+                "running": s["gateway_running"],
+                "state": s["gateway_state"],
+                "platforms": s["gateway_platforms"],
+            })
+        });
+    Ok(serde_json::json!({
+        "id": m.id,
+        "name": m.name,
+        "profile": m.profile,
+        "hermes": report.hermes.as_ref().map(|p| p.display().to_string()),
+        "installed": report.installed,
+        "adopted": report.adopted,
+        "ask_how_to_start": report.ask_how_to_start,
+        "version": report.version.map(|v| v.to_string()),
+        "min_version": MIN_VERSION.to_string(),
+        "version_ok": report.version_ok(),
+        "setup": report.profile.as_str(),
+        "profile_dir": report.dir.as_ref().map(|p| p.display().to_string()),
+        "dashboard": dashboard,
+        "url": url,
+        "pid": pid,
+        "gateway": gateway,
+    }))
+}
+
+fn print_sunday(s: &serde_json::Value) {
+    let text = |v: &serde_json::Value| v.as_str().unwrap_or("unknown").to_string();
+    match s["hermes"].as_str() {
+        Some(path) => println!(
+            "Hermes:    {path} (version {}, Sunday needs {} or later)",
+            text(&s["version"]),
+            text(&s["min_version"])
+        ),
+        None => println!(
+            "Hermes:    not installed (openagora install {})",
+            text(&s["id"])
+        ),
+    }
+    let setup = match s["setup"].as_str() {
+        Some("ready") => format!("ready in {}", text(&s["profile_dir"])),
+        Some("missing") => "not set up (openagora sunday setup)".into(),
+        Some("foreign") => format!(
+            "a profile with Sunday's name exists that OpenAgora didn't create ({})",
+            text(&s["profile_dir"])
+        ),
+        _ => "unknown".into(),
+    };
+    println!("Sunday:    {setup}");
+    match s["url"].as_str() {
+        Some(url) => println!("Dashboard: running at {url}"),
+        None => println!("Dashboard: stopped"),
+    }
+    if let Some(running) = s["gateway"]["running"].as_bool() {
+        println!(
+            "Messaging: {}",
+            if running {
+                "gateway running"
+            } else {
+                "gateway stopped"
+            }
+        );
+    }
 }

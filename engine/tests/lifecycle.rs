@@ -62,7 +62,7 @@ fn serve(routes: Vec<(String, Vec<u8>)>) -> String {
     base
 }
 
-/// A catalog with three test apps and a fake GitHub release for `dl`.
+/// A catalog of test apps and a fake GitHub release for `dl`.
 fn setup(digest_override: Option<&str>) -> Env {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -164,42 +164,6 @@ tcp = true
 [ui]
 kind = "web"
 url = "http://127.0.0.1:{{port}}/"
-"#
-        ),
-    );
-    write_app(
-        &catalog,
-        "brain",
-        &format!(
-            r#"
-schema = "openagora/v1"
-id = "brain"
-name = "Brain"
-summary = "Stands in for the built-in agent"
-category = "agents"
-homepage = "https://example.com"
-source = "https://github.com/example/brain"
-license = "MIT"
-platforms = ["{os}"]
-role = "agent"
-
-[install]
-provides = "{{app_dir}}/ok"
-
-[[install.steps]]
-os = ["{os}"]
-shell = "sh"
-run = "touch '{{app_dir}}/ok'"
-
-[run]
-command = "sleep"
-args = ["600"]
-
-[run.health]
-process = true
-
-[ui]
-kind = "background"
 "#
         ),
     );
@@ -381,17 +345,6 @@ fn app_that_exits_immediately_fails_to_start() {
     assert!(err.contains("exited right after starting"), "{err}");
     assert!(err.contains("tool ran"), "log tail should be shown: {err}");
     assert!(stdout(&run(&env, &["ps"])).contains("dl         stopped"));
-}
-
-#[test]
-fn agent_cannot_be_uninstalled() {
-    let env = setup(None);
-    assert!(run(&env, &["install", "brain", "--yes"]).status.success());
-    assert!(run(&env, &["start", "brain"]).status.success());
-    let out = run(&env, &["uninstall", "brain", "--yes"]);
-    assert!(!out.status.success());
-    assert!(stderr(&out).contains("cannot be removed"));
-    assert!(run(&env, &["stop", "brain"]).status.success());
 }
 
 #[test]

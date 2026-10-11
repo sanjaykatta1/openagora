@@ -93,6 +93,30 @@ function registerIpc(): void {
       return runEngine(args);
     });
   }
+  // An app's own update command; the window asks first.
+  ipcMain.handle("update-app", (event, id: unknown) => {
+    const appId = checkId(id);
+    return runEngine(["update", appId, "--yes"], (line) =>
+      !event.sender.isDestroyed() && event.sender.send("progress", { id: appId, line }),
+    );
+  });
+  ipcMain.handle("sunday-status", async () => {
+    const r = await runEngine(["sunday", "status", "--json"]);
+    if (!r.ok) throw new Error(r.stderr || "could not read Sunday's status");
+    return JSON.parse(r.stdout);
+  });
+  ipcMain.handle("sunday-setup", (_e, choice: unknown) => {
+    // Only these fixed choices cross into the engine.
+    const flags: Record<string, string[]> = {
+      default: [],
+      fresh: ["--fresh"],
+      clone: ["--clone"],
+      "clone-channels": ["--clone", "--clone-channels"],
+      existing: ["--use-existing"],
+    };
+    if (typeof choice !== "string" || !Object.hasOwn(flags, choice)) throw new Error("invalid setup choice");
+    return runEngine(["sunday", "setup", ...flags[choice]]);
+  });
   ipcMain.handle("logs", (_e, id: unknown) => runEngine(["logs", checkId(id), "-n", "200"]));
   ipcMain.handle("open-external", (_e, url: unknown) => {
     // Websites, and the user's own apps on this machine ("Open in browser").
@@ -123,7 +147,8 @@ function createWindow(): void {
 }
 
 // Embedded app views may only show local apps, never get Node or our preload,
-// and send any link that opens a new window to the default browser.
+// and send any link that opens a new window, or leaves this computer, to the
+// default browser.
 app.on("web-contents-created", (_event, contents) => {
   contents.on("will-attach-webview", (event, webPreferences, params) => {
     delete webPreferences.preload;
@@ -131,6 +156,13 @@ app.on("web-contents-created", (_event, contents) => {
     webPreferences.contextIsolation = true;
     if (!LOCAL_URL.test(params.src)) event.preventDefault();
   });
+  if (contents.getType() === "webview") {
+    contents.on("will-navigate", (event, url) => {
+      if (LOCAL_URL.test(url)) return;
+      event.preventDefault();
+      if (url.startsWith("https://")) void shell.openExternal(url);
+    });
+  }
   contents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("https://")) void shell.openExternal(url);
     return { action: "deny" };

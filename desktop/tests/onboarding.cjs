@@ -1,149 +1,92 @@
-// Runs the packaged renderer and real preferences IPC in an isolated Electron profile.
-// No agent is installed or started by this test.
+// First launch: the personal-agent chooser, with the real preferences IPC in an
+// isolated Electron profile. The engine is faked; nothing is installed.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
-const { _electron: electron } = require('playwright-core');
+const { freshFakeState, launch, tempProfile, heading } = require('./ui-helpers.cjs');
 
-const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'openagora-onboarding-'));
+const directory = tempProfile('openagora-onboarding-');
 const file = path.join(directory, 'personal-agent.json');
-let app;
-let page;
-const errors = [];
+let session;
 
-async function launch() {
-  app = await electron.launch({
-    args: ['.', `--user-data-dir=${directory}`, ...(process.platform === 'linux' ? ['--no-sandbox'] : [])],
-    cwd: path.resolve(__dirname, '..'),
-  });
-  assert.equal(fs.realpathSync(await app.evaluate(({ app }) => app.getPath('userData'))), fs.realpathSync(directory));
-  page = await app.firstWindow();
-  page.on('pageerror', (e) => errors.push(e.message));
-  // Make catalog availability deterministic; leave the preference bridge real.
-  await app.evaluate(({ ipcMain }) => {
-    ipcMain.removeHandler('catalog');
-    globalThis.fixtureListing = {
-      id: 'hermes', name: 'Hermes', summary: 'An agent with memory', category: 'agents',
-      homepage: 'https://hermes-agent.nousresearch.com', source: 'https://github.com/NousResearch/hermes-agent',
-      license: 'MIT', platforms: ['macos', 'linux', 'windows'], available: true, role: 'agent',
-      ui: 'web', steps: [], permissions: [], installed: false, status: 'not-installed',
-      pid: null, url: null, home_url: null,
-    };
-    ipcMain.handle('catalog', () => [globalThis.fixtureListing]);
-    ipcMain.removeHandler('install');
-    ipcMain.handle('install', () => { globalThis.fixtureListing.installed = true; globalThis.fixtureListing.status = 'stopped'; return { ok: true, stdout: '', stderr: '' }; });
-  });
-  await page.reload();
-}
-
-async function heading(text) {
-  await page.getByRole('heading', { name: text, exact: true }).waitFor();
-}
-
-async function choose(name) {
-  await page.getByRole('radio', { name, exact: false }).check();
-  await page.getByRole('button', { name: `Continue with ${name}`, exact: true }).click();
-  await heading('Personal agent');
-  assert.equal(JSON.parse(fs.readFileSync(file)).selectedAgent, name.toLowerCase());
+async function start() {
+  session = await launch({ directory, fake: freshFakeState() });
+  return session.page;
 }
 
 async function run() {
-  await launch();
-  await heading('Choose your personal agent');
+  let page = await start();
+  await heading(page, 'Choose your personal agent');
+  // Sunday is the only choice for now; every other agent says "Coming soon".
   assert.equal(await page.getByRole('radio').count(), 7);
+  assert.equal(await page.locator('input[type=radio]:not([disabled])').count(), 1);
+  assert.equal(await page.getByText('Coming soon', { exact: true }).count(), 6);
+  assert.equal(await page.getByRole('radio', { name: /^OpenClaw/ }).isDisabled(), true);
   assert.equal(await page.locator('input:checked').count(), 0);
   assert.equal(await page.getByRole('button', { name: 'Select an agent to continue' }).isDisabled(), true);
   assert.equal(await page.getByRole('button', { name: 'Store', exact: true }).count(), 0);
-  // Native radio keyboard navigation.
-  await page.getByRole('radio').first().focus();
-  await page.keyboard.press('ArrowRight');
-  assert.equal(await page.getByRole('radio', { name: /^OpenClaw/ }).isChecked(), true);
-  await page.getByRole('radio', { name: /^Hermes/ }).check();
+  // Keyboard: the one enabled radio takes focus and space selects it.
+  await page.getByRole('radio', { name: /^Sunday/ }).focus();
+  await page.keyboard.press('Space');
+  assert.equal(await page.getByRole('radio', { name: /^Sunday/ }).isChecked(), true);
   if (process.env.ONBOARDING_SCREENSHOT) await page.screenshot({ path: process.env.ONBOARDING_SCREENSHOT, fullPage: true });
-  await choose('OpenClaw');
-  assert.equal(await page.getByRole('button', { name: /Review .* installation/ }).count(), 0);
-  assert.match(await page.locator('body').innerText(), /Install through the official project/);
-  // Installed CLI detection is separate from being configured or connected.
-  await app.evaluate(({ ipcMain }) => {
-    globalThis.nativeAgentCalls = [];
-    ipcMain.removeHandler('agent-availability');
-    ipcMain.handle('agent-availability', () => ({ detected: true, launchable: true }));
-    ipcMain.removeHandler('launch-agent');
-    ipcMain.handle('launch-agent', (_event, id, action) => { globalThis.nativeAgentCalls.push({ id, action }); });
-  });
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
-  await page.getByRole('button', { name: 'Open OpenClaw onboarding', exact: true }).click();
-  await page.getByRole('status').waitFor();
-  assert.deepEqual(await app.evaluate(() => globalThis.nativeAgentCalls), [{ id: 'openclaw', action: 'setup' }]);
-  assert.equal(await page.getByRole('textbox').count(), 0); // No OpenAgora credential/configuration forms.
-  await app.evaluate(({ ipcMain }) => {
-    ipcMain.removeHandler('launch-agent');
-    ipcMain.handle('launch-agent', () => { throw new Error('No terminal app was found'); });
-  });
-  await page.getByRole('button', { name: 'Open OpenClaw dashboard', exact: true }).click();
-  await page.getByRole('alert').waitFor();
-  assert.match(await page.getByRole('alert').innerText(), /No terminal app/);
 
+  // A small window never scrolls sideways.
+  await session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 600));
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
 
-  // A true application restart must bypass first-run onboarding.
-  await app.close();
-  await launch();
-  await heading('Store');
-  await page.getByRole('button', { name: /Personal agent/ }).click();
-  await heading('OpenClaw');
-  await page.getByRole('button', { name: 'Change agent' }).click();
-  await choose('Hermes');
-  await page.getByRole('button', { name: 'Review Hermes installation' }).click();
-  await heading('Hermes');
-  await page.getByRole('button', { name: 'Install', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Install Hermes?' }).waitFor();
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await page.getByRole('button', { name: 'Install', exact: true }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Install', exact: true }).click();
-  await heading('Personal agent');
-  await page.getByRole('button', { name: 'Start and open Hermes', exact: true }).waitFor();
+  // Choosing later is remembered across a real restart.
+  await page.getByRole('button', { name: 'Choose later' }).click();
+  await heading(page, 'Store');
+  assert.deepEqual(JSON.parse(fs.readFileSync(file)), { version: 1, completed: true, selectedAgent: null });
+  await session.app.close();
+  page = await start();
+  await heading(page, 'Store');
 
-  await page.getByRole('button', { name: /Personal agent/ }).click();
-  await page.getByRole('button', { name: 'Change agent' }).click();
-  await page.getByRole('radio', { name: /^Goose/ }).check();
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  // Sunday can be chosen later, from Settings; the choice survives a restart.
+  await page.getByRole('button', { name: /^Settings/ }).click();
+  await page.getByRole('button', { name: 'Change personal agent' }).click();
+  await page.getByRole('radio', { name: /^Sunday/ }).check();
+  await page.getByRole('button', { name: 'Continue with Sunday' }).click();
+  await heading(page, 'Sunday');
   assert.equal(JSON.parse(fs.readFileSync(file)).selectedAgent, 'hermes');
+  await session.app.close();
+  page = await start();
+  await heading(page, 'Sunday');
 
-  // Force a filesystem failure and verify the chooser stays open with an error.
-  await page.getByRole('button', { name: 'Change agent' }).click();
+  // A failed save keeps the chooser open with an error and the old choice on disk.
+  await page.getByRole('button', { name: /^Settings/ }).click();
+  await page.getByRole('button', { name: 'Change personal agent' }).click();
   fs.mkdirSync(`${file}.tmp`);
-  await page.getByRole('button', { name: 'Continue with Hermes' }).click();
+  await page.getByRole('button', { name: 'Use without an agent' }).click();
   await page.getByRole('alert').waitFor();
-  await heading('Choose your personal agent');
+  await heading(page, 'Choose your personal agent');
   assert.equal(JSON.parse(fs.readFileSync(file)).selectedAgent, 'hermes');
   fs.rmdirSync(`${file}.tmp`);
-  await page.getByRole('button', { name: 'Use without an agent' }).click();
-  await heading('Store');
-  await page.reload();
-  await heading('Store');
-  assert.equal(JSON.parse(fs.readFileSync(file)).selectedAgent, null);
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await heading(page, 'Settings');
 
-  // Corrupt preference recovery and first-run skip.
+  // An earlier choice of an agent that is now "Coming soon" just shows the chooser again.
+  fs.writeFileSync(file, JSON.stringify({ version: 1, completed: true, selectedAgent: 'openclaw' }));
+  await page.reload();
+  await heading(page, 'Choose your personal agent');
+  assert.equal(await page.getByRole('alert').count(), 0);
+
+  // Corrupt preferences are reported, kept, and replaced only by a new choice.
   fs.writeFileSync(file, '{broken');
   await page.reload();
   await page.getByRole('button', { name: 'Retry', exact: true }).waitFor();
   assert.equal(fs.readFileSync(file, 'utf8'), '{broken');
   await page.getByRole('button', { name: 'Choose again' }).click();
-  await heading('Choose your personal agent');
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 600));
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
-  await page.getByRole('radio', { name: /^ZeroClaw/ }).check();
+  await heading(page, 'Choose your personal agent');
   await page.getByRole('button', { name: 'Choose later' }).click();
-  await heading('Store');
-  await page.reload();
-  await heading('Store');
+  await heading(page, 'Store');
   assert.deepEqual(JSON.parse(fs.readFileSync(file)), { version: 1, completed: true, selectedAgent: null });
-  assert.deepEqual(errors, []);
-  console.log('Onboarding UI passed: choice, restart, switch, cancel, install review, failed save, recovery, skip, keyboard, small window.');
+  assert.deepEqual(session.errors, []);
+  console.log('Onboarding UI passed: Sunday only, coming soon, keyboard, small window, choose later, restart, change, failed save, retired choice, recovery.');
 }
 
 run().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => {
-  if (app) await app.close();
+  if (session) await session.app.close().catch(() => {});
   fs.rmSync(directory, { recursive: true, force: true });
 });

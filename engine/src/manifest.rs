@@ -15,8 +15,10 @@ pub const SCHEMA: &str = "openagora/v1";
 /// `{app_dir}`: the app's own folder under OpenAgora's data directory.
 /// `{download}`: the file a step's `download` fetched.
 /// `{port}`: the port the engine allocated.
+/// `{profile}`: the agent's own profile (`role = "agent"` listings only).
 const STEP_PLACEHOLDERS: &[&str] = &["app_dir", "download"];
 const RUN_PLACEHOLDERS: &[&str] = &["app_dir", "port"];
+const AGENT_RUN_PLACEHOLDERS: &[&str] = &["app_dir", "port", "profile"];
 const URL_PLACEHOLDERS: &[&str] = &["port"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
@@ -152,7 +154,8 @@ pub struct Download {
 pub enum Role {
     /// An ordinary app from the store.
     App,
-    /// The built-in agent. Installed with OpenAgora and not removable.
+    /// OpenAgora's personal agent (Sunday). OpenAgora runs it only under its
+    /// own `profile`; removing it deletes that profile and nothing else.
     Agent,
 }
 
@@ -293,6 +296,10 @@ pub struct Manifest {
     pub platforms: Vec<Os>,
     #[serde(default = "default_role")]
     pub role: Role,
+    /// `role = "agent"` only: the agent's own profile. OpenAgora creates it and
+    /// always runs the agent under it (`{profile}` in `run`), so the user's
+    /// other profiles, memory and bots are never touched.
+    pub profile: Option<String>,
     pub install: Install,
     pub update: Option<Command>,
     pub uninstall: Option<Command>,
@@ -415,11 +422,16 @@ impl Manifest {
         for provides in self.install.provides.values() {
             check_placeholders(&mut out, "install.provides", provides, &["app_dir"]);
         }
+        let run_placeholders = if self.profile.is_some() {
+            AGENT_RUN_PLACEHOLDERS
+        } else {
+            RUN_PLACEHOLDERS
+        };
         for command in self.run.command.values() {
-            check_placeholders(&mut out, "run.command", command, RUN_PLACEHOLDERS);
+            check_placeholders(&mut out, "run.command", command, run_placeholders);
         }
         for arg in &self.run.args {
-            check_placeholders(&mut out, "run.args", arg, RUN_PLACEHOLDERS);
+            check_placeholders(&mut out, "run.args", arg, run_placeholders);
         }
         match &self.run.port {
             Some(Port::Named(name)) if name != "auto" => out.push(format!(
@@ -474,8 +486,38 @@ impl Manifest {
                 }
             }
         }
+        match (self.role, &self.profile) {
+            (Role::Agent, None) => {
+                out.push("role = \"agent\" needs a profile: OpenAgora runs the agent only under its own profile".into())
+            }
+            (Role::Agent, Some(profile)) => {
+                if !valid_id(profile) {
+                    out.push(format!(
+                        "profile {profile:?} must be lowercase letters, digits and dashes, starting with a letter"
+                    ));
+                }
+                let uses_profile = self.run.args.iter().any(|a| a.contains("{profile}"))
+                    || self
+                        .run
+                        .command
+                        .values()
+                        .iter()
+                        .any(|c| c.contains("{profile}"));
+                if !uses_profile {
+                    out.push(
+                        "run must use {profile}, so the agent never runs outside OpenAgora's own profile"
+                            .into(),
+                    );
+                }
+            }
+            (Role::App, Some(_)) => out.push("profile is only for role = \"agent\"".into()),
+            (Role::App, None) => {}
+        }
         if self.role == Role::Agent && self.uninstall.is_some() {
-            out.push("the agent cannot declare uninstall; it ships with OpenAgora".into());
+            out.push(
+                "the agent cannot declare uninstall: removing it deletes only its OpenAgora profile"
+                    .into(),
+            );
         }
         out
     }

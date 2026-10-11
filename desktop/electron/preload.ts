@@ -14,6 +14,9 @@ contextBridge.exposeInMainWorld("openagora", {
   uninstall: (id: string) => ipcRenderer.invoke("uninstall", id),
   start: (id: string) => ipcRenderer.invoke("start", id),
   stop: (id: string) => ipcRenderer.invoke("stop", id),
+  updateApp: (id: string) => ipcRenderer.invoke("update-app", id),
+  sundayStatus: () => ipcRenderer.invoke("sunday-status"),
+  sundaySetup: (choice: string) => ipcRenderer.invoke("sunday-setup", choice),
   logs: (id: string) => ipcRenderer.invoke("logs", id),
   openExternal: (url: string) => ipcRenderer.invoke("open-external", url),
   update: {

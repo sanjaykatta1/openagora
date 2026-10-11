@@ -619,6 +619,9 @@ fn sunday_keeps_what_it_remembers_and_a_digest_keeps_it_fresh() {
     env.env("XDG_DATA_HOME", home.join(".local/share").to_str().unwrap());
     env.env("OPENAGORA_TICK_SECONDS", "1");
     env.env("OPENAGORA_DIGEST_SECONDS", "2");
+    // Each digest turn takes a while, so turning the digest off lands while
+    // one is under way.
+    env.env("FAKE_ONESHOT_DELAY", "1.5");
     env.install_hermes_by_hand();
     env.ok(&["sunday", "setup", "--fresh"]);
     env.ok(&["sunday", "connect", "--yes"]);
@@ -753,11 +756,23 @@ fn sunday_keeps_what_it_remembers_and_a_digest_keeps_it_fresh() {
         "app: we keep pnpm (decided 2026-10-11)\n"
     );
 
-    // Off: no more turns. Built-in memory only again, Holographic's store
-    // staying in Sunday's profile.
+    // Off, while that turn is still under way: it doesn't turn the digest
+    // back on, and no more turns come. Built-in memory only again,
+    // Holographic's store staying in Sunday's profile.
     assert!(
         env.ok(&["sunday", "memory", "digest", "off", "--yes"])
             .contains("digest is off")
+    );
+    wait_for("the turn under way to finish", || {
+        env.audit()
+            .iter()
+            .filter(|e| e["action"] == "memory_digest" && e["target"] == "run")
+            .count()
+            == 2
+    });
+    assert_eq!(
+        env.json(&["sunday", "memory", "status", "--json"])["digest"],
+        false
     );
     let mut text = fs::read_to_string(&claude).unwrap();
     text.push_str(&format!(

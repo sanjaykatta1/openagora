@@ -90,6 +90,15 @@ fn saved(paths: &Paths) -> Saved {
         .unwrap_or_default()
 }
 
+/// Changes what's saved, from what's saved now: the user may turn the digest
+/// off (another process) while a run is under way, and the run must not
+/// turn it back on.
+fn update(paths: &Paths, change: impl FnOnce(&mut Saved)) -> Result<()> {
+    let mut saved = saved(paths);
+    change(&mut saved);
+    state::write(&saved_file(paths), &saved)
+}
+
 /// Where Sunday's memory stands.
 #[derive(Debug, Serialize)]
 pub struct Status {
@@ -278,15 +287,11 @@ pub fn digest_on(engine: &Engine, m: &Manifest, agents: &[(String, String)]) -> 
     for (agent, name) in agents {
         allow_sessions(&engine.paths, agent, name)?;
     }
-    let mut saved = saved(&engine.paths);
-    saved.digest = true;
-    state::write(&saved_file(&engine.paths), &saved)
+    update(&engine.paths, |s| s.digest = true)
 }
 
 pub fn digest_off(paths: &Paths) -> Result<()> {
-    let mut saved = saved(paths);
-    saved.digest = false;
-    state::write(&saved_file(paths), &saved)
+    update(paths, |s| s.digest = false)
 }
 
 impl crate::gateway::Gateway {
@@ -296,7 +301,7 @@ impl crate::gateway::Gateway {
     /// Hermes runs scheduled jobs in a context where memory providers only
     /// read, so the digest is a turn of its own.
     pub fn run_digest_if_due(&self) -> Result<()> {
-        let mut saved = saved(&self.paths);
+        let saved = saved(&self.paths);
         if !saved.digest {
             return Ok(());
         }
@@ -322,8 +327,7 @@ impl crate::gateway::Gateway {
         let mut entry = Entry::new("openagora", "memory_digest", "run");
         entry.decision = "allowed".into();
         let ran = hermes.oneshot(&digest_prompt(since), DIGEST_SKILL, DIGEST_TOOLSETS);
-        saved.last_run = Some(now);
-        match &ran {
+        let answered = match &ran {
             Ok(answer) => {
                 let line = answer
                     .lines()
@@ -334,13 +338,21 @@ impl crate::gateway::Gateway {
                     .take(300)
                     .collect::<String>();
                 entry.outcome = format!("{} sessions: {line}", changed.len());
-                saved.covered_to = Some(now);
-                saved.last_result = Some(line);
+                Some(line)
             }
-            Err(e) => entry.outcome = format!("failed: {e:#}"),
-        }
+            Err(e) => {
+                entry.outcome = format!("failed: {e:#}");
+                None
+            }
+        };
         self.audit(&entry);
-        state::write(&saved_file(&self.paths), &saved)?;
+        update(&self.paths, |s| {
+            s.last_run = Some(now);
+            if let Some(line) = answered {
+                s.covered_to = Some(now);
+                s.last_result = Some(line);
+            }
+        })?;
         ran.map(|_| ())
     }
 }

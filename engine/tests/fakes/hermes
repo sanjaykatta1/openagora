@@ -134,6 +134,8 @@ case "$1" in
     done
     python3 -c 'import json, sys; print(json.dumps({"prompt": sys.argv[1], "skill": sys.argv[2], "toolsets": sys.argv[3]}))' \
       "$prompt" "$skill" "$toolsets" >> "$home/.fake-oneshots"
+    # A turn takes a while: long enough for the user to act meanwhile.
+    [ -n "$FAKE_ONESHOT_DELAY" ] && sleep "$FAKE_ONESHOT_DELAY"
     echo "Saved 2 decisions to memory."
     exit 0 ;;
   memory)

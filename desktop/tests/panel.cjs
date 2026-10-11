@@ -147,7 +147,10 @@ async function run() {
     await waitFor(async () => !(await panelVisible(app)), 'the panel to close');
     await press(app);
     await panel.getByText(/can’t see which window you’re in here \(the window list failed\)/).waitFor();
-    assert.equal(await panel.getByRole('button', { name: 'Pick a window' }).count(), offered ? 1 : 0, `pick offered: ${offered}`);
+    // The panel says the same with or without a picker, and can show the
+    // last press for a moment: wait for this press's answer.
+    const pickButton = panel.getByRole('button', { name: 'Pick a window' });
+    await waitFor(async () => (await pickButton.count()) === (offered ? 1 : 0), `the pick button ${offered ? 'to show' : 'to be absent'}`);
   }
   await panel.getByRole('button', { name: 'Pick a window' }).click();
   await waitFor(() => captureCalls.length === 2, 'the pick to reach the engine');

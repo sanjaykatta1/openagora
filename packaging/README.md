@@ -95,6 +95,19 @@ fails. Never put keys, certificates, credentials, or team identifiers in this
 repository. Local signing can alternatively use `NOTARY_KEY_PATH`,
 `NOTARY_KEY_ID`, and `NOTARY_ISSUER_ID` instead of a keychain profile.
 
+## Desktop app icon
+
+The desktop app's icon is made from one picture, `desktop/build/icon-source.jpg`,
+by `desktop/build/make-icons.py` (needs Pillow). It writes, next to itself and in
+sRGB, `icon.icns` (macOS: Apple's rounded square with its clear margin),
+`icon.ico` (Windows: uncompressed, 16 to 256 pixels) and `icons/NxN.png` (Linux:
+16 to 512 pixels). `desktop/package.json` points Electron Builder at them,
+`npm test` checks them, and on Linux the app also shows `icons/256x256.png` on
+its windows. To change the icon, replace the picture and run
+`python3 desktop/build/make-icons.py`. The menu bar and tray icon is separate
+(Sunday's sun, `desktop/electron/tray-icon.ts`): it has to stay a simple shape
+that reads at 16 pixels and that macOS can tint.
+
 ## Install verification and publication
 
 For a combined desktop/CLI release, dispatch both `desktop.yml` and `release.yml`

@@ -4,11 +4,26 @@ An open-source app store for your desktop.
 
 - **Find open-source apps** in one store, and install them with one click from
   their official source.
-- **Use them side by side** in one window. Each app keeps its own interface.
-- **Choose your personal agent** from several open-source assistants, on first
-  launch or later from **Personal agent** in the sidebar. Its own logins and
-  settings stay in the assistant; OpenAgora never sees them. Working across your
-  apps is coming next. See [personal agents](docs/personal-agents.md).
+- **Use them side by side** in one window, or pop an app out into a window of
+  its own. Each app keeps its own interface.
+- **Meet Sunday**, OpenAgora's personal agent. Sunday is
+  [Hermes Agent](https://github.com/NousResearch/hermes-agent), the open-source
+  agent by [Nous Research](https://nousresearch.com), running in a Hermes
+  profile of its own, so a Hermes you already use is left exactly as it is.
+  Sunday's home screen, setup and settings are Hermes's own; OpenAgora never sees
+  your keys or sign-ins. Sunday can find, install and open apps from the store for
+  you, and OpenAgora asks you first every time. Press **Ctrl+Shift+Space**
+  (**Command+Shift+Space** on a Mac) in any app to call Sunday over it; Sunday sees
+  that app's window only if you allowed the app, and never sees password managers
+  or private browser windows. Ask Sunday to send what you're working on to
+  your coding agent (Claude Code, Codex, OpenCode, or a new T3 Code thread or
+  OpenCode session), each set up once with its own command. Ask it "what did I do in my coding
+  sessions today?" and it answers from those agents' own records, after asking
+  you; give it long-term memory on your computer with Holographic. Sunday can
+  read a window's text, and if you turn on background mode (off unless you do),
+  it can search what your allowed apps showed over the last days, all kept on
+  your computer; Settings → Activity shows everything Sunday and your agents did.
+  Other personal agents are coming soon. See [Sunday](docs/personal-agents.md).
 
 ## Download
 
@@ -49,6 +64,13 @@ cd ../desktop && npm install && npm start  # the desktop app
 
 Design notes are in [docs/SPEC.md](docs/SPEC.md). Packaging and releases are in
 [packaging/README.md](packaging/README.md).
+
+## Credits
+
+Sunday is [Hermes Agent](https://github.com/NousResearch/hermes-agent) by
+[Nous Research](https://nousresearch.com), under the MIT license. OpenAgora gives
+it Sunday's name and a place on your desktop. The agent itself, with its
+dashboard, setup, memory, skills and messaging, is Hermes's work.
 
 ## License
 

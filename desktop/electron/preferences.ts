@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { NEW_AGENT_PREFERENCES, parseAgentPreferences, type AgentPreferences } from "./agents";
+import { NEW_AGENT_PREFERENCES, parseAgentPreferences, validateAgentPreferences, type AgentPreferences } from "./agents";
 
 export function readAgentPreferences(directory: string): AgentPreferences {
   try {
@@ -12,7 +12,7 @@ export function readAgentPreferences(directory: string): AgentPreferences {
 }
 
 export function saveAgentPreferences(directory: string, value: unknown): AgentPreferences {
-  const preferences = parseAgentPreferences(value);
+  const preferences = validateAgentPreferences(value);
   fs.mkdirSync(directory, { recursive: true });
   const file = path.join(directory, "personal-agent.json");
   const temporary = `${file}.tmp`;

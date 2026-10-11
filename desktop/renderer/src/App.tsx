@@ -1,9 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { bridge, osName, type App as Listing, type EngineResult, type UpdateState } from "./api";
-import { NEW_AGENT_PREFERENCES, PERSONAL_AGENTS, parseAgentPreferences, type AgentPreferences } from "../../electron/agents";
-import { AgentChooser, PersonalAgentPage } from "./PersonalAgent";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { bridge, osName, type App as Listing, type BackgroundState, type ConfirmRequest, type EngineResult, type SundaySetupChoice, type SundayStatus, type UpdateState } from "./api";
+import { AgentConfirm } from "./Confirm";
+import { CoversTabs } from "./Covers";
+import { NEW_AGENT_PREFERENCES, PERSONAL_AGENTS, SUNDAY_ID, parseAgentPreferences, type AgentPreferences } from "../../electron/agents";
+import { AgentChooser } from "./PersonalAgent";
+import { SeeingSettings } from "./Seeing";
+import { CodingAgentsSettings } from "./CodingAgents";
+import { MemorySettings } from "./Memory";
+import { ActivitySettings } from "./Activity";
+import { BackgroundSettings, backgroundWords } from "./Background";
+import { SundayDashboard, SundayHome, SundaySettings, sundayStage } from "./Sunday";
 
-type View = { kind: "store" } | { kind: "library" } | { kind: "personal-agent" } | { kind: "app"; id: string } | { kind: "tab"; id: string };
+type View = { kind: "sunday" } | { kind: "store" } | { kind: "library" } | { kind: "settings" } | { kind: "app"; id: string } | { kind: "tab"; id: string };
 
 const PREVIEW_PREFERENCES = "openagora-preview-personal-agent";
 
@@ -29,6 +37,11 @@ export function App() {
   const [preferenceError, setPreferenceError] = useState<string | null>(null);
   const [savingPreferences, setSavingPreferences] = useState(false);
   const [choosingAgent, setChoosingAgent] = useState(false);
+  const [sunday, setSunday] = useState<SundayStatus | null>(null);
+  const [sundayError, setSundayError] = useState<string | null>(null);
+  const [dashboardRoute, setDashboardRoute] = useState("/");
+  const [asks, setAsks] = useState<ConfirmRequest[]>([]);
+  const landed = useRef(false);
 
   const loadPreferences = useCallback(async () => {
     setPreferenceError(null);
@@ -42,6 +55,22 @@ export function App() {
 
   useEffect(() => { void loadPreferences(); }, [loadPreferences]);
 
+  // Sunday is the home screen for everyone who chose it.
+  useEffect(() => {
+    if (!preferences?.completed || landed.current) return;
+    landed.current = true;
+    if (preferences.selectedAgent === SUNDAY_ID) setView({ kind: "sunday" });
+  }, [preferences]);
+
+  const refreshSunday = useCallback(async () => {
+    if (!bridge) return;
+    try {
+      setSunday(await bridge.sundayStatus());
+    } catch (e) {
+      setSundayError(String(e instanceof Error ? e.message : e));
+    }
+  }, []);
+
   const saveAgent = async (id: string | null) => {
     setSavingPreferences(true);
     setPreferenceError(null);
@@ -51,7 +80,8 @@ export function App() {
       else localStorage.setItem(PREVIEW_PREFERENCES, JSON.stringify(next));
       setPreferences(next);
       setChoosingAgent(false);
-      setView({ kind: id ? "personal-agent" : "store" });
+      landed.current = true;
+      setView({ kind: id ? "sunday" : "store" });
     } catch {
       setPreferenceError("Couldn’t save your choice. Please try again.");
     } finally {
@@ -71,6 +101,7 @@ export function App() {
 
   useEffect(() => {
     void refresh();
+    void refreshSunday();
     if (!bridge) return;
     const off = bridge.onProgress(({ id, line }) =>
       setProgress((p) => ({ ...p, [id]: [...(p[id] ?? []), line].slice(-200) })),
@@ -80,7 +111,20 @@ export function App() {
       off();
       window.clearInterval(timer);
     };
-  }, [refresh]);
+  }, [refresh, refreshSunday]);
+
+  // While Sunday runs, keep its status (and Hermes's gateway) fresh.
+  const stage = sundayStage(sunday);
+  useEffect(() => {
+    if (stage !== "running") return;
+    const timer = window.setInterval(() => void refreshSunday(), 10000);
+    return () => window.clearInterval(timer);
+  }, [stage, refreshSunday]);
+
+  // Look again whenever Sunday or its settings come into view.
+  useEffect(() => {
+    if (view.kind === "sunday" || view.kind === "settings") void refreshSunday();
+  }, [view.kind, refreshSunday]);
 
   useEffect(() => {
     if (!toast) return;
@@ -88,13 +132,49 @@ export function App() {
     return () => window.clearTimeout(t);
   }, [toast]);
 
+  // The engine's questions, one at a time, and agents asking to show an app.
+  useEffect(() => {
+    if (!bridge) return;
+    const offAsk = bridge.onConfirm((request) => setAsks((a) => [...a, request]));
+    const offDone = bridge.onConfirmDone((id) => setAsks((a) => a.filter((r) => r.id !== id)));
+    const offOpen = bridge.onOpenApp(async (id) => {
+      await refresh();
+      openTabRef.current(id);
+    });
+    return () => { offAsk(); offDone(); offOpen(); };
+  }, [refresh]);
+
+  const answer = (request: ConfirmRequest, allowed: boolean, choice?: string) => {
+    setAsks((a) => a.filter((r) => r.id !== request.id));
+    void bridge?.answerConfirm(request.id, allowed, choice);
+  };
+
+  // Background mode, shown in the sidebar while it's on (and in the tray).
+  const [background, setBackground] = useState<BackgroundState | null>(null);
+  useEffect(() => {
+    if (!bridge) return;
+    void bridge.background.indicator().then(setBackground, () => {});
+    return bridge.background.onState(setBackground);
+  }, []);
+
+  // Apps popped out into their own windows outlive the main window: a main
+  // window that opens again lists them as tabs.
+  useEffect(() => {
+    void bridge?.tabs.popped().then((ids) => {
+      if (ids.length > 0) setTabs((t) => [...t, ...ids.filter((id) => !t.includes(id))]);
+    }, () => {});
+  }, []);
+
   const byId = useMemo(() => new Map(apps.map((a) => [a.id, a])), [apps]);
+  const agentListing = byId.get(SUNDAY_ID);
 
   const act = useCallback(
-    async (app: Listing, action: "install" | "uninstall" | "start" | "stop", verb: string) => {
+    async (app: Listing, action: "install" | "uninstall" | "start" | "stop" | "updateApp", verb: string) => {
       if (!bridge) return;
+      const agent = app.role === "agent";
       setBusy((b) => ({ ...b, [app.id]: verb }));
       if (action === "install") setProgress((p) => ({ ...p, [app.id]: [] }));
+      if (agent) setSundayError(null);
       let result: EngineResult;
       try {
         result = await bridge[action](app.id);
@@ -103,23 +183,71 @@ export function App() {
       }
       setBusy(({ [app.id]: _done, ...rest }) => rest);
       await refresh();
+      if (agent) await refreshSunday();
       if (result.ok) {
-        const done = { install: "installed", uninstall: "removed", start: "started", stop: "stopped" }[action];
-        setToast({ text: `${app.name} ${done}.`, error: false });
-        if (action === "install" && app.id === preferences?.selectedAgent) setView({ kind: "personal-agent" });
+        const done = { install: "installed", uninstall: "removed", start: "started", stop: "stopped", updateApp: "updated" }[action];
+        setToast({ text: agent && action === "uninstall" ? `Sunday removed. ${app.name} is still installed.` : `${agent && action !== "install" && action !== "updateApp" ? "Sunday" : app.name} ${done}.`, error: false });
+        if (agent && (action === "install" || action === "start")) setView({ kind: "sunday" });
         if (action === "stop" || action === "uninstall") setTabs((t) => t.filter((id) => id !== app.id));
-        if (action === "start" && app.ui === "web") openTab(app.id);
+        if (action === "start" && app.ui === "web" && !agent) openTab(app.id);
       } else {
-        setToast({ text: result.stderr.trim() || `${app.name}: ${action} failed.`, error: true });
+        const message = result.stderr.trim() || `${app.name}: ${action} failed.`;
+        if (agent) setSundayError(message);
+        setToast({ text: message, error: true });
       }
+      return result.ok;
     },
     // openTab only calls state setters, so it never goes stale.
-    [refresh, preferences?.selectedAgent],
+    [refresh, refreshSunday],
   );
 
+  const setupSunday = async (choice: SundaySetupChoice) => {
+    if (!bridge) return;
+    setBusy((b) => ({ ...b, [SUNDAY_ID]: "Setting up Sunday…" }));
+    setSundayError(null);
+    let result: EngineResult;
+    try {
+      result = await bridge.sundaySetup(choice);
+    } catch (e) {
+      result = { ok: false, stdout: "", stderr: String(e) };
+    }
+    setBusy(({ [SUNDAY_ID]: _done, ...rest }) => rest);
+    await refresh();
+    await refreshSunday();
+    if (!result.ok) {
+      setSundayError(result.stderr.trim() || "Couldn’t set Sunday up.");
+      return;
+    }
+    // A new profile has no model yet: Hermes's own setup comes first.
+    setDashboardRoute(choice === "default" || choice === "fresh" ? "/models" : "/");
+    if (agentListing) await act(agentListing, "start", "Starting Sunday…");
+  };
+
   const openTab = (id: string) => {
+    if (byId.get(id)?.role === "agent") {
+      setView({ kind: "sunday" });
+      return;
+    }
     setTabs((t) => (t.includes(id) ? t : [...t, id]));
     setView({ kind: "tab", id });
+  };
+  const openTabRef = useRef(openTab);
+  openTabRef.current = openTab;
+
+  const connectSunday = async (connect: boolean) => {
+    if (!bridge) return;
+    setBusy((b) => ({ ...b, [SUNDAY_ID]: connect ? "Connecting…" : "Disconnecting…" }));
+    let result: EngineResult;
+    try {
+      result = await (connect ? bridge.sundayConnect() : bridge.sundayDisconnect());
+    } catch (e) {
+      result = { ok: false, stdout: "", stderr: String(e) };
+    }
+    setBusy(({ [SUNDAY_ID]: _done, ...rest }) => rest);
+    await refreshSunday();
+    setToast(result.ok
+      ? { text: result.stdout.trim() || (connect ? "Sunday now uses OpenAgora. New Sunday chats pick it up." : "Sunday no longer uses OpenAgora."), error: false }
+      : { text: result.stderr.trim() || "That didn’t work.", error: true });
   };
 
   const closeTab = (id: string) => {
@@ -127,8 +255,15 @@ export function App() {
     if (view.kind === "tab" && view.id === id) setView({ kind: "library" });
   };
 
+  /** Settings → Sunday: one of Hermes's own pages, in Sunday's dashboard. */
+  const openDashboardPage = async (route: string) => {
+    setDashboardRoute(route);
+    setView({ kind: "sunday" });
+    if (stage === "start" && agentListing) await act(agentListing, "start", "Starting Sunday…");
+  };
+
   const installedCount = apps.filter((a) => a.installed).length;
-  const personalAgent = PERSONAL_AGENTS.find((a) => a.id === preferences?.selectedAgent);
+  const sundayChosen = preferences?.selectedAgent === SUNDAY_ID;
 
   if (!preferences) return (
     <main className="onboarding loading" aria-live="polite">
@@ -152,7 +287,9 @@ export function App() {
   </main>;
 
   const tabApp = view.kind === "tab" ? byId.get(view.id) : undefined;
-  const showingAppTab = tabApp?.status === "running" && tabApp.pid !== null;
+  const showingDashboard = view.kind === "sunday" && stage === "running";
+  const showingAppTab = (tabApp?.status === "running" && tabApp.pid !== null) || showingDashboard;
+  const agentName = PERSONAL_AGENTS.find((a) => a.id === preferences.selectedAgent)?.name;
 
   return (
     <div className="shell">
@@ -161,20 +298,16 @@ export function App() {
           <span className="brand-mark">◆</span> OpenAgora
         </div>
         <nav>
+          <button className={view.kind === "sunday" ? "nav active" : "nav"} onClick={() => setView({ kind: "sunday" })}>
+            <span className="nav-icon" aria-hidden>☀</span>
+            <span>Sunday<span className="muted small block">{sundayChosen ? (stage === "running" ? "Running" : "Your personal agent") : "Personal agent"}</span></span>
+          </button>
           <button className={view.kind === "store" || view.kind === "app" ? "nav active" : "nav"} onClick={() => setView({ kind: "store" })}>
-            <span className="nav-icon">⌂</span> Store
+            <span className="nav-icon" aria-hidden>⌂</span> Store
           </button>
           <button className={view.kind === "library" ? "nav active" : "nav"} onClick={() => setView({ kind: "library" })}>
-            <span className="nav-icon">▤</span> Library
+            <span className="nav-icon" aria-hidden>▤</span> Library
             {installedCount > 0 && <span className="count">{installedCount}</span>}
-          </button>
-          <button className={view.kind === "personal-agent" ? "nav active" : "nav"} onClick={() => {
-            setChoosingAgent(false);
-            setPreferenceError(null);
-            setView({ kind: "personal-agent" });
-          }}>
-            <span className="nav-icon">◇</span>
-            <span>Personal agent<span className="muted small block">{personalAgent?.name ?? "Choose anytime"}</span></span>
           </button>
         </nav>
         {tabs.length > 0 && (
@@ -189,7 +322,7 @@ export function App() {
                     <button className="tab-open" onClick={() => setView({ kind: "tab", id })}>
                       <Monogram app={app} size="xs" /> {app.name}
                     </button>
-                    <button className="tab-close" title={`Close ${app.name} tab`} onClick={() => closeTab(id)}>
+                    <button className="tab-close" title={`Close ${app.name} tab`} aria-label={`Close ${app.name} tab`} onClick={() => closeTab(id)}>
                       ×
                     </button>
                   </div>
@@ -197,6 +330,21 @@ export function App() {
               })}
             </nav>
           </>
+        )}
+        <nav className="nav-bottom">
+          <button className={view.kind === "settings" ? "nav active" : "nav"} onClick={() => {
+            setChoosingAgent(false);
+            setPreferenceError(null);
+            setView({ kind: "settings" });
+          }}>
+            <span className="nav-icon" aria-hidden>⚙</span>
+            <span>Settings<span className="muted small block">{agentName ? `Personal agent: ${agentName}` : "No personal agent"}</span></span>
+          </button>
+        </nav>
+        {background?.on && (
+          <button className={background.paused ? "background-indicator paused" : "background-indicator"} onClick={() => setView({ kind: "settings" })}>
+            <span aria-hidden>●</span> {backgroundWords(background)}
+          </button>
         )}
         <UpdateCard />
         <div className="sidebar-foot">{bridge ? `Running on ${osName(bridge.platform)}` : "Preview"}</div>
@@ -210,14 +358,33 @@ export function App() {
         )}
         {loadError && <div className="notice error">Couldn't read the catalog: {loadError}</div>}
 
-        {view.kind === "personal-agent" && (choosingAgent ? (
+        {view.kind === "sunday" && (
+          <SundayHome status={sunday} error={sundayError} listing={agentListing} chosen={sundayChosen}
+            busy={busy[SUNDAY_ID]}
+            onChoose={() => void saveAgent(SUNDAY_ID)}
+            onInstall={() => agentListing && setConfirming(agentListing)}
+            onSetup={(choice) => void setupSunday(choice)}
+            onUpdate={() => agentListing && void act(agentListing, "updateApp", "Updating Hermes…")}
+            onStart={() => agentListing && void act(agentListing, "start", "Starting Sunday…")}
+            onConnect={() => void connectSunday(true)}
+            onRetry={() => { setSundayError(null); void refreshSunday(); }} />
+        )}
+
+        {view.kind === "settings" && (choosingAgent ? (
           <AgentChooser firstLaunch={false} selected={preferences.selectedAgent} saving={savingPreferences} error={preferenceError}
             onSave={(id) => void saveAgent(id)} onCancel={() => { setChoosingAgent(false); setPreferenceError(null); }} />
         ) : (
-          <PersonalAgentPage key={personalAgent?.id ?? "none"} agent={personalAgent} listing={personalAgent?.catalogId ? byId.get(personalAgent.catalogId) : undefined}
-            busy={personalAgent?.catalogId ? busy[personalAgent.catalogId] : undefined}
-            onChange={() => setChoosingAgent(true)} onOpenListing={(id) => setView({ kind: "app", id })}
-            onOpenApp={(app) => app.status === "running" ? openTab(app.id) : void act(app, "start", "Starting…")} />
+          <SundaySettings status={sunday} busy={busy[SUNDAY_ID]}
+            onConnect={(connect) => void connectSunday(connect)}
+            onOpenPage={(route) => void openDashboardPage(route)}
+            onChangeAgent={() => setChoosingAgent(true)}
+            onRemove={() => agentListing && void act(agentListing, "uninstall", "Removing Sunday…")}>
+            {sundayChosen && <SeeingSettings />}
+            {sundayChosen && <CodingAgentsSettings apps={apps} />}
+            {sundayChosen && <MemorySettings />}
+            {sundayChosen && <BackgroundSettings onChange={setBackground} />}
+            {sundayChosen && <ActivitySettings />}
+          </SundaySettings>
         ))}
 
         {view.kind === "store" && <Store apps={apps} busy={busy} onOpen={(id) => setView({ kind: "app", id })} onInstall={setConfirming} />}
@@ -246,6 +413,12 @@ export function App() {
             onStop={(a) => act(a, "stop", "Stopping…")}
             onOpenTab={openTab}
           />
+        )}
+
+        {/* Sunday's dashboard stays loaded while you look at other pages. */}
+        {sunday && stage === "running" && (
+          <SundayDashboard key={`${sunday.pid}`} status={sunday} visible={showingDashboard} route={dashboardRoute}
+            busy={busy[SUNDAY_ID]} onConnect={() => void connectSunday(true)} />
         )}
 
         {tabs.map((id) => {
@@ -281,10 +454,14 @@ export function App() {
           onConfirm={() => {
             const app = confirming;
             setConfirming(null);
-            setView({ kind: "app", id: app.id });
-            void act(app, "install", "Installing…");
+            setView(app.role === "agent" ? { kind: "sunday" } : { kind: "app", id: app.id });
+            void act(app, "install", app.role === "agent" ? "Installing Hermes…" : "Installing…");
           }}
         />
+      )}
+
+      {asks.length > 0 && (
+        <AgentConfirm key={asks[0].id} request={asks[0]} waiting={asks.length - 1} onAnswer={(allowed, choice) => answer(asks[0], allowed, choice)} />
       )}
 
       {toast && (
@@ -454,7 +631,7 @@ function RunButtons(props: {
       <span className="actions">
         {app.ui === "web" && (
           <button className="btn primary" onClick={() => props.onOpenTab(app.id)}>
-            Open
+            {app.role === "agent" ? "Open Sunday" : "Open"}
           </button>
         )}
         <button className="btn ghost" onClick={() => props.onStop(app)}>
@@ -540,12 +717,15 @@ function Detail(props: {
         </div>
       )}
 
-      {app.installed && app.role !== "agent" && (
+      {app.installed && (
         <div className="panel danger">
-          <h3>Remove</h3>
+          <h3>{app.role === "agent" ? "Remove Sunday" : "Remove"}</h3>
+          {app.role === "agent" && (
+            <p className="muted">Deletes only Hermes’s “{app.profile}” profile, which holds Sunday. {app.name} itself and your other profiles stay.</p>
+          )}
           {confirmRemove ? (
             <p>
-              Stop {app.name} and delete its folder?{" "}
+              {app.role === "agent" ? "Remove Sunday?" : app.adopted ? `Stop managing ${app.name}? It stays installed on this computer.` : `Stop ${app.name} and delete its folder?`}{" "}
               <button className="btn danger" onClick={() => (setConfirmRemove(false), props.onUninstall(app))}>
                 Remove
               </button>{" "}
@@ -555,7 +735,7 @@ function Detail(props: {
             </p>
           ) : (
             <button className="btn ghost" disabled={!!props.busy} onClick={() => setConfirmRemove(true)}>
-              Remove {app.name}…
+              {app.role === "agent" ? "Remove Sunday…" : `Remove ${app.name}…`}
             </button>
           )}
         </div>
@@ -670,6 +850,7 @@ function ConfirmInstall(props: { app: Listing; onCancel: () => void; onConfirm: 
   }, [props]);
   return (
     <div className="modal-backdrop" onClick={props.onCancel}>
+      <CoversTabs />
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onClick={(e) => e.stopPropagation()}>
         <header className="modal-head">
           <Monogram app={app} />
@@ -680,8 +861,17 @@ function ConfirmInstall(props: { app: Listing; onCancel: () => void; onConfirm: 
             </p>
           </div>
         </header>
-        <h3>This will</h3>
-        <InstallSteps app={app} />
+        {app.role === "agent" && (
+          <p>Sunday, OpenAgora’s personal agent, runs on {app.name}. After installing, OpenAgora creates {app.name}’s “{app.profile}” profile for Sunday.</p>
+        )}
+        {app.present ? (
+          <p>{app.name} is already on this computer, so OpenAgora uses it as it is instead of installing it again.</p>
+        ) : (
+          <>
+            <h3>This will</h3>
+            <InstallSteps app={app} />
+          </>
+        )}
         {app.permissions.length > 0 && (
           <>
             <h3>Available agent permissions</h3>
@@ -728,12 +918,6 @@ function StoppedTab(props: { app: Listing; visible: boolean; busy?: string; onSt
   );
 }
 
-/** The subset of Electron's <webview> element this page uses. */
-interface WebviewElement extends HTMLElement {
-  reload(): void;
-  loadURL(url: string): Promise<void>;
-}
-
 /** Each start of an app may print a one-time sign-in link (`url`). Use it for
  *  the first visit only; after that the tab's saved session is signed in, so
  *  later visits go to the app's plain address (`home_url`). */
@@ -752,34 +936,60 @@ function entryUrl(app: Listing): string {
 }
 
 function AppTab({ app, visible }: { app: Listing; visible: boolean }) {
-  const ref = useRef<WebviewElement | null>(null);
+  const host = useRef<HTMLDivElement | null>(null);
   const [src] = useState(() => entryUrl(app));
   const [failure, setFailure] = useState<string | null>(null);
+  const [popped, setPopped] = useState(false);
   const [log, setLog] = useState<string | null>(null);
+  const tabs = bridge?.tabs;
 
-  useEffect(() => {
-    const view = ref.current;
-    if (!view) return;
-    const failed = (event: Event) => {
-      const { errorCode, errorDescription, isMainFrame } = event as Event & {
-        errorCode: number;
-        errorDescription: string;
-        isMainFrame: boolean;
-      };
-      // -3 is an aborted load (a redirect or a new navigation), not a failure.
-      if (isMainFrame && errorCode !== -3) setFailure(errorDescription || `error ${errorCode}`);
-    };
-    const loaded = () => setFailure(null);
-    view.addEventListener("did-fail-load", failed);
-    view.addEventListener("did-finish-load", loaded);
+  // The app's page lives in OpenAgora's main process, one per start of the
+  // app, with a saved session per app (sign-ins survive restarts, and apps
+  // don't share cookies). Opened before it is placed.
+  useLayoutEffect(() => {
+    if (!tabs) return;
+    const off = tabs.onEvent((event) => {
+      if (event.id !== app.id) return;
+      if (event.kind === "failed") setFailure(event.description ?? "it didn't answer");
+      else if (event.kind === "loaded") setFailure(null);
+      else setPopped(event.kind === "popped");
+    });
+    tabs.open(app.id, app.name, src, app.pid ?? 0).catch((e: unknown) => setFailure(e instanceof Error ? e.message : String(e)));
     return () => {
-      view.removeEventListener("did-fail-load", failed);
-      view.removeEventListener("did-finish-load", loaded);
+      off();
+      void tabs.close(app.id);
     };
-  }, []);
+  }, [tabs, app.id, app.pid, src]);
+
+  // Where this page shows it: the main process draws it there.
+  useLayoutEffect(() => {
+    const element = host.current;
+    if (!tabs) return;
+    if (!element || !visible || popped) {
+      tabs.place(app.id, null);
+      return;
+    }
+    const place = () => {
+      const r = element.getBoundingClientRect();
+      tabs.place(app.id, { x: r.left, y: r.top, width: r.width, height: r.height });
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(element);
+    window.addEventListener("resize", place);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", place);
+      tabs.place(app.id, null);
+    };
+  }, [tabs, app.id, visible, popped, failure, log]);
 
   const shownAddress = app.home_url ?? src.split("#")[0];
   const openInBrowser = () => void window.openagora?.openExternal(app.home_url ?? src);
+  const reload = () => {
+    setFailure(null);
+    void tabs?.reload(app.id);
+  };
   const showLog = async () => {
     const result = await window.openagora?.logs(app.id);
     setLog(result ? (result.ok ? result.stdout : result.stderr) || "(the log is empty)" : null);
@@ -791,9 +1001,12 @@ function AppTab({ app, visible }: { app: Listing; visible: boolean }) {
         <span>{app.name}</span>
         <span className="muted">{shownAddress}</span>
         <span className="bar-actions">
-          <button className="link" onClick={() => (setFailure(null), ref.current?.reload())}>
+          <button className="link" onClick={reload}>
             Reload
           </button>
+          {popped
+            ? <button className="link" onClick={() => void tabs?.bringBack(app.id)}>Bring back</button>
+            : <button className="link" onClick={() => void tabs?.popOut(app.id)}>Pop out</button>}
           <button className="link" onClick={openInBrowser}>
             Open in browser ↗
           </button>
@@ -805,7 +1018,7 @@ function AppTab({ app, visible }: { app: Listing; visible: boolean }) {
       {failure && (
         <div className="notice error tab-notice">
           {app.name} didn't load: {failure}.{" "}
-          <button className="link" onClick={() => (setFailure(null), ref.current?.reload())}>
+          <button className="link" onClick={reload}>
             Retry
           </button>
         </div>
@@ -821,8 +1034,21 @@ function AppTab({ app, visible }: { app: Listing; visible: boolean }) {
           <pre className="log">{log}</pre>
         </div>
       )}
-      {/* A saved session per app, so sign-ins survive restarts and apps don't share cookies. */}
-      <webview ref={ref} src={src} partition={`persist:app-${app.id}`} className="webview" />
+      {popped ? (
+        <div className="popped-tab">
+          <p>{app.name} is open in its own window.</p>
+          <div className="actions">
+            <button className="btn primary" onClick={() => void tabs?.showWindow(app.id)}>
+              Show its window
+            </button>
+            <button className="btn ghost" onClick={() => void tabs?.bringBack(app.id)}>
+              Bring it back here
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div ref={host} className="webview" aria-label={`${app.name}'s page`} role="region" />
+      )}
     </div>
   );
 }

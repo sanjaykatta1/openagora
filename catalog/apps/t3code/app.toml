@@ -59,3 +59,12 @@ default = "granted"
 id = "act"
 description = "Start, message and stop threads in every project"
 default = "ask"
+
+# What Sunday can hand to T3 Code: pictures and text start or join a thread,
+# through T3's own MCP tools (the engine's T3 Code adapter). Threads come back
+# as text.
+[destination]
+accepts = ["image/png", "image/jpeg", "image/gif", "image/webp", "text/*"]
+provides = ["text/*"]
+deliver = "mcp"
+adapter = "t3code"

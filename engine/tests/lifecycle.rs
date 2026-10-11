@@ -62,7 +62,7 @@ fn serve(routes: Vec<(String, Vec<u8>)>) -> String {
     base
 }
 
-/// A catalog with three test apps and a fake GitHub release for `dl`.
+/// A catalog of test apps and a fake GitHub release for `dl`.
 fn setup(digest_override: Option<&str>) -> Env {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -167,39 +167,45 @@ url = "http://127.0.0.1:{{port}}/"
 "#
         ),
     );
+    // A web app with an MCP server of its own, as T3 Code has.
     write_app(
         &catalog,
-        "brain",
+        "mcpweb",
         &format!(
             r#"
 schema = "openagora/v1"
-id = "brain"
-name = "Brain"
-summary = "Stands in for the built-in agent"
-category = "agents"
+id = "mcpweb"
+name = "MCP web demo"
+summary = "A tiny web server with an MCP server"
+category = "test"
 homepage = "https://example.com"
-source = "https://github.com/example/brain"
+source = "https://github.com/example/mcpweb"
 license = "MIT"
 platforms = ["{os}"]
-role = "agent"
 
 [install]
-provides = "{{app_dir}}/ok"
+provides = "{{app_dir}}/index.html"
 
 [[install.steps]]
 os = ["{os}"]
 shell = "sh"
-run = "touch '{{app_dir}}/ok'"
+run = "echo hello > '{{app_dir}}/index.html'"
 
 [run]
-command = "sleep"
-args = ["600"]
+command = "python3"
+args = ["-m", "http.server", "{{port}}", "--bind", "127.0.0.1"]
+port = "auto"
 
 [run.health]
-process = true
+tcp = true
 
 [ui]
-kind = "background"
+kind = "web"
+url = "http://127.0.0.1:{{port}}/"
+
+[agent.mcp]
+url = "http://127.0.0.1:{{port}}/mcp"
+auth = "oauth"
 "#
         ),
     );
@@ -384,17 +390,6 @@ fn app_that_exits_immediately_fails_to_start() {
 }
 
 #[test]
-fn agent_cannot_be_uninstalled() {
-    let env = setup(None);
-    assert!(run(&env, &["install", "brain", "--yes"]).status.success());
-    assert!(run(&env, &["start", "brain"]).status.success());
-    let out = run(&env, &["uninstall", "brain", "--yes"]);
-    assert!(!out.status.success());
-    assert!(stderr(&out).contains("cannot be removed"));
-    assert!(run(&env, &["stop", "brain"]).status.success());
-}
-
-#[test]
 fn web_app_opens_at_the_address_it_prints() {
     if Command::new("python3").arg("--version").output().is_err() {
         eprintln!("python3 not found; skipping");
@@ -425,4 +420,44 @@ fn web_app_opens_at_the_address_it_prints() {
         }
         assert!(run(&env, &["stop", id]).status.success());
     }
+}
+
+#[test]
+fn an_app_with_an_mcp_server_keeps_its_port() {
+    if Command::new("python3").arg("--version").output().is_err() {
+        eprintln!("python3 not found; skipping");
+        return;
+    }
+    let env = setup(None);
+    assert!(run(&env, &["install", "mcpweb", "--yes"]).status.success());
+    let port_of = |out: &Output| -> u16 {
+        let text = stdout(out);
+        let url = text
+            .split_whitespace()
+            .find(|w| w.starts_with("http://127.0.0.1:"))
+            .expect("start prints the URL");
+        url.trim_start_matches("http://127.0.0.1:")
+            .trim_end_matches('/')
+            .parse()
+            .unwrap()
+    };
+    let first = run(&env, &["start", "mcpweb"]);
+    assert!(first.status.success(), "{}", stderr(&first));
+    let port = port_of(&first);
+    assert!(run(&env, &["stop", "mcpweb"]).status.success());
+    // The same port next time: the app's OAuth grants name its address.
+    let second = run(&env, &["start", "mcpweb"]);
+    assert_eq!(port_of(&second), port);
+    assert!(run(&env, &["stop", "mcpweb"]).status.success());
+    // Only when something else holds it does the app move.
+    let squatter = TcpListener::bind(("127.0.0.1", port)).unwrap();
+    let third = run(&env, &["start", "mcpweb"]);
+    assert!(third.status.success(), "{}", stderr(&third));
+    let moved = port_of(&third);
+    assert_ne!(moved, port);
+    drop(squatter);
+    assert!(run(&env, &["stop", "mcpweb"]).status.success());
+    let fourth = run(&env, &["start", "mcpweb"]);
+    assert_eq!(port_of(&fourth), moved);
+    assert!(run(&env, &["stop", "mcpweb"]).status.success());
 }

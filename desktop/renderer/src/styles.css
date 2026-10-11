@@ -51,16 +51,20 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .nav.active { background: var(--panel); box-shadow: var(--shadow); font-weight: 600; }
 .nav-icon { width: 16px; text-align: center; color: var(--muted); }
 .count { margin-left: auto; font-size: 11px; background: var(--line); border-radius: 10px; padding: 0 7px; }
+.nav-bottom { margin-top: auto; padding-top: 12px; }
 .nav-heading { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 16px 10px 6px; }
 .nav.tab { padding: 0; }
 .tab-open { flex: 1; display: flex; align-items: center; gap: 8px; background: none; border: 0; padding: 7px 10px; text-align: left; }
 .tab-close { background: none; border: 0; color: var(--muted); padding: 4px 10px; font-size: 16px; }
-.update-card { margin-top: auto; display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); font-size: 12px; }
+.update-card { margin-top: 8px; display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); font-size: 12px; }
 .update-card + .sidebar-foot { margin-top: 0; }
 .update-bar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
 .update-bar > div { height: 100%; background: var(--accent); transition: width 0.2s; }
 .update-error { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sidebar-foot { margin-top: auto; font-size: 11px; color: var(--muted); padding: 8px 10px; }
+.sidebar-foot { margin-top: 0; font-size: 11px; color: var(--muted); padding: 8px 10px; }
+.background-indicator { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; background: none; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; color: var(--text); font-size: 12px; }
+.background-indicator span { color: var(--red); }
+.background-indicator.paused span { color: var(--muted); }
 
 .content { overflow: auto; position: relative; }
 .titlebar-drag { position: fixed; top: 0; left: 220px; right: 0; height: 32px; -webkit-app-region: drag; z-index: 5; }
@@ -102,7 +106,7 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .row { display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .row:last-child { border-bottom: 0; }
 .row-main { flex: 1; display: flex; align-items: center; gap: 12px; background: none; border: 0; text-align: left; padding: 0; }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
 .dot.on { background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 20%, transparent); }
 
 .detail { max-width: 860px; }
@@ -147,6 +151,7 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .tab-log { margin: 10px 14px 0; max-height: 40%; overflow: auto; }
 .tab-log-head { display: flex; justify-content: space-between; align-items: center; }
 .stopped-tab { align-items: center; justify-content: center; }
+.popped-tab { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
 .stopped-card { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; max-width: 640px; padding: 24px; }
 .stopped-card h2 { font-size: 20px; margin-top: 6px; }
 .stopped-card p { margin: 0; }
@@ -183,3 +188,67 @@ a.link:hover { text-decoration: underline; }
   .agent-chooser { padding: 40px 24px 24px; }
   .agent-options { grid-template-columns: 1fr; }
 }
+
+/* Sunday */
+.sunday { max-width: 860px; }
+.sunday-head { display: flex; align-items: center; gap: 16px; margin-bottom: 22px; }
+.sunday-head p { margin: 4px 0 0; }
+.sunday-mark { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; font-size: 30px; color: #fff; background: linear-gradient(135deg, #f7a531, #e2603a); flex: none; }
+.sunday-card h2 { font-size: 20px; margin-bottom: 8px; }
+.sunday-card p { max-width: 640px; }
+.sunday-card .btn.big { margin-top: 8px; }
+.sunday-choices { border: 0; margin: 14px 0; padding: 0; display: grid; gap: 10px; }
+.choice { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; }
+.choice.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.choice input, .choice-detail input { margin: 4px 0 0; accent-color: var(--accent); flex: none; }
+.choice-detail { display: flex; gap: 12px; align-items: flex-start; padding: 4px 16px 0 44px; cursor: pointer; }
+.sunday-error { margin: 16px 0 0; }
+.sunday-title { font-weight: 700; }
+.credit { font-weight: 400; color: var(--muted); }
+.settings-pages { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin: 14px 0 10px; }
+.settings-page { display: flex; flex-direction: column; gap: 2px; text-align: left; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.settings-page:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.pill.soon { margin-left: 8px; font-weight: 600; vertical-align: 2px; }
+.agent-option.coming-soon { opacity: 0.6; }
+.agent-option.coming-soon label { cursor: default; }
+.connect-card code, .connect-notice code { font-size: 11px; }
+.connect-notice { margin: 10px 14px 0; display: flex; flex-direction: column; gap: 8px; }
+.connect-notice p { margin: 0; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 8px 0; margin: 8px 0; }
+.settings-row p { margin: 0; }
+.confirm-message { white-space: pre-wrap; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px; max-height: 260px; overflow: auto; }
+.small-mark { width: 36px; height: 36px; border-radius: 10px; font-size: 20px; }
+
+/* Settings → What Sunday can see */
+h4 { font-size: 13px; margin: 16px 0 8px; }
+.field { display: grid; gap: 4px; font-size: 12px; color: var(--muted); flex: 1; }
+.field input { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
+.field input:focus { outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent); }
+.rows.compact { box-shadow: none; border-radius: 10px; }
+.rows.compact .row { padding: 8px 12px; justify-content: space-between; }
+.rows.compact .row:last-child { border-bottom: 0; }
+.panel .choice-detail { padding: 8px 0 0; }
+.panel .notice { margin: 12px 0 0; }
+
+/* Sunday's panel: its own small window over any app. */
+body.panel-window { overflow: hidden; }
+.panel-shell { display: flex; flex-direction: column; height: 100vh; background: var(--bg); }
+.panel-shell.dragging { outline: 2px dashed var(--accent); outline-offset: -6px; }
+.panel-head { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.panel-head .bar-actions { flex-shrink: 0; white-space: nowrap; }
+.panel-head .bar-actions button[aria-label="Close"] { font-size: 18px; line-height: 1; }
+.panel-title { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.panel-title .credit { font-size: 11px; font-weight: 400; }
+.panel .credits { margin: 0 0 12px; }
+.seeing { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 13px; }
+.seeing .actions { margin-left: auto; display: flex; gap: 8px; flex-shrink: 0; }
+.seeing > button { margin-left: auto; flex-shrink: 0; }
+.seeing.ok { background: color-mix(in srgb, var(--green) 10%, var(--panel)); }
+.seeing.warn { background: color-mix(in srgb, var(--red) 12%, var(--panel)); }
+.seeing-picture { width: 72px; max-height: 54px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); flex-shrink: 0; }
+.panel-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.panel-body .empty { padding: 40px 20px; text-align: center; }
+.panel-foot { display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-top: 1px solid var(--line); }
+.panel-foot .btn { white-space: nowrap; flex-shrink: 0; }
+.panel-window .toast { right: 12px; left: 12px; bottom: 56px; max-width: none; }
+.panel-window .modal { width: min(400px, calc(100vw - 32px)); }

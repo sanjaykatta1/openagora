@@ -13,11 +13,21 @@ fn shipped_catalog_is_valid() {
     let catalog = Catalog::load(repo_catalog()).expect("catalog should load");
     let hermes = &catalog.listings["hermes"].manifest;
     assert_eq!(hermes.role, Role::Agent);
+    assert_eq!(catalog.agent().map(|m| m.id.as_str()), Some("hermes"));
+    // Sunday: Hermes only ever runs under its own profile, in a dashboard of
+    // its own rather than the user's machine-wide one.
+    assert_eq!(hermes.profile.as_deref(), Some("sunday"));
+    assert!(hermes.run.args.windows(2).any(|w| w == ["-p", "{profile}"]));
+    assert!(hermes.run.args.contains(&"--isolated".to_string()));
+    assert!(hermes.uninstall.is_none());
     let t3 = &catalog.listings["t3code"].manifest;
     assert!(
         t3.agent.is_some(),
         "T3 Code must declare how the agent connects"
     );
+    let destination = t3.destination.as_ref().expect("T3 Code is a destination");
+    assert_eq!(destination.adapter.as_deref(), Some("t3code"));
+    assert!(destination.accepts.iter().any(|t| t == "image/png"));
     for os in [Os::Macos, Os::Linux, Os::Windows] {
         assert!(t3.steps_for(os).count() > 0, "no T3 install step for {os}");
     }
@@ -240,4 +250,180 @@ fn folder_must_match_id() {
     fs::write(app.join("app.toml"), VALID).unwrap();
     let err = Catalog::load(dir.path()).unwrap_err().to_string();
     assert!(err.contains("must match its folder"), "{err}");
+}
+
+const AGENT: &str = r#"
+schema = "openagora/v1"
+id = "helper"
+name = "Helper"
+summary = "A personal agent"
+category = "agents"
+homepage = "https://example.com"
+source = "https://github.com/example/helper"
+license = "MIT"
+platforms = ["linux"]
+role = "agent"
+profile = "sunday"
+
+[install]
+provides = "helper"
+
+[[install.steps]]
+os = ["linux"]
+shell = "sh"
+run = "echo install"
+
+[run]
+command = "helper"
+args = ["--profile", "{profile}", "--port", "{port}"]
+port = "auto"
+
+[run.health]
+tcp = true
+
+[ui]
+kind = "web"
+url = "http://127.0.0.1:{port}/"
+"#;
+
+#[test]
+fn agent_listings_run_only_under_their_own_profile() {
+    Manifest::parse(AGENT).unwrap();
+    let agent_problems =
+        |edit: &dyn Fn(&str) -> String| Manifest::parse(&edit(AGENT)).err().unwrap_or_default();
+    let cases: &[(&Edit, &str)] = &[
+        (
+            &|s| s.replace("profile = \"sunday\"\n", ""),
+            "needs a profile",
+        ),
+        (
+            &|s| s.replace("\"--profile\", \"{profile}\", ", ""),
+            "run must use {profile}",
+        ),
+        (
+            &|s| s.replace("profile = \"sunday\"", "profile = \"Sun Day\""),
+            "profile \"Sun Day\"",
+        ),
+        (
+            &|s| format!("{s}\n[uninstall]\nrun = \"helper uninstall\"\n"),
+            "cannot declare uninstall",
+        ),
+    ];
+    for (edit, expected) in cases {
+        let problems = agent_problems(edit);
+        assert!(
+            problems.contains(expected),
+            "expected {expected:?} in {problems:?}"
+        );
+    }
+    // Only the agent has a profile, and {profile} means nothing elsewhere.
+    assert!(
+        problems(|s| s.replace("license = \"MIT\"", "license = \"MIT\"\nprofile = \"x\""))
+            .contains("profile is only for role")
+    );
+    assert!(
+        problems(|s| s.replace(
+            "\"--port\", \"{port}\"",
+            "\"--port\", \"{port}\", \"{profile}\""
+        ))
+        .contains("unknown placeholder {profile}")
+    );
+}
+
+#[test]
+fn a_catalog_has_at_most_one_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    for id in ["helper", "other"] {
+        let app = dir.path().join("apps").join(id);
+        fs::create_dir_all(&app).unwrap();
+        fs::write(
+            app.join("app.toml"),
+            AGENT.replace("id = \"helper\"", &format!("id = \"{id}\"")),
+        )
+        .unwrap();
+    }
+    let err = Catalog::load(dir.path()).unwrap_err().to_string();
+    assert!(
+        err.contains("only one listing can have role = \"agent\""),
+        "{err}"
+    );
+}
+
+fn destination_problems(destination: &str) -> String {
+    let listing = format!(
+        "{VALID}\n[agent.mcp]\nurl = \"http://127.0.0.1:{{port}}/mcp\"\nauth = \"oauth\"\n\n[destination]\n{destination}\n"
+    );
+    Manifest::parse(&listing).err().unwrap_or_default()
+}
+
+#[test]
+fn destinations_say_what_they_take_and_how() {
+    // Through the app's MCP server, by a built-in adapter.
+    assert_eq!(
+        destination_problems(
+            "accepts = [\"image/*\", \"text/plain\"]\ndeliver = \"mcp\"\nadapter = \"t3code\""
+        ),
+        ""
+    );
+    assert!(
+        destination_problems("accepts = [\"image/*\"]\ndeliver = \"mcp\"")
+            .contains("destination.adapter is required")
+    );
+    assert!(
+        destination_problems("accepts = [\"image/*\"]\ndeliver = \"mcp\"\nadapter = \"slack\"")
+            .contains("isn't built in")
+    );
+    let without_mcp = Manifest::parse(&format!(
+        "{VALID}\n[destination]\naccepts = [\"image/*\"]\ndeliver = \"mcp\"\nadapter = \"t3code\"\n"
+    ))
+    .unwrap_err();
+    assert!(without_mcp.contains("needs [agent.mcp]"), "{without_mcp}");
+    // Into a folder, by a URL scheme, or on the clipboard.
+    assert_eq!(
+        destination_problems(
+            "accepts = [\"image/*\"]\ndeliver = \"folder\"\nfolder = \"{app_dir}/inbox\""
+        ),
+        ""
+    );
+    assert!(
+        destination_problems("accepts = [\"image/*\"]\ndeliver = \"folder\"\nfolder = \"/tmp/x\"")
+            .contains("under {app_dir} or {home}")
+    );
+    assert_eq!(
+        destination_problems(
+            "accepts = [\"text/*\"]\ndeliver = \"url-scheme\"\nurl = \"notes://open?file={file}\""
+        ),
+        ""
+    );
+    assert!(
+        destination_problems("accepts = [\"text/*\"]\ndeliver = \"url-scheme\"\nurl = \"https://example.com/?f={file}\"")
+            .contains("own URL scheme")
+    );
+    assert!(
+        destination_problems(
+            "accepts = [\"text/*\"]\ndeliver = \"url-scheme\"\nurl = \"notes://new\""
+        )
+        .contains("must use {file}")
+    );
+    assert_eq!(
+        destination_problems("accepts = [\"text/*\"]\ndeliver = \"clipboard\""),
+        ""
+    );
+    // Types, and fields that belong to another way of delivering.
+    assert!(
+        destination_problems("accepts = []\ndeliver = \"clipboard\"").contains("accepts is empty")
+    );
+    assert!(
+        destination_problems("accepts = [\"pictures\"]\ndeliver = \"clipboard\"")
+            .contains("isn't a MIME type or family")
+    );
+    assert!(
+        destination_problems(
+            "accepts = [\"text/*\"]\ndeliver = \"clipboard\"\nadapter = \"t3code\""
+        )
+        .contains("only for deliver = \"mcp\"")
+    );
+    assert!(
+        destination_problems("accepts = [\"text/*\"]\ndeliver = \"pigeon\"").contains("pigeon")
+    );
 }

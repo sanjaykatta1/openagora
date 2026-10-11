@@ -13,7 +13,12 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
+getrandom = "0.4"
+interprocess = "2"
+# Reading coding agents' session databases (OpenCode), read only.
+rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
@@ -22,5 +27,21 @@ toml = "0.8"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"
+# Reading other apps' text through AT-SPI, the accessibility bus.
+zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+    "Win32_System_Time",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [dev-dependencies]
+regex = "1"
 tempfile = "3"

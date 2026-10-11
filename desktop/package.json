@@ -35,17 +35,26 @@
         "Resources/bin/openagora"
       ],
       "category": "public.app-category.developer-tools",
+      "icon": "build/icon.icns",
       "target": [
         "dmg",
         "zip"
       ]
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         "nsis"
       ]
     },
     "linux": {
+      "icon": "build/icons",
+      "extraResources": [
+        {
+          "from": "build/icons/256x256.png",
+          "to": "icon.png"
+        }
+      ],
       "target": [
         "AppImage",
         "deb"

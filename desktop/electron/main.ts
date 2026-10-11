@@ -14,6 +14,7 @@ import { EngineLink, parseBackground, type BackgroundState, type ConfirmAnswer, 
 import { capture, mayCapture, screenAccess } from "./capture";
 import { readDesktopSettings, saveDesktopSettings, type DesktopSettings } from "./desktop-settings";
 import { TRAY_ICON } from "./tray-icon";
+import { windowIcon } from "./app-icon";
 import { launchAtLogin, refreshLaunchAtLogin, setLaunchAtLogin, startedAtLogin } from "./login-item";
 import { bringBack, closeTab, configureTabs, coverTabs, describeTabs, focusedPopout, mainClosed, openTab, placeTab, poppedTabs, popouts, popOut, reloadTab, showPopout, shownInMain, tabText, tabUrl } from "./tabs";
 
@@ -170,6 +171,7 @@ function createPanel(): BrowserWindow {
     minHeight: 420,
     show: false,
     title: "Sunday",
+    icon: windowIcon(),
     alwaysOnTop: true,
     skipTaskbar: true,
     minimizable: false,
@@ -289,6 +291,7 @@ async function openApproval(app: string, url: string): Promise<void> {
     width: 560,
     height: 760,
     title: "Approve OpenAgora",
+    icon: windowIcon(),
     autoHideMenuBar: true,
     backgroundColor: "#0f1115",
     webPreferences: { partition: `persist:app-${app}`, sandbox: true, contextIsolation: true, nodeIntegration: false },
@@ -805,6 +808,7 @@ function createWindow(): BrowserWindow {
     minWidth: 900,
     minHeight: 600,
     title: "OpenAgora",
+    icon: windowIcon(),
     backgroundColor: "#0f1115",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
@@ -912,6 +916,7 @@ if (!app.requestSingleInstanceLock()) {
           background: () => ({ state: background, tooltip: trayTooltip }),
           tray: () => tray,
           shortcutRegistered: () => shortcutError === null,
+          windowIcon,
         },
       });
     }

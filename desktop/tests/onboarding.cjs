@@ -17,6 +17,15 @@ async function start() {
 async function run() {
   let page = await start();
   await heading(page, 'Choose your personal agent');
+  // On Linux the window carries OpenAgora's icon itself (Windows and macOS
+  // show the packaged app's).
+  if (process.platform === 'linux') {
+    const icon = await session.app.evaluate(({ nativeImage }) => {
+      const file = globalThis.openagoraTest.windowIcon();
+      return { file, size: nativeImage.createFromPath(file).getSize() };
+    });
+    assert.deepEqual(icon, { file: path.resolve(__dirname, '..', 'build', 'icons', '256x256.png'), size: { width: 256, height: 256 } });
+  }
   // Sunday is the only choice for now; every other agent says "Coming soon".
   assert.equal(await page.getByRole('radio').count(), 7);
   assert.equal(await page.locator('input[type=radio]:not([disabled])').count(), 1);

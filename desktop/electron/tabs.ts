@@ -12,6 +12,7 @@
 //   OpenAgora, no camera, microphone or screen (main.ts).
 
 import { BaseWindow, shell, WebContentsView, type BrowserWindow, type Rectangle, type WebContents } from "electron";
+import { windowIcon } from "./app-icon";
 
 const LOCAL_URL = /^http:\/\/(127\.0\.0\.1|localhost):\d+(\/|$)/;
 const VALID_ID = /^[a-z][a-z0-9-]*$/;
@@ -183,6 +184,7 @@ export function popOut(id: string): void {
     minWidth: 320,
     minHeight: 240,
     title: tab.name,
+    icon: windowIcon(),
     backgroundColor: BACKGROUND,
     autoHideMenuBar: true,
     show: false,

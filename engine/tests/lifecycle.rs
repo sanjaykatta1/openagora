@@ -426,3 +426,66 @@ fn web_app_opens_at_the_address_it_prints() {
         assert!(run(&env, &["stop", id]).status.success());
     }
 }
+
+#[test]
+fn install_refuses_a_cpu_the_listing_does_not_name() {
+    let env = setup(None);
+    let os = if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
+    let other_cpu = if cfg!(target_arch = "aarch64") {
+        "x64"
+    } else {
+        "arm64"
+    };
+    write_app(
+        &env.catalog,
+        "elsewhere",
+        &format!(
+            r#"
+schema = "openagora/v1"
+id = "elsewhere"
+name = "Elsewhere"
+summary = "Only builds for another CPU"
+category = "test"
+homepage = "https://example.com"
+source = "https://github.com/example/elsewhere"
+license = "MIT"
+platforms = ["{os}"]
+
+[install]
+provides = "{{app_dir}}/ran"
+
+[[install.steps]]
+os = ["{os}"]
+arch = ["{other_cpu}"]
+shell = "sh"
+run = "touch '{{app_dir}}/ran'"
+
+[run]
+command = "sleep"
+args = ["600"]
+
+[run.health]
+process = true
+
+[ui]
+kind = "background"
+"#
+        ),
+    );
+    let out = run(&env, &["install", "elsewhere", "--yes"]);
+    assert!(!out.status.success());
+    let err = stderr(&out);
+    assert!(err.contains("Elsewhere is not available on"), "{err}");
+    assert!(!env.home.join("apps/elsewhere").exists());
+    let listed = stdout(&run(&env, &["catalog"]));
+    assert!(
+        listed
+            .lines()
+            .any(|l| l.starts_with("elsewhere") && l.contains("(not available on")),
+        "{listed}"
+    );
+}

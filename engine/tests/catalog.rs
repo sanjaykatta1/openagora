@@ -19,8 +19,21 @@ fn shipped_catalog_is_valid() {
         "T3 Code must declare how the agent connects"
     );
     for os in [Os::Macos, Os::Linux, Os::Windows] {
-        assert!(t3.steps_for(os).count() > 0, "no T3 install step for {os}");
+        for arch in [Arch::X64, Arch::Arm64] {
+            let missing = os == Os::Macos && arch == Arch::X64;
+            assert_eq!(
+                t3.steps_for(os, Some(arch)).count() == 0,
+                missing,
+                "T3 install steps for {os} {arch}"
+            );
+            assert_eq!(t3.unavailable_on(os, Some(arch)).is_some(), missing);
+        }
     }
+    // T3 Code publishes no `t3` for Intel Macs, so its installer 404s there.
+    assert_eq!(
+        t3.unavailable_on(Os::Macos, Some(Arch::X64)).as_deref(),
+        Some("Intel Macs")
+    );
 
     let maccy = &catalog.listings["maccy"].manifest;
     assert_eq!(maccy.platforms, [Os::Macos]);
@@ -28,7 +41,7 @@ fn shipped_catalog_is_valid() {
 
     let handy = &catalog.listings["handy"].manifest;
     for os in [Os::Macos, Os::Linux] {
-        let step = handy.steps_for(os).next().unwrap();
+        let step = handy.steps_for(os, None).next().unwrap();
         let asset = &step.download.as_ref().unwrap().asset;
         for arch in [Arch::X64, Arch::Arm64] {
             assert!(
@@ -230,6 +243,45 @@ fn background_app_rules() {
             "expected {expected:?} in {problems:?}"
         );
     }
+}
+
+#[test]
+fn steps_can_be_limited_to_some_cpus() {
+    // A step that names CPUs limits its OS to them, even next to a shared step.
+    let limited = VALID.replace(
+        "run = \"echo install\"\n",
+        "run = \"echo install\"\n\n[[install.steps]]\nos = [\"linux\"]\narch = [\"arm64\"]\nshell = \"sh\"\nrun = \"echo arm\"\n",
+    );
+    let m = Manifest::parse(&limited).unwrap();
+    assert_eq!(m.steps_for(Os::Linux, Some(Arch::Arm64)).count(), 2);
+    assert_eq!(m.unavailable_on(Os::Linux, Some(Arch::Arm64)), None);
+    assert_eq!(
+        m.unavailable_on(Os::Linux, Some(Arch::X64)).as_deref(),
+        Some("Linux on x64")
+    );
+    assert!(m.unavailable_on(Os::Linux, None).is_some());
+    assert_eq!(
+        m.unavailable_on(Os::Windows, Some(Arch::X64)).as_deref(),
+        Some("Windows")
+    );
+
+    // A download with no asset for this CPU has nothing to install.
+    let arm_only = BACKGROUND.replace("x64 = \"tool-x64.tar.gz\", ", "");
+    let m = Manifest::parse(&arm_only).unwrap();
+    assert_eq!(
+        m.unavailable_on(Os::Macos, Some(Arch::X64)).as_deref(),
+        Some("Intel Macs")
+    );
+    assert_eq!(m.unavailable_on(Os::Macos, Some(Arch::Arm64)), None);
+
+    assert!(
+        problems(|s| s.replace("shell = \"sh\"", "arch = []\nshell = \"sh\""))
+            .contains("empty arch list")
+    );
+    assert!(
+        problems(|s| s.replace("shell = \"sh\"", "arch = [\"x86\"]\nshell = \"sh\""))
+            .contains("x86")
+    );
 }
 
 #[test]

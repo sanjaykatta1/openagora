@@ -13,8 +13,17 @@ provides = "t3"
 
 # T3 Code's own installer, so `t3 update` keeps working. It installs `t3` into
 # ~/.local/bin rather than an app-scoped folder; isolation comes later.
+# T3 Code publishes no `t3` for Intel Macs (Node single executables don't
+# support them), so its installer stops with exit 44 there; only T3's desktop
+# app runs on Intel Macs.
 [[install.steps]]
-os = ["macos", "linux"]
+os = ["macos"]
+arch = ["arm64"]
+shell = "sh"
+run = "curl -fsSL https://t3.codes/install.sh | sh"
+
+[[install.steps]]
+os = ["linux"]
 shell = "sh"
 run = "curl -fsSL https://t3.codes/install.sh | sh"
 

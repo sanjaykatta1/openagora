@@ -80,7 +80,7 @@ A listing describes an app in four parts. The full schema is in
 | Section | Says |
 |---|---|
 | top level | id, name, summary, category, homepage, source, license, platforms, role |
-| `[install]` | what it provides (an executable on PATH or a path under `{app_dir}`), plus ordered steps per OS; a step can first download a file from the app's latest GitHub release, picked per CPU |
+| `[install]` | what it provides (an executable on PATH or a path under `{app_dir}`), plus ordered steps per OS; a step can first download a file from the app's latest GitHub release, picked per CPU, and can be limited to some CPUs (`arch = ["arm64"]`) when the app has no build for the others |
 | `[update]`, `[uninstall]` | the app's own commands for these |
 | `[run]` | command (same everywhere or per OS) and args, port (`auto`, fixed, or none), health check (`tcp` or `process`) |
 | `[ui]` | `web` (tab), `terminal` (terminal tab), `window` (own window) or `background` (menu-bar, tray or shortcut utility), plus URL for `web`, and optionally `url_from_log_after`: the text the app prints right before its real address at startup, for apps that hand out a one-time sign-in link (only 127.0.0.1/localhost addresses are accepted) |
@@ -89,6 +89,11 @@ A listing describes an app in four parts. The full schema is in
 Placeholders the engine fills in: `{app_dir}` (the app's own folder under
 OpenAgora's data directory), `{download}` (the file a step downloaded) and
 `{port}` (the allocated port). Unknown placeholders are errors.
+
+Once a step for an OS names CPUs, the app is offered on that OS only for those
+CPUs. On other CPUs, and wherever a download has no asset for the CPU, the
+store shows the app as not available (for example "Not available on Intel
+Macs") instead of starting an install that can't finish.
 
 Rules the validator enforces:
 

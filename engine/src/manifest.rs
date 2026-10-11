@@ -36,6 +36,15 @@ impl Os {
             _ => None,
         }
     }
+
+    /// The name people use, for messages.
+    pub fn label(self) -> &'static str {
+        match self {
+            Os::Macos => "macOS",
+            Os::Linux => "Linux",
+            Os::Windows => "Windows",
+        }
+    }
 }
 
 impl fmt::Display for Os {
@@ -87,7 +96,8 @@ impl<T> PerOs<T> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Arch {
     X64,
     Arm64,
@@ -100,6 +110,26 @@ impl Arch {
             "aarch64" => Some(Arch::Arm64),
             _ => None,
         }
+    }
+}
+
+impl fmt::Display for Arch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Arch::X64 => "x64",
+            Arch::Arm64 => "arm64",
+        })
+    }
+}
+
+/// A kind of computer as people name it, for messages: "Intel Macs".
+fn computer_name(os: Os, arch: Option<Arch>) -> String {
+    match (os, arch) {
+        (Os::Macos, Some(Arch::X64)) => "Intel Macs".into(),
+        (Os::Macos, Some(Arch::Arm64)) => "Apple Silicon Macs".into(),
+        (_, Some(Arch::X64)) => format!("{} on x64", os.label()),
+        (_, Some(Arch::Arm64)) => format!("{} on Arm", os.label()),
+        (_, None) => format!("{} on this CPU", os.label()),
     }
 }
 
@@ -167,6 +197,9 @@ pub enum Shell {
 #[serde(deny_unknown_fields)]
 pub struct Step {
     pub os: Vec<Os>,
+    /// The CPUs this step is for; absent means every CPU. Once a step for an
+    /// OS names CPUs, the app is offered on that OS only for the CPUs named.
+    pub arch: Option<Vec<Arch>>,
     pub shell: Shell,
     pub download: Option<Download>,
     pub run: String,
@@ -317,12 +350,38 @@ impl Manifest {
         }
     }
 
-    /// Install steps that apply on `os`, in order.
-    pub fn steps_for(&self, os: Os) -> impl Iterator<Item = &Step> {
-        self.install
+    /// Install steps that apply on `os` with `arch`, in order.
+    pub fn steps_for(&self, os: Os, arch: Option<Arch>) -> impl Iterator<Item = &Step> {
+        self.install.steps.iter().filter(move |s| {
+            s.os.contains(&os)
+                && s.arch
+                    .as_ref()
+                    .is_none_or(|cpus| arch.is_some_and(|a| cpus.contains(&a)))
+        })
+    }
+
+    /// The kind of computer this listing can't be installed on, as people name
+    /// it ("Windows", "Intel Macs"), or None if it installs on `os` with `arch`.
+    pub fn unavailable_on(&self, os: Os, arch: Option<Arch>) -> Option<String> {
+        if !self.platforms.contains(&os) {
+            return Some(os.label().into());
+        }
+        let named: Vec<Arch> = self
+            .install
             .steps
             .iter()
-            .filter(move |s| s.os.contains(&os))
+            .filter(|s| s.os.contains(&os))
+            .filter_map(|s| s.arch.as_ref())
+            .flatten()
+            .copied()
+            .collect();
+        let cpu_listed = named.is_empty() || arch.is_some_and(|a| named.contains(&a));
+        let has_builds = self.steps_for(os, arch).all(|s| {
+            s.download
+                .as_ref()
+                .is_none_or(|d| arch.and_then(|a| d.asset.for_arch(a)).is_some())
+        });
+        (!(cpu_listed && has_builds)).then(|| computer_name(os, arch))
     }
 
     /// Every rule the type system cannot express. Empty means valid.
@@ -352,7 +411,7 @@ impl Manifest {
         }
         let platforms: BTreeSet<Os> = self.platforms.iter().copied().collect();
         for os in &platforms {
-            if self.steps_for(*os).next().is_none() {
+            if !self.install.steps.iter().any(|s| s.os.contains(os)) {
                 out.push(format!("no install step for listed platform {os}"));
             }
             if self.install.provides.for_os(*os).is_none() {
@@ -370,6 +429,11 @@ impl Manifest {
             if let Some(os) = step.os.iter().find(|os| !platforms.contains(os)) {
                 out.push(format!(
                     "install step {n} targets {os}, which is not in platforms"
+                ));
+            }
+            if step.arch.as_ref().is_some_and(Vec::is_empty) {
+                out.push(format!(
+                    "install step {n} has an empty arch list; leave it out for every CPU"
                 ));
             }
             if step.shell == Shell::Powershell && step.os.iter().any(|os| *os != Os::Windows) {

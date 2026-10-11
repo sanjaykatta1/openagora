@@ -48,10 +48,16 @@ impl Engine {
         state::read(&self.paths.state_file(id))
     }
 
-    pub fn install(&self, m: &Manifest) -> Result<Installed> {
-        if !m.platforms.contains(&self.os) {
-            bail!("{} is not available on {}", m.name, self.os);
+    /// Fails, naming the kind of computer, if `m` can't be installed on this one.
+    pub fn check_available(&self, m: &Manifest) -> Result<()> {
+        match m.unavailable_on(self.os, self.arch) {
+            Some(computer) => bail!("{} is not available on {computer}", m.name),
+            None => Ok(()),
         }
+    }
+
+    pub fn install(&self, m: &Manifest) -> Result<Installed> {
+        self.check_available(m)?;
         if self.installed(&m.id)?.is_some() {
             bail!("{} is already installed", m.name);
         }
@@ -84,7 +90,7 @@ impl Engine {
 
     fn run_install_steps(&self, m: &Manifest, app_dir: &Path, tmp: &Path) -> Result<Vec<String>> {
         let mut assets = Vec::new();
-        for step in m.steps_for(self.os) {
+        for step in m.steps_for(self.os, self.arch) {
             let mut vars = vars(&[("app_dir", app_dir)]);
             if let Some(download) = &step.download {
                 let arch = self.arch.context("this CPU is not supported")?;

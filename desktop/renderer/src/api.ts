@@ -26,6 +26,8 @@ export interface App {
   license: string;
   platforms: string[];
   available: boolean;
+  /** The kind of computer it can't be installed on, e.g. "Intel Macs". */
+  unavailable_on: string | null;
   role: "app" | "agent";
   ui: "web" | "terminal" | "window" | "background";
   steps: Step[];

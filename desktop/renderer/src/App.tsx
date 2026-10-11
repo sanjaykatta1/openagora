@@ -368,7 +368,7 @@ function Store(props: {
               <div className="card-foot">
                 <span className="muted small">{app.license}</span>
                 {!app.available ? (
-                  <span className="muted small">Not available on {osName(window.openagora?.platform)}</span>
+                  <span className="muted small">Not available on {app.unavailable_on ?? osName(window.openagora?.platform)}</span>
                 ) : props.busy[app.id] ? (
                   <span className="small">{props.busy[app.id]}</span>
                 ) : app.installed ? (
@@ -499,7 +499,7 @@ function Detail(props: {
         </div>
         <div className="detail-actions">
           {!app.available ? (
-            <span className="muted">Not available on {osName(window.openagora?.platform)}</span>
+            <span className="muted">Not available on {app.unavailable_on ?? osName(window.openagora?.platform)}</span>
           ) : !app.installed ? (
             <button className="btn primary big" disabled={!!props.busy || !window.openagora} onClick={() => props.onInstall(app)}>
               {props.busy ?? "Install"}
@@ -565,7 +565,7 @@ function Detail(props: {
 }
 
 function InstallSteps({ app }: { app: Listing }) {
-  if (!app.available) return <p className="muted">Not available on this computer.</p>;
+  if (!app.available) return <p className="muted">Not available on {app.unavailable_on ?? "this computer"}.</p>;
   return (
     <ol className="steps">
       {app.steps.map((step, i) => (

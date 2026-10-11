@@ -92,7 +92,14 @@ function freshFakeState(overrides = {}) {
   return {
     present: false, installed: false, adopted: false, clean: false, version: '0.21.6',
     setup: 'unknown', running: false, dashboardUrl: null, pid: null, connected: false,
-    extraApps: [], calls: [], grants: [], never: [], agents: [], connections: [], ...overrides,
+    extraApps: [], calls: [], grants: [], never: [], agents: [], connections: [],
+    memory: {
+      provider: null, digest: false, sessions: [],
+      providers: [{ id: 'holographic', name: 'Holographic', needs: '0.21.5', commands: [
+        'hermes -p sunday plugins install holographic --enable --yes-deps', 'hermes -p sunday memory setup holographic',
+      ] }],
+    },
+    ...overrides,
   };
 }
 
@@ -203,6 +210,20 @@ async function installFakeEngine(app, state) {
     handle('app-disconnect', (_e, app) => {
       f().calls.push(['app-disconnect', app]);
       f().connections = f().connections.filter((c) => c.app !== app);
+      return ok;
+    });
+    handle('memory-state', () => f().memory);
+    handle('memory-use', (_e, provider) => { f().calls.push(['memory-use', provider]); f().memory.provider = provider; return ok; });
+    handle('memory-off', () => { f().calls.push(['memory-off']); f().memory.provider = null; return ok; });
+    handle('memory-digest', (_e, on) => {
+      f().calls.push(['memory-digest', on]);
+      f().memory.digest = on;
+      if (on) f().memory.sessions = f().memory.sessions.map((s) => ({ ...s, always: true }));
+      return ok;
+    });
+    handle('sessions-revoke', (_e, agent) => {
+      f().calls.push(['sessions-revoke', agent]);
+      f().memory.sessions = f().memory.sessions.map((s) => (s.agent === agent ? { ...s, always: false } : s));
       return ok;
     });
     handle('agent-availability', () => ({ detected: true, launchable: true }));

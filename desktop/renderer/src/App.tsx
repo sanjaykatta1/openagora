@@ -5,6 +5,7 @@ import { NEW_AGENT_PREFERENCES, PERSONAL_AGENTS, SUNDAY_ID, parseAgentPreference
 import { AgentChooser } from "./PersonalAgent";
 import { SeeingSettings } from "./Seeing";
 import { CodingAgentsSettings } from "./CodingAgents";
+import { MemorySettings } from "./Memory";
 import { SundayDashboard, SundayHome, SundaySettings, sundayStage } from "./Sunday";
 
 type View = { kind: "sunday" } | { kind: "store" } | { kind: "library" } | { kind: "settings" } | { kind: "app"; id: string } | { kind: "tab"; id: string };
@@ -361,6 +362,7 @@ export function App() {
             onRemove={() => agentListing && void act(agentListing, "uninstall", "Removing Sunday…")}>
             {sundayChosen && <SeeingSettings />}
             {sundayChosen && <CodingAgentsSettings apps={apps} />}
+            {sundayChosen && <MemorySettings />}
           </SundaySettings>
         ))}
 

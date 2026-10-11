@@ -63,6 +63,13 @@ contextBridge.exposeInMainWorld("openagora", {
     connect: (app: string) => ipcRenderer.invoke("app-connect", app),
     disconnect: (app: string) => ipcRenderer.invoke("app-disconnect", app),
   },
+  memory: {
+    state: () => ipcRenderer.invoke("memory-state"),
+    use: (provider: string) => ipcRenderer.invoke("memory-use", provider),
+    off: () => ipcRenderer.invoke("memory-off"),
+    digest: (on: boolean) => ipcRenderer.invoke("memory-digest", on),
+    revokeSessions: (agent: string) => ipcRenderer.invoke("sessions-revoke", agent),
+  },
   broker: {
     state: () => ipcRenderer.invoke("broker-state"),
     revoke: (app: string, scope?: { client?: string; destination?: string }) => ipcRenderer.invoke("broker-revoke", app, scope),

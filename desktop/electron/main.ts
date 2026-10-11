@@ -584,6 +584,21 @@ function registerIpc(): void {
   });
   handle("app-disconnect", (_e, id: unknown) => runEngine(["disconnect", checkId(id)]));
 
+  // Sunday's memory: Hermes's own commands for the sunday profile, run by
+  // the engine after the user agreed in the window.
+  const PROVIDERS = new Set(["holographic"]);
+  handle("memory-state", () => engineJson(["sunday", "memory", "status", "--json"], "Sunday's memory"));
+  handle("memory-use", (_e, provider: unknown) => {
+    if (typeof provider !== "string" || !PROVIDERS.has(provider)) throw new Error("unknown memory provider");
+    return runEngine(["sunday", "memory", "use", provider, "--yes"]);
+  });
+  handle("memory-off", () => runEngine(["sunday", "memory", "off", "--yes"]));
+  handle("memory-digest", (_e, on: unknown) => {
+    if (typeof on !== "boolean") throw new Error("invalid choice");
+    return runEngine(["sunday", "memory", "digest", on ? "on" : "off", "--yes"]);
+  });
+  handle("sessions-revoke", (_e, agent: unknown) => runEngine(["sessions", "revoke", checkId(agent)]));
+
   // What Sunday can see: OpenAgora's own settings and the engine's broker.
   const desktopState = () => ({ settings, shortcutError, screen: screenAccess(), platform: process.platform });
   handle("desktop-settings", desktopState);

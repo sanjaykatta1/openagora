@@ -119,54 +119,23 @@ case "$1" in
     echo "${FAKE_UPDATE_TO:-0.21.6}" > "$root/.fake-version"
     echo "Hermes updated"
     exit 0 ;;
-  cron)
-    # Jobs live in the profile's cron/jobs.json, as Hermes keeps them.
-    mkdir -p "$home/cron"
-    jobs="$home/cron/jobs.json"
-    case "$2" in
-      create)
-        shift 2
-        exec python3 - "$jobs" "$@" <<'PY'
-import json, os, sys
-path, schedule, prompt, *flags = sys.argv[1:]
-job = {"id": "job%04d" % (len(open(path).read()) if os.path.exists(path) else 1), "schedule": schedule,
-       "prompt": prompt, "skills": [], "enabled": True}
-i = 0
-while i < len(flags):
-    flag = flags[i]
-    if flag in ("--name", "--deliver"):
-        job[flag[2:]] = flags[i + 1]; i += 2
-    elif flag == "--skill":
-        job["skills"].append(flags[i + 1]); i += 2
-    elif flag == "--continuity":
-        job["continuity"] = True; i += 1
-    else:
-        sys.exit("fake hermes: unexpected cron flag " + flag)
-data = json.load(open(path)) if os.path.exists(path) else {"jobs": []}
-data["jobs"].append(job)
-json.dump(data, open(path, "w"))
-print("Created job: " + job["id"])
-print("  Name: %s\n  Schedule: %s" % (job.get("name"), schedule))
-PY
-        ;;
-      remove)
-        exec python3 - "$jobs" "$3" <<'PY'
-import json, os, sys
-path, ref = sys.argv[1:]
-data = json.load(open(path)) if os.path.exists(path) else {"jobs": []}
-kept = [j for j in data["jobs"] if ref not in (j["id"], j.get("name"))]
-if len(kept) == len(data["jobs"]):
-    sys.exit("Job not found: " + ref)
-data["jobs"] = kept
-json.dump(data, open(path, "w"))
-print("Removed job: " + ref)
-PY
-        ;;
-      tick)
-        date +%s >> "$home/cron/ticks"
-        echo "ran due jobs"
-        exit 0 ;;
-    esac ;;
+  -z)
+    # One turn of Sunday's: noted in .fake-oneshots (prompt, skill, toolsets).
+    prompt="$2"
+    shift 2
+    skill=
+    toolsets=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -s) skill="$2"; shift 2 ;;
+        -t) toolsets="$2"; shift 2 ;;
+        *) echo "fake hermes: unexpected -z flag $1" >&2; exit 2 ;;
+      esac
+    done
+    python3 -c 'import json, sys; print(json.dumps({"prompt": sys.argv[1], "skill": sys.argv[2], "toolsets": sys.argv[3]}))' \
+      "$prompt" "$skill" "$toolsets" >> "$home/.fake-oneshots"
+    echo "Saved 2 decisions to memory."
+    exit 0 ;;
   memory)
     store="$home/.fake-config"
     case "$2" in

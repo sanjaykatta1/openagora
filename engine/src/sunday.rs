@@ -48,8 +48,8 @@ const PROFILE_MARKERS: &[&str] = &[
 
 const QUICK: Duration = Duration::from_secs(60);
 const SLOW: Duration = Duration::from_secs(300);
-/// A tick runs Sunday's due jobs, each a whole agent turn.
-const CRON_TICK: Duration = Duration::from_secs(30 * 60);
+/// A one-shot turn of Sunday's, which may call tools for a while.
+const ONESHOT: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Version(pub u32, pub u32, pub u32);
@@ -206,55 +206,34 @@ impl Hermes {
         })?))
     }
 
-    /// `hermes -p <profile> cron create`: a job in Sunday's own scheduler
-    /// whose output stays on this computer, each run picking up where the
-    /// last one left off. Returns the job's id.
-    pub fn cron_create(
-        &self,
-        schedule: &str,
-        prompt: &str,
-        name: &str,
-        skills: &[&str],
-    ) -> Result<String> {
-        let mut args = vec![
-            "cron",
-            "create",
-            schedule,
-            prompt,
-            "--name",
-            name,
-            "--deliver",
-            "local",
-            "--continuity",
-        ];
-        for skill in skills {
-            args.extend_from_slice(&["--skill", skill]);
-        }
+    /// `hermes -p <profile> plugins install <name> --enable --yes-deps`: a
+    /// plugin from Hermes's catalog, at the commit the catalog pins, enabled,
+    /// with its Python packages (the user agreed to both in OpenAgora).
+    pub fn plugin_install(&self, name: &str) -> Result<()> {
+        let args = ["plugins", "install", name, "--enable", "--yes-deps"];
         let out = self.run_in_profile(&args, SLOW)?;
-        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-        check(
-            out,
-            &["-p", &self.profile, "cron", "create", "--name", name],
-        )?;
-        // "Created job: <id>"
-        stdout
-            .lines()
-            .find_map(|line| line.trim().strip_prefix("Created job:"))
-            .map(|id| id.trim().to_string())
-            .filter(|id| !id.is_empty())
-            .with_context(|| format!("unexpected output from hermes cron create: {stdout}"))
+        check(out, &["-p", &self.profile, "plugins", "install", name])
     }
 
-    /// `hermes -p <profile> cron remove <job>`
-    pub fn cron_remove(&self, job: &str) -> Result<()> {
-        let out = self.run_in_profile(&["cron", "remove", job], QUICK)?;
-        check(out, &["-p", &self.profile, "cron", "remove", job])
+    /// `hermes -p <profile> memory setup <provider>`
+    pub fn memory_setup(&self, provider: &str) -> Result<()> {
+        let out = self.run_in_profile(&["memory", "setup", provider], SLOW)?;
+        check(out, &["-p", &self.profile, "memory", "setup", provider])
     }
 
-    /// `hermes -p <profile> cron tick`: runs the profile's due jobs once.
-    pub fn cron_tick(&self) -> Result<()> {
-        let out = self.run_in_profile(&["cron", "tick"], CRON_TICK)?;
-        check(out, &["-p", &self.profile, "cron", "tick"])
+    /// `hermes -p <profile> memory off`: built-in memory only.
+    pub fn memory_off(&self) -> Result<()> {
+        let out = self.run_in_profile(&["memory", "off"], QUICK)?;
+        check(out, &["-p", &self.profile, "memory", "off"])
+    }
+
+    /// `hermes -p <profile> -z <prompt> -s <skill> -t <toolsets>`: one turn of
+    /// Sunday's, with only those toolsets. Returns its answer.
+    pub fn oneshot(&self, prompt: &str, skill: &str, toolsets: &str) -> Result<String> {
+        let out = self.run_in_profile(&["-z", prompt, "-s", skill, "-t", toolsets], ONESHOT)?;
+        let answer = String::from_utf8_lossy(&out.stdout).to_string();
+        check(out, &["-p", &self.profile, "-z", "…"])?;
+        Ok(answer)
     }
 
     pub fn config_unset(&self, key: &str) -> Result<()> {

@@ -378,9 +378,24 @@ enum MemoryCmd {
         #[arg(long)]
         json: bool,
     },
-    /// Keep Sunday's memory up to date with your coding sessions: a job in
-    /// Sunday's own scheduler (Hermes's `cron create`) reads them every two
-    /// hours and saves what's worth remembering (asks first).
+    /// Give Sunday long-term memory with a memory provider, set up with
+    /// Hermes's own commands for Sunday's profile only (asks first).
+    Use {
+        #[arg(value_parser = ["holographic"])]
+        provider: String,
+        /// Don't ask for confirmation.
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Back to Hermes's built-in memory only (`hermes -p sunday memory off`).
+    Off {
+        /// Don't ask for confirmation.
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Keep Sunday's memory up to date with your coding sessions: every two
+    /// hours, while OpenAgora runs, Sunday reads what changed and saves what's
+    /// worth remembering (asks first).
     Digest {
         #[arg(value_parser = ["on", "off"])]
         state: String,
@@ -616,11 +631,51 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                                 print_memory(&status);
                             }
                         }
+                        MemoryCmd::Use { provider, yes } => {
+                            let commands = memory::use_commands(&provider);
+                            let question = format!(
+                                "Give Sunday long-term memory with {provider}? It keeps facts in a local database in Sunday's profile: no account, network or model calls. OpenAgora runs Hermes's own commands, for the sunday profile only:\n  {}\nThe first installs the plugin from Hermes's catalog, with its Python packages.",
+                                commands.join("\n  ")
+                            );
+                            if !confirm(&question, yes)? {
+                                println!("Nothing was changed.");
+                                return Ok(());
+                            }
+                            let mut entry = audit::Entry::new("user", "memory_provider", &provider);
+                            entry.decision = "confirmed".into();
+                            entry.via = Some("command line".into());
+                            let done = memory::use_provider(&engine, m, &provider);
+                            entry.outcome = match &done {
+                                Ok(()) => "ok".into(),
+                                Err(e) => format!("failed: {e:#}"),
+                            };
+                            audit::record(&engine.paths, &entry)?;
+                            done?;
+                            println!(
+                                "Sunday now remembers with {provider}. Start a new Sunday session to pick it up."
+                            );
+                        }
+                        MemoryCmd::Off { yes } => {
+                            if !confirm(
+                                "Switch Sunday back to Hermes's built-in memory only (`hermes -p sunday memory off`)? The provider's facts stay in Sunday's profile.",
+                                yes,
+                            )? {
+                                println!("Nothing was changed.");
+                                return Ok(());
+                            }
+                            memory::memory_off(&engine, m)?;
+                            let mut entry = audit::Entry::new("user", "memory_provider", "off");
+                            entry.decision = "confirmed".into();
+                            entry.via = Some("command line".into());
+                            entry.outcome = "ok".into();
+                            audit::record(&engine.paths, &entry)?;
+                            println!("Sunday uses Hermes's built-in memory only.");
+                        }
                         MemoryCmd::Digest { state, yes } if state == "on" => {
                             let agents = memory::readable_agents();
                             let names: Vec<&str> = agents.iter().map(|(_, n)| n.as_str()).collect();
                             let question = format!(
-                                "Keep Sunday's memory up to date with your coding sessions? Every two hours, a job in Sunday's own scheduler (`hermes -p sunday cron create`) has Sunday read your sessions{} and save what's worth remembering: decisions, conventions, open problems. Sunday may then always read those sessions; what it reads goes to the model provider it uses. While OpenAgora runs, it also runs Sunday's due jobs (`hermes -p sunday cron tick`).",
+                                "Keep Sunday's memory up to date with your coding sessions? Every two hours while OpenAgora runs, if a session changed, Sunday reads your sessions{} and saves what's worth remembering: decisions, conventions, open problems (with Hermes's one-shot mode, `hermes -p sunday -z …`, and only memory and OpenAgora's tools). Sunday may then always read those sessions; what it reads goes to the model provider it uses, and each run costs one turn.",
                                 if names.is_empty() {
                                     String::new()
                                 } else {
@@ -631,15 +686,18 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                                 println!("Nothing was changed.");
                                 return Ok(());
                             }
-                            let job = memory::digest_on(&engine, m, &agents)?;
+                            memory::digest_on(&engine, m, &agents)?;
                             let mut entry = audit::Entry::new("user", "memory_digest", "on");
                             entry.decision = "confirmed".into();
                             entry.via = Some("command line".into());
-                            entry.outcome = job.clone();
+                            entry.outcome = if names.is_empty() {
+                                "on".into()
+                            } else {
+                                format!("on, reading {}", names.join(", "))
+                            };
                             audit::record(&engine.paths, &entry)?;
                             println!(
-                                "Sunday's memory digest is on (job {job}, {}).",
-                                memory::DIGEST_SCHEDULE
+                                "Sunday's memory digest is on (every two hours while OpenAgora runs)."
                             );
                         }
                         MemoryCmd::Digest { yes, .. } => {
@@ -647,11 +705,11 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                                 println!("Nothing was changed.");
                                 return Ok(());
                             }
-                            let removed = memory::digest_off(&engine, m)?;
+                            memory::digest_off(&engine.paths)?;
                             let mut entry = audit::Entry::new("user", "memory_digest", "off");
                             entry.decision = "confirmed".into();
                             entry.via = Some("command line".into());
-                            entry.outcome = if removed { "removed" } else { "none" }.into();
+                            entry.outcome = "off".into();
                             audit::record(&engine.paths, &entry)?;
                             println!("Sunday's memory digest is off.");
                         }
@@ -1810,19 +1868,25 @@ fn print_memory(status: &memory::Status) {
         "Memory: {}",
         match &status.provider {
             Some(provider) => format!("Hermes's built-in memory, plus {provider}"),
-            None => "Hermes's built-in memory (MEMORY.md and USER.md)".to_string(),
+            None => "Hermes's built-in memory (MEMORY.md and USER.md); for long-term memory: openagora sunday memory use holographic".to_string(),
         }
     );
     println!(
         "Digest: {}",
         if status.digest {
             format!(
-                "on ({}){}",
-                memory::DIGEST_SCHEDULE,
+                "on{}",
                 status
                     .digest_last_run
-                    .as_deref()
-                    .map(|at| format!(", last run {at}"))
+                    .map(|at| format!(
+                        ", last run {} (UTC){}",
+                        sessions::stamp(at),
+                        status
+                            .digest_last_result
+                            .as_deref()
+                            .map(|r| format!(": {r}"))
+                            .unwrap_or_default()
+                    ))
                     .unwrap_or_default()
             )
         } else {

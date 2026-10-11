@@ -88,6 +88,20 @@ export interface CodingAgentsState {
   connections: AppConnection[];
 }
 
+/** Sunday's memory; mirrors `openagora sunday memory status --json`. */
+export interface MemoryState {
+  /** The memory provider Hermes uses for Sunday, or null for built-in only. */
+  provider: string | null;
+  /** Providers OpenAgora sets up, with Hermes's commands for each, shown before they run. */
+  providers: { id: string; name: string; needs: string; commands: string[] }[];
+  digest: boolean;
+  /** Seconds since the epoch. */
+  digest_last_run?: number;
+  digest_last_result?: string;
+  /** Coding agents whose sessions OpenAgora can read, and whether Sunday may always read them. */
+  sessions: { agent: string; name: string; always: boolean }[];
+}
+
 /** Where Sunday stands; mirrors `openagora sunday status --json`. */
 export interface SundayStatus {
   id: string;
@@ -247,6 +261,13 @@ export interface Bridge {
     /** Opens the app's approval page; resolves when the user answered there. */
     connect(app: string): Promise<{ app: string; connected: boolean; can_act: boolean }>;
     disconnect(app: string): Promise<EngineResult>;
+  };
+  memory: {
+    state(): Promise<MemoryState>;
+    use(provider: string): Promise<EngineResult>;
+    off(): Promise<EngineResult>;
+    digest(on: boolean): Promise<EngineResult>;
+    revokeSessions(agent: string): Promise<EngineResult>;
   };
   broker: {
     state(): Promise<BrokerState>;

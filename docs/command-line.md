@@ -218,13 +218,18 @@ openagora sessions list --agent codex --json
 openagora sessions allow claude-code       # let Sunday always read them (otherwise it asks each time)
 openagora sessions revoke claude-code
 openagora sunday memory                    # Sunday's memory, the digest, which sessions Sunday may read
+openagora sunday memory use holographic    # long-term memory, with Hermes's own commands (asks first)
+openagora sunday memory off                # back to Hermes's built-in memory
 openagora sunday memory digest on          # every 2 hours, Sunday saves what's worth remembering (asks first)
 openagora sunday memory digest off
 ```
 
 Sunday answers "what did I do in my coding sessions today?" from the same
-sessions, after asking you in OpenAgora's window. The digest is a job in
-Sunday's own Hermes scheduler (`hermes -p sunday cron …`).
+sessions, after asking you in OpenAgora's window. Holographic is installed with
+`hermes -p sunday plugins install holographic` and `hermes -p sunday memory
+setup holographic`, for Sunday's profile only. The digest runs while OpenAgora
+runs, as one turn of Sunday's (`hermes -p sunday -z …`) with only its memory and
+OpenAgora's tools.
 
 ## Uninstall the command line tool
 

@@ -16,7 +16,9 @@ An open-source app store for your desktop.
   that app's window only if you allowed the app, and never sees password managers
   or private browser windows. Ask Sunday to send what you're working on to
   your coding agent (Claude Code, Codex, OpenCode, or a new T3 Code thread),
-  each set up once with its own command.
+  each set up once with its own command. Ask it "what did I do in my coding
+  sessions today?" and it answers from those agents' own records, after asking
+  you; give it long-term memory on your computer with Holographic.
   Other personal agents are coming soon. See [Sunday](docs/personal-agents.md).
 
 ## Download

@@ -140,7 +140,7 @@ openagora grants              the apps Sunday may see: list, allow, revoke
 openagora never               the never-capture list: list, add, remove
 openagora agents              coding agents: list, setup, remove (their own commands), add, forget
 openagora sessions            your coding sessions as Sunday reads them; allow, revoke Sunday's reading
-openagora sunday memory       Sunday's memory: status, the digest on or off (Hermes's own cron)
+openagora sunday memory       Sunday's memory: status; use holographic; off; the digest on or off
 openagora connect <app>       connect OpenAgora to an app that signs agents in with OAuth (T3 Code)
 openagora disconnect <app>    forget that sign-in
 openagora connections         the apps OpenAgora is connected to
@@ -395,7 +395,7 @@ interface (`engine/src/destinations.rs`):
   Setups, removals, connections, handoffs, tasks, reads by coding agents and app
   tool calls are all in the audit log.
 
-### Memory across apps and coding agents (phase 5, in progress)
+### Memory across apps and coding agents (built: phase 5)
 
 Three layers, as the issue lays out; Hermes holds the memory itself.
 
@@ -431,20 +431,29 @@ Three layers, as the issue lays out; Hermes holds the memory itself.
   can allow or take it back with `openagora sessions allow|revoke <agent>`.
   Every read and answer is in the audit log (`sessions_read`,
   `allow_sessions`).
-- **Keeping memory fresh.** `openagora sunday memory digest on` (after a yes)
-  creates a job in Sunday's own scheduler with Hermes's command: `hermes -p
-  sunday cron create "every 2h" <prompt> --name openagora-digest --deliver
-  local --continuity --skill openagora-memory`. Each run, Sunday reads what
-  changed since the last run (`--continuity` gives it the previous output) and
-  saves decisions, conventions and open problems with its memory tool, never
-  code or secrets. Turning it on also lets Sunday always read the agents'
-  sessions it covers. Hermes runs jobs from its gateway; while OpenAgora runs
-  it also runs Sunday's due jobs with `hermes -p sunday cron tick` every 15
-  minutes (Hermes's own lock keeps that to one tick at a time). `digest off`
-  removes the job with `hermes -p sunday cron remove`.
-- **Memory provider.** Hermes's built-in memory (MEMORY.md and USER.md) is
-  always on. A long-term memory provider is set up with Hermes's own commands,
-  for the `sunday` profile only; which one is the user's call (open).
+- **Long-term memory: Holographic** (the user's choice; the issue's default was
+  none). Hermes's built-in memory (MEMORY.md and USER.md) is always on.
+  Holographic is a local SQLite fact store in Sunday's profile: no account,
+  network or model calls. `openagora sunday memory use holographic` (or
+  Settings → Memory), after a yes, runs Hermes's own commands for the
+  `sunday` profile only: `hermes -p sunday plugins install holographic
+  --enable --yes-deps` (from Hermes's plugin catalog, at the commit it pins,
+  with its Python packages) and `hermes -p sunday memory setup holographic`.
+  It needs Hermes 0.21.5 or later. `openagora sunday memory off` runs `hermes
+  -p sunday memory off`; Holographic's facts stay in the profile.
+- **Keeping memory fresh: the digest.** `openagora sunday memory digest on`
+  (after a yes) lets Sunday always read the agents' sessions, and while
+  OpenAgora runs, every two hours when a session changed, it runs one turn of
+  Sunday's with Hermes's one-shot mode: `hermes -p sunday -z "OpenAgora
+  digest…" -s openagora-memory -t memory,mcp-openagora`. The prompt gives the
+  exact time the last digest covered up to; Sunday reads what changed with
+  `coding_activity` and saves decisions, conventions and open problems with
+  its memory tools (`fact_store` with Holographic), never code or secrets.
+  Only memory and OpenAgora's tools are enabled: one-shot mode skips Hermes's
+  approvals, and sessions are untrusted text. The issue suggests a Hermes
+  scheduled job; Hermes runs those in a context where memory providers only
+  read (Holographic writes nothing there), so the digest is a turn of its
+  own. Runs are in the audit log (`memory_digest`).
 - The `openagora-memory` skill teaches Sunday the tools and what never to save.
 
 ### Toolchain
@@ -519,9 +528,8 @@ Settings → Coding agents, with its own command (§4).
 
 **Planned.**
 
-- *Phase 5 (in progress):* memory across apps and agents: live lookup of the
-  user's coding sessions (built), a scheduled digest through Hermes's own
-  scheduler (built), and a local memory provider.
+- *Phase 6:* grants and audit UI, background mode, on-screen text, OpenCode
+  push, pop-out windows.
 
 **Safety.**
 
@@ -591,7 +599,7 @@ real accounts are checked by hand.
 | 2. Engine daemon + gateway | daemon, MCP gateway with store tools, per-reply hook, first skills | Test 5 | Built |
 | 3. Capture | desk, capture, focus tracker, shortcut and panel, broker basics | Tests 6, 8, 10 | Built |
 | 4. Coding agents | registry, destinations, pull path, T3 Code push adapter | Test 7 | Built |
-| 5. Memory | live lookup, memory provider, refresh job | Tests 11, 12 | In progress |
+| 5. Memory | live lookup, memory provider, refresh job | Tests 11, 12 | Built |
 | 6. Polish | grants and audit UI, background mode, on-screen text, OpenCode push, pop-out windows | Tests 9, 13 | Planned |
 
 ## 9. Prior art

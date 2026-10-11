@@ -2,8 +2,10 @@
 // set up only after the user sees the exact command OpenAgora will run, an
 // agent without a removal command gets instructions instead, and T3 Code is
 // connected on its own approval page, which OpenAgora's window shows with
-// T3's own session and closes once T3 answers. The engine is a stand-in;
-// Rust tests cover its side.
+// T3's own session and closes once T3 answers. Settings → Memory (tests 11
+// and 12, the window's side): Holographic and the digest only after the user
+// sees what runs, and sessions Sunday may read taken back one by one. The
+// engine is a stand-in; Rust tests cover its side.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -45,6 +47,13 @@ async function run() {
         agent('codex', 'Codex', { installed: false }),
         agent('opencode', 'OpenCode', { set_up: true, remove_command: null, remove_by_hand: 'OpenCode has no command to remove an MCP server: remove "openagora" from the "mcp" section of its opencode.json yourself.' }),
       ],
+      memory: {
+        provider: null, digest: false,
+        providers: [{ id: 'holographic', name: 'Holographic', needs: '0.21.5', commands: [
+          'hermes -p sunday plugins install holographic --enable --yes-deps', 'hermes -p sunday memory setup holographic',
+        ] }],
+        sessions: [{ agent: 'claude-code', name: 'Claude Code', always: false }, { agent: 'codex', name: 'Codex', always: false }],
+      },
     }),
   });
   const { app, page } = session;
@@ -111,8 +120,53 @@ async function run() {
   await waitFor(() => !app.windows().some((w) => w.url().includes('/callback') || w.url().startsWith(approve)), 'the approval window to close', 10000);
   const elsewhere = await daemon.ask('oauth/open', { app: 't3code', url: 'https://example.com/oauth' });
   assert.match(elsewhere.error.message, /isn't an approval page on this computer/);
+
+  // Settings → Memory: Holographic only after the user sees Hermes's own
+  // commands, and back to built-in memory.
+  await heading(page, 'Memory');
+  const memory = page.getByRole('list', { name: "Sunday's memory" });
+  const memoryRow = (name) => memory.getByRole('listitem').filter({ hasText: name });
+  assert.match(await memoryRow('Long-term memory').innerText(), /built-in only/);
+  await memoryRow('Long-term memory').getByRole('button', { name: 'Use Holographic…' }).click();
+  const use = page.getByRole('dialog', { name: 'Give Sunday long-term memory with Holographic?' });
+  const told = await use.innerText();
+  assert.match(told, /hermes -p sunday plugins install holographic --enable --yes-deps/);
+  assert.match(told, /hermes -p sunday memory setup holographic/);
+  assert.match(told, /no account, network or model calls/);
+  await use.getByRole('button', { name: 'Cancel' }).click();
+  assert.ok(!(await fakeCalls(app)).some((c) => c[0] === 'memory-use'));
+  await memoryRow('Long-term memory').getByRole('button', { name: 'Use Holographic…' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Use Holographic' }).click();
+  await page.getByRole('status').filter({ hasText: 'Sunday now remembers with Holographic.' }).waitFor();
+  assert.deepEqual((await fakeCalls(app)).at(-1), ['memory-use', 'holographic']);
+  await waitFor(async () => /Holographic: facts in a local database/.test(await memoryRow('Long-term memory').innerText()), 'Holographic to show');
+  await memoryRow('Long-term memory').getByRole('button', { name: 'Turn off…' }).click();
+  assert.match(await page.getByRole('dialog', { name: 'Back to built-in memory?' }).innerText(), /hermes -p sunday memory off/);
+  await page.getByRole('dialog').getByRole('button', { name: 'Turn off' }).click();
+  await page.getByRole('status').filter({ hasText: 'built-in memory only' }).waitFor();
+  assert.deepEqual((await fakeCalls(app)).at(-1), ['memory-off']);
+
+  // The digest says what it reads, and what it costs, before it is on.
+  const sessions = page.getByRole('list', { name: 'Coding sessions Sunday may read' });
+  assert.match(await sessions.innerText(), /Claude Code\s+asks you first/);
+  await memoryRow('Digest').getByRole('button', { name: 'Turn on…' }).click();
+  const digest = page.getByRole('dialog', { name: 'Keep Sunday’s memory up to date?' });
+  const explained = await digest.innerText();
+  assert.match(explained, /in Claude Code, Codex/);
+  assert.match(explained, /-s openagora-memory -t memory,mcp-openagora/);
+  assert.match(explained, /each run costs one turn/);
+  await digest.getByRole('button', { name: 'Turn on' }).click();
+  await page.getByRole('status').filter({ hasText: 'Sunday’s memory digest is on.' }).waitFor();
+  assert.deepEqual((await fakeCalls(app)).at(-1), ['memory-digest', true]);
+  await waitFor(async () => /Codex\s+always/.test(await sessions.innerText()), 'the sessions to show as always allowed');
+  await sessions.getByRole('listitem').filter({ hasText: 'Codex' }).getByRole('button', { name: 'Take back' }).click();
+  await page.getByRole('status').filter({ hasText: 'Sunday asks you before reading your Codex sessions again.' }).waitFor();
+  assert.deepEqual((await fakeCalls(app)).at(-1), ['sessions-revoke', 'codex']);
+  await memoryRow('Digest').getByRole('button', { name: 'Turn off' }).click();
+  await page.getByRole('status').filter({ hasText: 'Sunday’s memory digest is off.' }).waitFor();
+  assert.deepEqual((await fakeCalls(app)).at(-1), ['memory-digest', false]);
   assert.deepEqual(session.errors, []);
-  console.log('Coding agents UI passed: set up with the exact command, manual removal, T3 Code connect, approval window with the app’s session.');
+  console.log('Coding agents and memory UI passed: set up with the exact command, manual removal, T3 Code connect, approval window with the app’s session, Holographic, digest, sessions taken back.');
 }
 
 run().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => {

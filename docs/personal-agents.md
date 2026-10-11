@@ -286,16 +286,23 @@ goes to the model provider it uses. You can allow an agent ahead of time, or
 take it back, with `openagora sessions allow <agent>` and `openagora sessions
 revoke <agent>`; every read is in the audit log.
 
-**Keeping Sunday's memory up to date (optional).** Turn on the digest with
-`openagora sunday memory digest on`: every two hours, a job in Sunday's own
-scheduler (Hermes's `cron`) has Sunday read what changed in your sessions and
-save what's worth remembering, such as decisions, conventions and open
-problems, never code or secrets. While OpenAgora runs, it runs Sunday's due jobs
-itself, so this works without Hermes's messaging gateway. `openagora sunday
-memory` shows where it stands; `digest off` removes the job.
+**Long-term memory.** Sunday's memory is Hermes's: its built-in memory
+(MEMORY.md and USER.md) is always on and stays across restarts, but holds only a
+few dozen facts. For more, use **Holographic** in **Settings → Memory** (or
+`openagora sunday memory use holographic`): a local database of facts in
+Sunday's profile, with no account, network or model calls. OpenAgora shows you
+Hermes's own commands first, and runs them for Sunday's profile only. It needs
+Hermes 0.21.5 or later. **Turn off** goes back to built-in memory; Holographic's
+facts stay, for when you turn it on again.
 
-Sunday's memory is Hermes's: its built-in memory (MEMORY.md and USER.md) is
-always on and stays across restarts.
+**Keeping Sunday's memory up to date (optional).** Turn on the **digest** in
+Settings → Memory (or `openagora sunday memory digest on`): every two hours
+while OpenAgora runs, if one of your sessions changed, Sunday reads what changed
+and saves what's worth remembering, such as decisions, conventions and open
+problems, never code or secrets. It runs as one turn of Sunday's with only its
+memory and OpenAgora's tools, and each run costs one turn with your model
+provider. Turning it on lets Sunday always read the sessions it covers; take
+that back per agent in Settings → Memory.
 
 ## Home screen and settings
 
@@ -329,21 +336,26 @@ profile named `sunday` that OpenAgora didn't set up is never deleted.
 
 ## Verification and limits
 
-Phase 5 (memory, in progress): Rust tests write sessions the way Claude Code,
+Phase 5 (memory): Rust tests write sessions the way Claude Code,
 Codex (both of its formats), OpenCode (1 and 2, in one SQLite file) and T3 Code
 (its MCP tools) keep them, and check test 11: the command line lists them all;
 Sunday is asked about per agent and reads only what was allowed (always, once,
 or not at all); prompts and final answers come back, never tool output,
 subagents, Codex's commentary or Claude Code's own notes; old sessions stay out;
 one session reads in full; nothing is read without the window unless always
-allowed; and the audit rows. For test 12, OpenAgora's part: the digest goes into
-Sunday's own scheduler only after a yes, runs while OpenAgora runs and across a
-restart, Sunday's memory file is untouched, and every Hermes call is for
-Sunday's profile.
+allowed; and the audit rows. For test 12, OpenAgora's part, against a stand-in
+Hermes: Holographic set up only after a yes and only on Hermes 0.21.5 or later,
+with Hermes's own commands; the digest a one-shot turn with only memory and
+OpenAgora's tools, run while OpenAgora runs, only when a session changed, picking
+up across a restart from where it stopped; Sunday's memory file untouched;
+every Hermes call for Sunday's profile and nothing outside it changed. A UI test
+covers Settings → Memory.
 
 Not tested automatically, and to be checked by hand: real Claude Code, Codex and
-OpenCode sessions on each OS (their formats change between versions), and
-Sunday answering "what did I do today?" from them.
+OpenCode sessions on each OS (their formats change between versions); Sunday
+answering "what did I do today?" from them; Holographic installing into a real
+Hermes and recalling a decision after a restart; a real digest turn saving
+facts.
 
 Phase 4 (coding agents): Rust tests run the engine against stand-ins for Claude
 Code, Codex and OpenCode (scripts that record every call) and for T3 Code's

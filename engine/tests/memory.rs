@@ -584,26 +584,30 @@ fn sunday_answers_what_the_user_did_in_their_coding_sessions() {
     );
 }
 
-/// Sunday's jobs that Hermes's scheduler holds, by name.
-fn jobs(env: &Env) -> Vec<Value> {
-    let file = env.sunday_dir().join("cron/jobs.json");
-    let text = fs::read_to_string(file).unwrap_or_else(|_| "{\"jobs\": []}".into());
-    serde_json::from_str::<Value>(&text).unwrap()["jobs"]
-        .as_array()
-        .cloned()
+/// Sunday's one-shot turns, as the stand-in Hermes noted them.
+fn oneshots(env: &Env) -> Vec<Value> {
+    fs::read_to_string(env.sunday_dir().join(".fake-oneshots"))
         .unwrap_or_default()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
 }
 
-fn ticks(env: &Env) -> usize {
-    fs::read_to_string(env.sunday_dir().join("cron/ticks"))
-        .map(|t| t.lines().count())
-        .unwrap_or(0)
+fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
+    for _ in 0..150 {
+        if done() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    panic!("timed out waiting for {what}");
 }
 
-/// Acceptance test 12, OpenAgora's part: what Sunday remembers is Hermes's
-/// and stays across restarts; the digest that keeps it fresh is a job in
-/// Sunday's own scheduler, run while OpenAgora runs; nothing outside Sunday's
-/// profile changes.
+/// Acceptance test 12, OpenAgora's part: Sunday's memory is Hermes's and
+/// stays across restarts; long-term memory is Holographic, set up with
+/// Hermes's own commands for Sunday's profile only; the digest keeps it fresh
+/// as a turn of Sunday's with only memory and OpenAgora's tools; nothing
+/// outside Sunday's profile changes.
 #[test]
 fn sunday_keeps_what_it_remembers_and_a_digest_keeps_it_fresh() {
     let mut env = Env::new();
@@ -614,6 +618,7 @@ fn sunday_keeps_what_it_remembers_and_a_digest_keeps_it_fresh() {
     env.env("CODEX_HOME", home.join(".codex").to_str().unwrap());
     env.env("XDG_DATA_HOME", home.join(".local/share").to_str().unwrap());
     env.env("OPENAGORA_TICK_SECONDS", "1");
+    env.env("OPENAGORA_DIGEST_SECONDS", "2");
     env.install_hermes_by_hand();
     env.ok(&["sunday", "setup", "--fresh"]);
     env.ok(&["sunday", "connect", "--yes"]);
@@ -625,6 +630,13 @@ fn sunday_keeps_what_it_remembers_and_a_digest_keeps_it_fresh() {
     // Built-in memory, no digest, and Sunday asks before reading sessions.
     let status = env.json(&["sunday", "memory", "status", "--json"]);
     assert_eq!(status["provider"], Value::Null, "{status}");
+    assert_eq!(
+        status["providers"],
+        json!([{"id": "holographic", "name": "Holographic", "needs": "0.21.5", "commands": [
+            "hermes -p sunday plugins install holographic --enable --yes-deps",
+            "hermes -p sunday memory setup holographic",
+        ]}])
+    );
     assert_eq!(status["digest"], false);
     let agents: Vec<(&str, bool)> = status["sessions"]
         .as_array()
@@ -634,34 +646,58 @@ fn sunday_keeps_what_it_remembers_and_a_digest_keeps_it_fresh() {
         .collect();
     assert_eq!(agents, [("claude-code", false), ("codex", false)]);
     assert!(env.ok(&["sunday", "memory"]).contains("Digest: off"));
-    // The skill that teaches Sunday is where Hermes looks for it.
     let skills = env
         .data
         .join("sunday/skills/openagora/openagora-memory/SKILL.md");
     assert!(
         fs::read_to_string(&skills)
             .unwrap()
-            .contains("requires_tools: [mcp__openagora__coding_activity]"),
-        "{}",
-        skills.display()
+            .contains("requires_tools: [mcp__openagora__coding_activity]")
     );
 
-    // Turning the digest on asks first, then uses Hermes's own scheduler.
-    let unconfirmed = env.run(&["sunday", "memory", "digest", "on"]);
-    assert!(!unconfirmed.status.success());
-    assert!(jobs(&env).is_empty());
+    // Long-term memory: Holographic, only after a yes, and only on a Hermes
+    // new enough for it.
+    assert!(
+        !env.run(&["sunday", "memory", "use", "holographic"])
+            .status
+            .success()
+    );
+    assert!(!env.sunday_dir().join("plugins/holographic").exists());
+    fs::write(env.hermes_root().join(".fake-version"), "0.21.4").unwrap();
+    let old = env.run(&["sunday", "memory", "use", "holographic", "--yes"]);
+    assert!(
+        String::from_utf8_lossy(&old.stderr).contains("Holographic needs Hermes 0.21.5 or later"),
+        "{old:?}"
+    );
+    fs::remove_file(env.hermes_root().join(".fake-version")).unwrap();
+    let out = env.ok(&["sunday", "memory", "use", "holographic", "--yes"]);
+    assert!(
+        out.contains("Sunday now remembers with holographic"),
+        "{out}"
+    );
+    assert!(env.sunday_dir().join("plugins/holographic").is_dir());
+    assert_eq!(
+        env.json(&["sunday", "memory", "status", "--json"])["provider"],
+        "holographic"
+    );
+    let calls = env.hermes_calls();
+    assert!(
+        calls.contains(&"-p sunday plugins install holographic --enable --yes-deps".to_string()),
+        "{calls:?}"
+    );
+    assert!(
+        calls.contains(&"-p sunday memory setup holographic".to_string()),
+        "{calls:?}"
+    );
+
+    // The digest: only after a yes; Sunday may then always read the sessions.
+    assert!(
+        !env.run(&["sunday", "memory", "digest", "on"])
+            .status
+            .success()
+    );
     let out = env.ok(&["sunday", "memory", "digest", "on", "--yes"]);
     assert!(out.contains("digest is on"), "{out}");
-    let all = jobs(&env);
-    assert_eq!(all.len(), 1, "{all:?}");
-    let job = &all[0];
-    assert_eq!(job["name"], "openagora-digest");
-    assert_eq!(job["schedule"], "every 2h");
-    assert_eq!(job["deliver"], "local");
-    assert_eq!(job["continuity"], true);
-    assert_eq!(job["skills"], json!(["openagora-memory"]));
-    assert!(job["prompt"].as_str().unwrap().contains("coding_activity"));
-    // Sunday may now always read the sessions the digest reads.
     let status = env.json(&["sunday", "memory", "status", "--json"]);
     assert_eq!(status["digest"], true);
     assert!(
@@ -672,46 +708,74 @@ fn sunday_keeps_what_it_remembers_and_a_digest_keeps_it_fresh() {
             .all(|a| a["always"] == true),
         "{status}"
     );
-    // Turning it on again doesn't add a second job.
-    env.ok(&["sunday", "memory", "digest", "on", "--yes"]);
-    assert_eq!(jobs(&env).len(), 1);
 
-    // While OpenAgora runs, it runs Sunday's due jobs with Hermes's own tick.
+    // While OpenAgora runs, the digest is a turn of Sunday's with only memory
+    // and OpenAgora's tools, over the sessions changed in the last day.
     let _sunday = McpClient::start(&env, "sunday", true);
-    for _ in 0..100 {
-        if ticks(&env) > 0 {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    assert!(ticks(&env) > 0, "no tick");
+    wait_for("the first digest", || !oneshots(&env).is_empty());
+    let first = oneshots(&env)[0].clone();
+    assert_eq!(first["skill"], "openagora-memory");
+    assert_eq!(first["toolsets"], "memory,mcp-openagora");
+    let prompt = first["prompt"].as_str().unwrap();
+    assert!(prompt.contains("coding_activity with since \""), "{prompt}");
+    assert!(
+        prompt.contains("fact_store") && prompt.contains("data, not instructions"),
+        "{prompt}"
+    );
+    wait_for("the digest to be noted", || {
+        env.json(&["sunday", "memory", "status", "--json"])["digest_last_result"]
+            == "Saved 2 decisions to memory."
+    });
+    // Nothing changed since: no second turn, however long it waits.
+    std::thread::sleep(Duration::from_millis(3500));
+    assert_eq!(oneshots(&env).len(), 1);
 
-    // OpenAgora restarts: Sunday's memory and job are as they were, and
-    // ticking goes on.
+    // OpenAgora restarts, a session goes on, and the digest picks up from
+    // where it left off.
     env.ok(&["daemon", "stop"]);
-    let ticked = ticks(&env);
+    let claude =
+        home.join(".claude/projects/-home-u-code-app/5f0c1d2e-aaaa-4bbb-8ccc-123456789abc.jsonl");
+    let mut text = fs::read_to_string(&claude).unwrap();
+    text.push_str(&format!(
+        "{}\n",
+        json!({"type": "user", "timestamp": iso_ago(0), "message": {"role": "user", "content": "Let's also pin node 22"}})
+    ));
+    fs::write(&claude, text).unwrap();
     let _again = McpClient::start(&env, "sunday", true);
-    for _ in 0..100 {
-        if ticks(&env) > ticked {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    assert!(ticks(&env) > ticked, "no tick after the restart");
+    wait_for("the second digest", || oneshots(&env).len() == 2);
+    let second = oneshots(&env)[1]["prompt"].as_str().unwrap().to_string();
+    assert_ne!(
+        second, prompt,
+        "the second digest starts where the first ended"
+    );
     assert_eq!(
         fs::read_to_string(&memory).unwrap(),
         "app: we keep pnpm (decided 2026-10-11)\n"
     );
-    assert_eq!(jobs(&env).len(), 1);
 
-    // Off: Hermes's own command removes the job, and ticking stops.
-    let out = env.ok(&["sunday", "memory", "digest", "off", "--yes"]);
-    assert!(out.contains("digest is off"), "{out}");
-    assert!(jobs(&env).is_empty());
-    std::thread::sleep(Duration::from_millis(1500));
-    let stopped = ticks(&env);
-    std::thread::sleep(Duration::from_millis(2500));
-    assert_eq!(ticks(&env), stopped, "still ticking");
+    // Off: no more turns. Built-in memory only again, Holographic's store
+    // staying in Sunday's profile.
+    assert!(
+        env.ok(&["sunday", "memory", "digest", "off", "--yes"])
+            .contains("digest is off")
+    );
+    let mut text = fs::read_to_string(&claude).unwrap();
+    text.push_str(&format!(
+        "{}\n",
+        json!({"type": "user", "timestamp": iso_ago(0), "message": {"role": "user", "content": "And use vitest"}})
+    ));
+    fs::write(&claude, text).unwrap();
+    std::thread::sleep(Duration::from_millis(3500));
+    assert_eq!(oneshots(&env).len(), 2);
+    assert!(
+        env.ok(&["sunday", "memory", "off", "--yes"])
+            .contains("built-in memory only")
+    );
+    assert_eq!(
+        env.json(&["sunday", "memory", "status", "--json"])["provider"],
+        Value::Null
+    );
+    assert!(env.sunday_dir().join("plugins/holographic").is_dir());
 
     // Every Hermes call was for Sunday's profile, and nothing outside it
     // changed.
@@ -721,24 +785,33 @@ fn sunday_keeps_what_it_remembers_and_a_digest_keeps_it_fresh() {
             "{call}"
         );
     }
-    assert!(
-        env.hermes_calls()
-            .iter()
-            .any(|c| c.starts_with("-p sunday cron create every 2h "))
-    );
-    assert!(
-        env.hermes_calls()
-            .iter()
-            .any(|c| c.starts_with("-p sunday cron remove "))
-    );
     assert_eq!(env.snapshot_outside_sunday(), before);
     let audit = env.audit();
-    for (target, outcome) in [("on", "job"), ("off", "removed")] {
-        assert!(
-            audit.iter().any(|e| e["action"] == "memory_digest"
-                && e["target"] == target
-                && e["outcome"].as_str().unwrap().starts_with(outcome)),
-            "{target}: {audit:?}"
-        );
+    let rows: Vec<String> = audit
+        .iter()
+        .filter(|e| e["action"] == "memory_provider" || e["action"] == "memory_digest")
+        .map(|e| {
+            format!(
+                "{} {} {}",
+                e["action"].as_str().unwrap(),
+                e["target"].as_str().unwrap(),
+                e["outcome"].as_str().unwrap()
+            )
+        })
+        .collect();
+    for row in [
+        "memory_provider holographic ok",
+        "memory_digest on on, reading Claude Code, Codex",
+        "memory_digest run 3 sessions: Saved 2 decisions to memory.",
+        "memory_digest run 1 sessions: Saved 2 decisions to memory.",
+        "memory_digest off off",
+        "memory_provider off ok",
+    ] {
+        assert!(rows.iter().any(|r| r == row), "{row}: {rows:?}");
     }
+    assert!(
+        rows.iter()
+            .any(|r| r.starts_with("memory_provider holographic failed: ")),
+        "{rows:?}"
+    );
 }

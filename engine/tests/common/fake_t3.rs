@@ -536,7 +536,8 @@ fn call(s: &mut State, tool: &str, args: &Value) -> Value {
 pub fn iso_ago(seconds: u64) -> String {
     let at = openagora::state::now().saturating_sub(seconds);
     format!(
-        "{}:00.000Z",
-        openagora::sessions::stamp(at).replace(' ', "T")
+        "{}:{:02}.000Z",
+        openagora::sessions::stamp(at).replace(' ', "T"),
+        at % 60
     )
 }

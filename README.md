@@ -10,8 +10,11 @@ An open-source app store for your desktop.
   profile of its own, so a Hermes you already use is left exactly as it is.
   Sunday's home screen, setup and settings are Hermes's own; OpenAgora never sees
   your keys or sign-ins. Sunday can find, install and open apps from the store for
-  you, and OpenAgora asks you first every time. Carrying your work to coding agents
-  is coming next. Other personal agents are coming soon. See [Sunday](docs/personal-agents.md).
+  you, and OpenAgora asks you first every time. Press **Ctrl+Shift+Space**
+  (**Command+Shift+Space** on a Mac) in any app to call Sunday over it; Sunday sees
+  that app's window only if you allowed the app, and never sees password managers
+  or private browser windows. Carrying your work to coding agents is coming next.
+  Other personal agents are coming soon. See [Sunday](docs/personal-agents.md).
 
 ## Download
 

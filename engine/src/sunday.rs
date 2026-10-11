@@ -440,10 +440,16 @@ pub fn setup(
 }
 
 /// Skills OpenAgora ships for Sunday, as (path under the skills folder, text).
-const SKILLS: &[(&str, &str)] = &[(
-    "openagora/openagora-apps/SKILL.md",
-    include_str!("../../sunday/skills/openagora-apps/SKILL.md"),
-)];
+const SKILLS: &[(&str, &str)] = &[
+    (
+        "openagora/openagora-apps/SKILL.md",
+        include_str!("../../sunday/skills/openagora-apps/SKILL.md"),
+    ),
+    (
+        "openagora/openagora-desk/SKILL.md",
+        include_str!("../../sunday/skills/openagora-desk/SKILL.md"),
+    ),
+];
 
 /// The hook command Hermes runs before each of Sunday's replies.
 fn hook_command(exe: &Path) -> String {

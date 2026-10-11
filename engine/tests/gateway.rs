@@ -5,12 +5,9 @@
 
 mod common;
 
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
-use std::sync::mpsc;
-use std::time::Duration;
+use std::io::Write;
 
-use common::{Env, McpClient};
+use common::{Desktop, Env, McpClient};
 use serde_json::{Value, json};
 
 fn has_python() -> bool {
@@ -29,61 +26,6 @@ fn answering<'a>(
         assert_eq!(request["method"], "elicitation/create", "{request}");
         asked.push(request["params"]["message"].as_str().unwrap().to_string());
         json!({"action": action, "content": {}})
-    }
-}
-
-/// OpenAgora's window, connected to the engine service.
-struct Desktop {
-    stream: UnixStream,
-    incoming: mpsc::Receiver<Value>,
-}
-
-impl Desktop {
-    fn connect(env: &Env) -> Desktop {
-        let mut stream = UnixStream::connect(env.socket()).unwrap();
-        writeln!(
-            stream,
-            "{}",
-            json!({"hello": {"role": "desktop", "client": "desktop"}})
-        )
-        .unwrap();
-        let reader = BufReader::new(stream.try_clone().unwrap());
-        let (tx, incoming) = mpsc::channel();
-        std::thread::spawn(move || {
-            for line in reader.lines().map_while(Result::ok) {
-                if tx
-                    .send(serde_json::from_str::<Value>(&line).unwrap())
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
-        // Make sure the engine has registered the window before going on.
-        writeln!(
-            stream,
-            "{}",
-            json!({"jsonrpc": "2.0", "id": "p", "method": "ping"})
-        )
-        .unwrap();
-        let pong = incoming.recv_timeout(Duration::from_secs(10)).unwrap();
-        assert_eq!(pong["id"], "p");
-        Desktop { stream, incoming }
-    }
-
-    fn next(&self) -> Value {
-        self.incoming
-            .recv_timeout(Duration::from_secs(30))
-            .expect("nothing from the engine")
-    }
-
-    fn reply(&mut self, id: &Value, result: Value) {
-        writeln!(
-            self.stream,
-            "{}",
-            json!({"jsonrpc": "2.0", "id": id, "result": result})
-        )
-        .unwrap();
     }
 }
 
@@ -171,7 +113,7 @@ fn sunday_installs_starts_and_opens_an_app_only_after_the_user_confirms() {
     // With OpenAgora's window open, app_open shows the app in its tab.
     let (not_open, _) = sunday.call("app_open", json!({"id": "notes"}), &mut no_questions);
     assert!(not_open.contains("window isn't open"), "{not_open}");
-    let desktop = Desktop::connect(&env);
+    let mut desktop = Desktop::connect(&env);
     let (opened, error) = sunday.call("app_open", json!({"id": "notes"}), &mut no_questions);
     assert!(!error && opened.contains("Opened Web notes"), "{opened}");
     let note = desktop.next();
@@ -414,6 +356,8 @@ fn connecting_sunday_uses_hermess_own_config_command_on_sundays_profile_only() {
     );
     let skill = std::fs::read_to_string(skills.join("openagora/openagora-apps/SKILL.md")).unwrap();
     assert!(skill.contains("requires_tools: [mcp__openagora__store_search]"));
+    let desk = std::fs::read_to_string(skills.join("openagora/openagora-desk/SKILL.md")).unwrap();
+    assert!(desk.contains("requires_tools: [mcp__openagora__capture_window]"));
     assert_eq!(env.json(&["sunday", "status", "--json"])["connected"], true);
     // Connecting twice changes nothing more.
     env.ok(&["sunday", "connect", "--yes"]);

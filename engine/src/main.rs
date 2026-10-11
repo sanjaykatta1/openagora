@@ -7,7 +7,7 @@ use openagora::catalog::{Catalog, load_listing};
 use openagora::manifest::{Arch, Manifest, Os, Role};
 use openagora::paths::Paths;
 use openagora::sunday::{self, MIN_VERSION, Start};
-use openagora::{audit, context, daemon, ipc};
+use openagora::{audit, broker, context, daemon, desk, focus, ipc, state};
 use std::io::{BufRead, IsTerminal, Write};
 
 #[derive(Parser)]
@@ -110,7 +110,29 @@ enum Cmd {
         #[arg(long, default_value = "sunday")]
         client: String,
     },
-    /// Show the audit log: every app action, with who asked and who confirmed.
+    /// Which windows are in front, and whether OpenAgora may capture them.
+    Focus {
+        /// Print JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// The desk: what you and Sunday share. Items are kept for 24 hours.
+    Desk {
+        #[command(subcommand)]
+        action: Option<DeskCmd>,
+    },
+    /// The apps you allowed Sunday to see.
+    Grants {
+        #[command(subcommand)]
+        action: Option<GrantsCmd>,
+    },
+    /// The never-capture list: apps and windows OpenAgora never captures.
+    Never {
+        #[command(subcommand)]
+        action: Option<NeverCmd>,
+    },
+    /// Show the audit log: every app action and capture, with who asked and
+    /// who confirmed.
     Audit {
         /// Number of entries.
         #[arg(short = 'n', long, default_value_t = 50)]
@@ -119,6 +141,82 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum DeskCmd {
+    /// List what's on the desk (the default).
+    List {
+        /// Print JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Describe one item, or save its contents with --out.
+    Show {
+        id: String,
+        /// Write the item's contents to this file.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Put text, a link or a file on the desk for Sunday.
+    Add {
+        /// Text (or a link) to share.
+        #[arg(long, conflicts_with = "file")]
+        text: Option<String>,
+        /// A file to share.
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+    /// Take one item off the desk.
+    Remove { id: String },
+    /// Clear the desk.
+    Clear,
+}
+
+#[derive(Subcommand)]
+enum GrantsCmd {
+    /// List what you allowed (the default).
+    List {
+        /// Print JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Let Sunday see an app's windows. APP is the app's key, as `openagora
+    /// focus` shows it (a bundle id, an executable or a window class).
+    Allow {
+        app: String,
+        /// The app's name, for people.
+        #[arg(long)]
+        name: Option<String>,
+        /// For the next capture only.
+        #[arg(long)]
+        once: bool,
+    },
+    /// Take back what you allowed for an app (by key or name).
+    Revoke { app: String },
+}
+
+#[derive(Subcommand)]
+enum NeverCmd {
+    /// Show the built-in list and your own rules (the default).
+    List {
+        /// Print JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Never capture an app, or windows whose title has certain words.
+    Add {
+        /// A name for the rule.
+        name: String,
+        /// An app's name or key. Repeat for more.
+        #[arg(long = "app")]
+        apps: Vec<String>,
+        /// Words in a window title. Repeat for more.
+        #[arg(long = "title")]
+        titles: Vec<String>,
+    },
+    /// Remove one of your own rules.
+    Remove { name: String },
 }
 
 #[derive(Subcommand)]
@@ -183,6 +281,7 @@ enum SundayCmd {
 }
 
 fn main() -> ExitCode {
+    openagora::process::stop_fd_inheritance();
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -429,8 +528,6 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             daemon::bridge(&Paths::from_env()?, cli.catalog.as_deref(), &client)?;
         }
         Cmd::Context { hook, client } => {
-            let catalog = load_catalog(&cli.catalog)?;
-            let engine = Engine::new()?;
             let payload = if hook {
                 let mut input = String::new();
                 std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
@@ -438,11 +535,298 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             } else {
                 serde_json::json!({"extra": {"is_first_turn": true}})
             };
-            let text = context::for_turn(&engine, &catalog, &client, &payload)?;
+            // The running engine also knows the user's screen; without it,
+            // the hook says the rest.
+            let text = match context_from_service(&Paths::from_env()?, &client, &payload) {
+                Some(text) => text,
+                None => {
+                    let catalog = load_catalog(&cli.catalog)?;
+                    let engine = Engine::new()?;
+                    let live = context::Live::default();
+                    context::for_turn(&engine, &catalog, &client, &payload, &live)?
+                }
+            };
             match (hook, text) {
                 (true, Some(text)) => println!("{}", serde_json::json!({ "context": text })),
                 (true, None) => {}
                 (false, text) => println!("{}", text.unwrap_or_default()),
+            }
+        }
+        Cmd::Focus { json } => {
+            let paths = Paths::from_env()?;
+            let windows = focus::windows().map_err(|why| anyhow::anyhow!(why))?;
+            let rows = windows
+                .iter()
+                .map(|w| {
+                    let source = broker::Source {
+                        app: &w.app,
+                        key: &w.key,
+                        title: w.title.as_deref(),
+                        exe: w.exe.as_deref(),
+                    };
+                    let never = broker::never(&paths, &source)?;
+                    let allowed =
+                        broker::allowed(&paths, "sunday", &w.key, "sunday", broker::IMAGES)?;
+                    Ok((w, never, allowed))
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            if json {
+                let items: Vec<serde_json::Value> = rows
+                    .iter()
+                    .map(|(w, never, allowed)| {
+                        let mut v = serde_json::to_value(w).unwrap_or_default();
+                        v["never"] = serde_json::json!(never);
+                        v["allowed"] = serde_json::json!(allowed);
+                        v
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&items)?);
+            } else if rows.is_empty() {
+                println!("No windows on screen.");
+            } else {
+                println!("Front to back:");
+                for (w, never, allowed) in rows {
+                    let state = match (never, allowed) {
+                        (Some(rule), _) => format!("never captured ({rule})"),
+                        (None, Some(broker::Scope::Always)) => "Sunday may see it".into(),
+                        (None, Some(broker::Scope::Once)) => "allowed once".into(),
+                        (None, None) => "not allowed".into(),
+                    };
+                    println!(
+                        "  {} [{}] {}: {state}",
+                        w.app,
+                        w.key,
+                        w.title
+                            .as_deref()
+                            .map(|t| format!("\u{201c}{t}\u{201d}"))
+                            .unwrap_or_else(|| "(title hidden)".into())
+                    );
+                }
+            }
+        }
+        Cmd::Desk { action } => {
+            let paths = Paths::from_env()?;
+            match action.unwrap_or(DeskCmd::List { json: false }) {
+                DeskCmd::List { json } => {
+                    let items = desk::list(&paths)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&items)?);
+                    } else if items.is_empty() {
+                        println!("The desk is empty.");
+                    } else {
+                        for item in items {
+                            println!(
+                                "{}  {}  (for {}; until {})",
+                                item.id,
+                                item.describe(),
+                                item.shared_with.join(", "),
+                                item.expires_at
+                            );
+                        }
+                    }
+                }
+                DeskCmd::Show { id, out } => {
+                    let item = desk::get(&paths, &id)?
+                        .ok_or_else(|| anyhow::anyhow!("there's no desk item {id}"))?;
+                    match out {
+                        Some(out) => {
+                            std::fs::write(&out, desk::payload(&paths, &item)?)?;
+                            println!("Saved {} to {}.", item.id, out.display());
+                        }
+                        None => println!("{}", serde_json::to_string_pretty(&item)?),
+                    }
+                }
+                DeskCmd::Add { text, file } => {
+                    let new = match (text, file) {
+                        (Some(text), _) => {
+                            let link = text.starts_with("https://") || text.starts_with("http://");
+                            desk::New {
+                                kind: if link {
+                                    desk::Kind::Link
+                                } else {
+                                    desk::Kind::Text
+                                },
+                                mime: if link { "text/uri-list" } else { "text/plain" }.into(),
+                                source: desk::Source {
+                                    app: "Command line".into(),
+                                    ..Default::default()
+                                },
+                                shared_with: vec!["sunday".into()],
+                                added_by: "user".into(),
+                                bytes: text.into_bytes(),
+                                name: None,
+                            }
+                        }
+                        (None, Some(file)) => {
+                            let bytes = std::fs::read(&file)?;
+                            let picture = desk::image_type(&bytes);
+                            desk::New {
+                                kind: if picture.is_some() {
+                                    desk::Kind::Image
+                                } else {
+                                    desk::Kind::File
+                                },
+                                mime: picture.unwrap_or("application/octet-stream").into(),
+                                source: desk::Source {
+                                    app: "Files".into(),
+                                    ..Default::default()
+                                },
+                                shared_with: vec!["sunday".into()],
+                                added_by: "user".into(),
+                                bytes,
+                                name: file.file_name().map(|n| n.to_string_lossy().into_owned()),
+                            }
+                        }
+                        (None, None) => anyhow::bail!("give --text or --file"),
+                    };
+                    let item = desk::add(&paths, new)?;
+                    let mut entry = audit::Entry::new("user", "desk_add", &item.source.app);
+                    entry.via = Some("command line".into());
+                    entry.outcome = item.id.clone();
+                    audit::record(&paths, &entry)?;
+                    println!(
+                        "Put {} on the desk for Sunday: {}.",
+                        item.id,
+                        item.describe()
+                    );
+                }
+                DeskCmd::Remove { id } => {
+                    if desk::remove(&paths, &id)? {
+                        println!("Took {id} off the desk.");
+                    } else {
+                        println!("There's no desk item {id}.");
+                    }
+                }
+                DeskCmd::Clear => {
+                    let count = desk::clear(&paths)?;
+                    let mut entry = audit::Entry::new("user", "desk_clear", "desk");
+                    entry.via = Some("command line".into());
+                    entry.outcome = format!("{count} item(s)");
+                    audit::record(&paths, &entry)?;
+                    println!("Cleared the desk ({count} item(s)).");
+                }
+            }
+        }
+        Cmd::Grants { action } => {
+            let paths = Paths::from_env()?;
+            match action.unwrap_or(GrantsCmd::List { json: false }) {
+                GrantsCmd::List { json } => {
+                    let grants = broker::grants(&paths)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&grants)?);
+                    } else if grants.is_empty() {
+                        println!("Sunday isn't allowed to see any app yet.");
+                    } else {
+                        for g in grants {
+                            println!(
+                                "{} [{}]: {} may see it ({:?}, {})",
+                                g.source_name, g.source, g.client, g.scope, g.family
+                            );
+                        }
+                    }
+                }
+                GrantsCmd::Allow { app, name, once } => {
+                    let name = name.unwrap_or_else(|| app.clone());
+                    let source = broker::Source {
+                        app: &name,
+                        key: &app,
+                        title: None,
+                        exe: None,
+                    };
+                    if let Some(rule) = broker::never(&paths, &source)? {
+                        anyhow::bail!("{name} is on the never-capture list ({rule})");
+                    }
+                    let scope = if once {
+                        broker::Scope::Once
+                    } else {
+                        broker::Scope::Always
+                    };
+                    broker::grant(
+                        &paths,
+                        broker::Grant {
+                            client: "sunday".into(),
+                            source: app.clone(),
+                            source_name: name.clone(),
+                            destination: "sunday".into(),
+                            family: broker::IMAGES.into(),
+                            scope,
+                            granted_at: state::now(),
+                        },
+                    )?;
+                    let mut entry = audit::Entry::new("user", "allow_app", &app);
+                    entry.decision = "confirmed".into();
+                    entry.via = Some("command line".into());
+                    entry.outcome = if once { "once" } else { "always" }.into();
+                    audit::record(&paths, &entry)?;
+                    println!("Sunday may now see {name}.");
+                }
+                GrantsCmd::Revoke { app } => {
+                    let removed = broker::revoke(&paths, &app)?;
+                    let mut entry = audit::Entry::new("user", "revoke", &app);
+                    entry.via = Some("command line".into());
+                    entry.outcome = format!("{removed} grant(s)");
+                    audit::record(&paths, &entry)?;
+                    if removed == 0 {
+                        println!("Nothing was allowed for {app}.");
+                    } else {
+                        println!("Sunday may no longer see {app}.");
+                    }
+                }
+            }
+        }
+        Cmd::Never { action } => {
+            let paths = Paths::from_env()?;
+            match action.unwrap_or(NeverCmd::List { json: false }) {
+                NeverCmd::List { json } => {
+                    let built_in = broker::built_in();
+                    let own = broker::user_rules(&paths)?;
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(
+                                &serde_json::json!({"built_in": built_in, "user": own})
+                            )?
+                        );
+                    } else {
+                        println!("Built in:");
+                        for r in built_in {
+                            println!("  {}", r.name);
+                        }
+                        println!("Yours:");
+                        if own.is_empty() {
+                            println!("  (none)");
+                        }
+                        for r in own {
+                            let mut parts = r.apps.clone();
+                            parts.extend(r.titles.iter().map(|t| format!("title: {t}")));
+                            println!("  {} ({})", r.name, parts.join(", "));
+                        }
+                    }
+                }
+                NeverCmd::Add { name, apps, titles } => {
+                    broker::add_rule(
+                        &paths,
+                        broker::Rule {
+                            name: name.clone(),
+                            apps,
+                            titles,
+                        },
+                    )?;
+                    let mut entry = audit::Entry::new("user", "never_add", &name);
+                    entry.via = Some("command line".into());
+                    audit::record(&paths, &entry)?;
+                    println!("OpenAgora will never capture {name}.");
+                }
+                NeverCmd::Remove { name } => {
+                    if broker::remove_rule(&paths, &name)? {
+                        let mut entry = audit::Entry::new("user", "never_remove", &name);
+                        entry.via = Some("command line".into());
+                        audit::record(&paths, &entry)?;
+                        println!("Removed {name} from your never-capture list.");
+                    } else {
+                        println!("Your never-capture list has no {name}.");
+                    }
+                }
             }
         }
         Cmd::Audit { lines, json } => {
@@ -507,6 +891,40 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Asks the running engine for the hook's text. None when it isn't running
+/// or doesn't answer in time.
+fn context_from_service(
+    paths: &Paths,
+    client: &str,
+    payload: &serde_json::Value,
+) -> Option<Option<String>> {
+    let mut stream = ipc::connect(paths).ok()?;
+    ipc::hello(&mut stream, "hook", client).ok()?;
+    let request = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "context/turn",
+        "params": {"payload": payload},
+    });
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let answer = (|| -> anyhow::Result<Option<String>> {
+            writeln!(stream, "{request}")?;
+            stream.flush()?;
+            let mut reader = std::io::BufReader::new(stream);
+            let reply = ipc::read_message(&mut reader)?
+                .ok_or_else(|| anyhow::anyhow!("the engine closed the connection"))?;
+            if let Some(error) = reply.get("error") {
+                anyhow::bail!("{}", error["message"]);
+            }
+            Ok(reply["result"]["context"].as_str().map(str::to_string))
+        })();
+        let _ = tx.send(answer);
+    });
+    // Hermes gives the hook 20 seconds; leave time for the fallback.
+    rx.recv_timeout(std::time::Duration::from_secs(12))
+        .ok()?
+        .ok()
 }
 
 fn listing<'a>(catalog: &'a Catalog, id: &str) -> anyhow::Result<&'a Manifest> {

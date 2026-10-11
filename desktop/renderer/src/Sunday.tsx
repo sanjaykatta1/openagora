@@ -266,6 +266,7 @@ export function SundaySettings(props: {
   onOpenPage: (route: string) => void;
   onChangeAgent: () => void;
   onRemove: () => void;
+  children?: React.ReactNode;
 }) {
   const { status } = props;
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -316,6 +317,8 @@ export function SundaySettings(props: {
         {error && <p role="alert" className="agent-error">{error}</p>}
       </>}
     </div>
+
+    {props.children}
 
     <div className="panel">
       <h3>Personal agent</h3>

@@ -1,6 +1,6 @@
 # OpenAgora: specification
 
-Status: draft v0.2, 2026-10-11. The personal agent is **Sunday**, built from
+Status: draft v0.3, 2026-10-11. The personal agent is **Sunday**, built from
 Hermes ([issue #9](https://github.com/sanjaykatta1/openagora/issues/9)). Sections
 mark what is **built** and what is **planned**, by the phase of issue #9 that
 delivers it. User-facing detail is in [Sunday](personal-agents.md) and
@@ -31,8 +31,9 @@ Principles that hold everywhere:
 4. **The engine is the go-between.** Sunday never connects to apps directly. Its
    only MCP server is the engine's gateway, which enforces permissions and logs
    every action. (Built: phase 2.)
-5. **Private by default.** Capture only when asked, per-app permission,
-   everything stored locally, background mode opt-in. (Planned: phases 3 and 6.)
+5. **Private by default.** Capture only when asked, per-app permission, a
+   never-capture list, everything stored locally, background mode opt-in.
+   (Built: phase 3. Background mode: phase 6.)
 6. **OS-independent.** One codebase for macOS, Linux and Windows.
 
 ## 2. Architecture
@@ -44,8 +45,8 @@ Principles that hold everywhere:
           ▼                                ▼
  ┌──────────────── OpenAgora engine (Rust) ─────────────────────────────────┐
  │  Catalog · install · run · supervise · update · audit log (built)        │
- │  MCP gateway: one server, many clients (built: store tools)             │
- │  Desk · Capture · Focus tracker · Registry · Router · Broker (planned)  │
+ │  MCP gateway: one server, many clients (built: store and desk tools)    │
+ │  Desk · Focus tracker · Broker (built) · Registry · Router (planned)    │
  └────────┬───────────────────────────────┬────────────────────────────────┘
           │ MCP + per-reply hook          │ MCP (pull) / adapters (push)
           ▼                               ▼
@@ -55,8 +56,8 @@ Principles that hold everywhere:
 
 | Part | Language | Job |
 |---|---|---|
-| Engine | Rust | Catalog, install, run, supervise, update, uninstall; Sunday's profile; the daemon with the MCP gateway and the audit log. Later the desk, capture and broker. |
-| Shell | Electron (TypeScript) | The window: Sunday's home screen, sidebar, tabs, store, settings. Later the Sunday panel and tray presence. |
+| Engine | Rust | Catalog, install, run, supervise, update, uninstall; Sunday's profile; the daemon with the MCP gateway, the desk, the broker, the focus query and the audit log. |
+| Shell | Electron (TypeScript) | The window: Sunday's home screen, sidebar, tabs, store, settings; Sunday's shortcut and panel; the menu bar or tray icon; capturing windows when the engine asks. |
 | Sunday | Hermes (upstream) | The agent, under its own profile. Installed by the engine from the store, or adopted when already installed. |
 | Catalog | TOML files | One `app.toml` per app, in this repo under `catalog/apps/<id>/`. |
 
@@ -125,6 +126,10 @@ openagora daemon start|stop|status
 openagora mcp --client <id>   an MCP client's stdio, relayed to the daemon
 openagora context --hook      Sunday's per-reply Hermes hook
 openagora audit               the audit log
+openagora focus               the windows in front, and whether OpenAgora may capture them
+openagora desk                the desk: list, show, add, remove, clear
+openagora grants              the apps Sunday may see: list, allow, revoke
+openagora never               the never-capture list: list, add, remove
 ```
 
 Details as built:
@@ -189,17 +194,83 @@ Details as built:
   the client, action, target, decision (`allowed`, `confirmed`, `declined`,
   `refused`), where the user answered, and the outcome.
 - **Per-reply hook:** `openagora context --hook --client sunday` is Sunday's Hermes
-  `pre_llm_call` shell hook. It prints `{"context": …}` marked as data, with only
-  what changed since that session's previous turn (installed apps and their state
-  for now), and nothing at all when nothing changed.
+  `pre_llm_call` shell hook. It asks the running engine (role `hook`) and prints
+  `{"context": …}` marked as data, with only what changed since that session's
+  previous turn, and nothing at all when nothing changed: installed apps and their
+  state; and, in chats on this computer (Hermes platforms `cli`, `tui`,
+  `desktop`, `local`, `acp`), the app the user is working in, their last press
+  of Sunday's shortcut and what it captured, and new desk items. Messaging
+  channels hear about apps only. Without the engine running, it reports apps
+  from disk.
 - **Sunday's connection:** `openagora sunday connect` uses
   `hermes -p sunday config set` to add `mcp_servers.openagora`, the hook,
   OpenAgora's skills folder (`skills.external_dirs`) and `hooks_auto_accept: true`
   to Sunday's profile only, after asking. It points them at a copy of the engine
   at `<data>/bin/openagora`, kept current, because the desktop app's own copy can
   move. `disconnect` removes only those.
-- **Skills:** `sunday/skills/` in this repo, written to `<data>/sunday/skills/`.
-  Each is shown only when its tools are present (`metadata.hermes.requires_tools`).
+- **Skills:** `sunday/skills/` in this repo, written to `<data>/sunday/skills/`
+  on connect and whenever the engine service starts: `openagora-apps` (the store
+  tools) and `openagora-desk` (capture and the desk). Each is shown only when its
+  tools are present (`metadata.hermes.requires_tools`).
+- **Inherited descriptors:** the engine marks every file descriptor it inherited
+  (beyond stdin, stdout and stderr) close-on-exec at startup, so the engine
+  service and the apps it starts don't hold open files, pipes or sockets of
+  OpenAgora's window.
+
+### Desk, capture, focus and the broker (built: phase 3)
+
+OpenAgora's window does the capturing, because only it may ask the OS for a
+window's picture and it captures its own tabs without any OS permission. The
+engine decides what may be captured, keeps the result, and logs it.
+
+- **Focus query** (`engine/src/focus.rs`): the windows on screen, front to back,
+  asked of the OS only when needed (the shortcut, a capture, each Sunday reply);
+  nothing is tracked in the background. macOS: the on-screen window list
+  (CGWindowList through a JavaScript for Automation script run by `osascript`),
+  with bundle ids from NSRunningApplication; titles need Screen Recording
+  permission. Windows: the foreground window, then the other top-level windows in
+  z-order (Windows API), with each executable's own description as its name. X11:
+  the window manager's `_NET_ACTIVE_WINDOW` and `_NET_CLIENT_LIST_STACKING`, with
+  names from desktop entries. Wayland lets no app see other apps' windows, so
+  there the user picks the window in the system's own dialog, and that choice is
+  the permission for that one capture. Each window carries an app key (bundle id,
+  executable file name, or window class), which grants and the never-capture list
+  use. `OPENAGORA_FOCUS_FILE` replaces the OS with a file in tests.
+- **The window the user is in** is the front-most window that isn't OpenAgora's
+  own: the window reports its process id, the OS ids of its main window and the
+  Sunday panel (`getMediaSourceId`, the same ids the OS query returns), and which
+  app its tab shows (`focus/openagora`). An app in an OpenAgora tab counts as that
+  app; the panel and OpenAgora's own pages are looked behind.
+- **Broker** (`engine/src/broker.rs`): grants keyed by client × source app ×
+  destination × type family (`image/*` for now), allowed once or always, in
+  `<data>/broker/grants.toml`; the never-capture list, built in
+  (`engine/src/never_capture.toml`: password managers by name, bundle id,
+  executable or window class; private browser windows and Tor Browser by window
+  title) plus the user's additions in `<data>/broker/never.toml`. The never list
+  wins over every grant. Every capture asks the broker first.
+- **Desk** (`engine/src/desk.rs`): items with an id, kind (screenshot, image,
+  text, link, file), MIME type and type family, source (app, key, title), created
+  and expiry times (24 hours), `shared_with` (the clients that may read it) and
+  who added it. Payloads are stored once, by SHA-256, under `<data>/desk/`, a
+  folder only this user can open. Pictures must be PNG, JPEG, GIF or WebP; 20 MB
+  at most.
+- **Shortcut** (window → engine): `shortcut/pressed` finds the window the user is
+  in and returns the broker's verdict before the panel opens over it;
+  `shortcut/capture` (optionally with `allow: once|always` from the panel's
+  buttons, or `pick: true` where windows are hidden) captures it. The engine
+  asks the window with `capture/window` (a window by its OS id, an app tab, or
+  a pick) and puts the picture on the desk for Sunday.
+- **Desk from the window:** `desk/add` for the clipboard and for files dropped on
+  the panel.
+- **Tools for Sunday:** `capture_window` (the window the user is in, or a named
+  app; returns the image), `desk_list`, `desk_get` (images as image content,
+  text marked as data), and `allow_app`, which asks the user in OpenAgora's window
+  only, with "Allow once" and "Always allow" (`confirm/ask` with `choices`), never
+  in a chat. A never-listed app can't be allowed. Coding agents get no desk tools
+  until phase 4.
+- **Audit:** every capture (allowed or refused, by the user's shortcut or by
+  Sunday), every grant and revocation, desk reads and additions, and changes to
+  the never-capture list.
 
 ### Toolchain
 
@@ -252,10 +323,18 @@ the `openagora-apps` skill teaches it the store tools. OpenAgora asks before
 connecting Sunday (the issue's default for hook consent: ask during setup, then
 `hooks_auto_accept` for Sunday's profile only).
 
+**Built (phase 3).** Sunday's shortcut (default Ctrl+Shift+Space, Command on
+macOS) opens Sunday's panel over any app: Hermes's chat for Sunday's profile in
+a small always-on-top window. If the user allowed that app, OpenAgora captures
+its window onto the desk and the hook tells Sunday, which looks at it with
+`desk_get`; if not, the panel and Sunday both say so and offer to allow it. The
+user can also put the clipboard or files on the desk from the panel. OpenAgora
+stays in the menu bar or tray after its window closes, so the shortcut keeps
+working. The engine enforces all of it (§4); the `openagora-desk` skill teaches
+Sunday the tools.
+
 **Planned.**
 
-- *Phase 3:* the desk, capture from any app, the focus tracker, the global
-  shortcut and Sunday panel, and the broker with its audit log.
 - *Phase 4:* coding agents as destinations: the pull path through MCP for every
   agent, one-click setup for Claude Code, Codex and OpenCode, and the T3 Code push
   adapter.
@@ -265,7 +344,8 @@ connecting Sunday (the issue's default for hook consent: ask during setup, then
 **Safety.**
 
 - Text read from apps, READMEs and web pages is data, never instructions.
-- Sunday gets only the permissions the user granted per app.
+- Sunday gets only the permissions the user granted per app, and never sees an
+  app or window on the never-capture list.
 - Installing an app from outside the catalog needs an extra, explicit
   confirmation with a warning.
 - Every agent action against an app is logged in the audit log.
@@ -274,9 +354,11 @@ connecting Sunday (the issue's default for hook consent: ask during setup, then
 
 Each listing's `[agent]` section declares what Sunday may do with the app.
 At install the user sees each permission with its default (`granted`, `ask`
-or `denied`). The broker (planned: phases 3 and 6) checks every capture, handoff
-and app action against the user's grants, asks when needed, and logs it. Grants
-can be revoked in Settings.
+or `denied`). The broker checks every capture against the user's grants and the
+never-capture list, asks when needed, and logs it (built: phase 3); handoffs to
+coding agents go through it in phase 4. Allowed apps can be removed, and the
+never-capture list extended, in Settings → What Sunday can see; a full grants and
+audit view comes in phase 6.
 
 ## 7. Shell
 
@@ -284,10 +366,19 @@ can be revoked in Settings.
 - **Sidebar** (built): Sunday, the store, the library, open apps, settings.
 - **Tabs** (built): each app's own web UI. Embedded views are loopback-only:
   navigation away from 127.0.0.1/localhost opens in the default browser instead.
-- **Settings** (built): Sunday's Hermes pages, the personal-agent choice,
-  removing Sunday. Grants and the audit log come in phase 6.
-- **Sunday panel** (planned: phase 3): a global shortcut opens Sunday's chat in a
-  small always-on-top window over any app; OpenAgora stays in the menu bar or tray.
+- **Settings** (built): Sunday's Hermes pages; What Sunday can see (the
+  shortcut, keeping OpenAgora in the menu bar or tray, macOS Screen Recording
+  permission, allowed apps, the never-capture list); the personal-agent choice;
+  removing Sunday. A full grants and audit view comes in phase 6.
+- **Sunday panel** (built: phase 3): a configurable global shortcut opens
+  Sunday's chat in a small always-on-top window over any app, with what Sunday
+  can see of that app and buttons to allow it. Confirmations while it is open
+  are asked in it. OpenAgora stays in the menu bar or tray (on by default).
+- **Window capture** (built: phase 3): an app tab with its own `capturePage`;
+  any other window with Chromium's capture of that one window, through a hidden
+  page of OpenAgora's own whose display-media handler grants exactly that window
+  (no thumbnails of other windows are taken). Pictures are scaled to 1920 pixels
+  at most.
 - **Detach** (planned: phase 6): pop an app out into its own window without
   reloading it, with focus tracking across windows. Closing that window returns it
   to its tab.
@@ -309,7 +400,7 @@ real accounts are checked by hand.
 |---|---|---|---|
 | 1. Sunday basics | Hermes only; the `sunday` profile; identity; home screen; settings | Tests 1–4 and 14 | Built |
 | 2. Engine daemon + gateway | daemon, MCP gateway with store tools, per-reply hook, first skills | Test 5 | Built |
-| 3. Capture | desk, capture, focus tracker, shortcut and panel, broker basics | Tests 6, 8, 10 | Planned |
+| 3. Capture | desk, capture, focus tracker, shortcut and panel, broker basics | Tests 6, 8, 10 | Built |
 | 4. Coding agents | registry, destinations, pull path, T3 Code push adapter | Test 7 | Planned |
 | 5. Memory | live lookup, memory provider, refresh job | Tests 11, 12 | Planned |
 | 6. Polish | grants and audit UI, background mode, on-screen text, OpenCode push, pop-out windows | Tests 9, 13 | Planned |

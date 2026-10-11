@@ -2,13 +2,14 @@
 //! catalog whose agent listing installs that fake instead of the real one.
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Output, Stdio};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -207,6 +208,160 @@ url = "http://127.0.0.1:{{port}}/"
         let out = self.json(&["audit", "--json"]);
         out.as_array().cloned().unwrap_or_default()
     }
+
+    /// Runs Sunday's per-reply hook as Hermes does, and returns the context
+    /// it adds ("" when it adds nothing).
+    pub fn hook(&self, session: &str, first: bool, platform: &str) -> String {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_openagora"));
+        cmd.arg("--catalog")
+            .arg(&self.catalog)
+            .args(["context", "--hook", "--client", "sunday"])
+            .env("HOME", &self.home)
+            .env("OPENAGORA_HOME", &self.data)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped());
+        for (k, v) in &self.extra_env {
+            cmd.env(k, v);
+        }
+        let mut child = cmd.spawn().unwrap();
+        let payload = json!({
+            "hook_event_name": "pre_llm_call", "session_id": session, "profile": "sunday",
+            "extra": {"is_first_turn": first, "user_message": "hi", "platform": platform},
+        });
+        writeln!(child.stdin.take().unwrap(), "{payload}").unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success(), "the hook failed");
+        let text = String::from_utf8(out.stdout).unwrap();
+        if text.trim().is_empty() {
+            return String::new();
+        }
+        let context: Value = serde_json::from_str(&text).unwrap();
+        context["context"].as_str().unwrap().to_string()
+    }
+}
+
+/// Answers the engine's requests to OpenAgora's window: Some(result), or
+/// `{"__error": "…"}` for an error; None leaves the request to `Desktop::next`.
+pub type Responder = Box<dyn FnMut(&Value) -> Option<Value> + Send>;
+
+/// OpenAgora's window, connected to the engine service.
+pub struct Desktop {
+    writer: Arc<Mutex<UnixStream>>,
+    incoming: mpsc::Receiver<Value>,
+    held: VecDeque<Value>,
+    next_id: u64,
+}
+
+impl Desktop {
+    pub fn connect(env: &Env) -> Desktop {
+        Desktop::connect_with(env, json!({}), None)
+    }
+
+    /// `about` goes into the hello (pid, window ids, tab).
+    pub fn connect_with(env: &Env, about: Value, responder: Option<Responder>) -> Desktop {
+        let stream = UnixStream::connect(env.socket()).unwrap();
+        let mut hello = json!({"role": "desktop", "client": "desktop"});
+        if let Some(fields) = about.as_object() {
+            for (k, v) in fields {
+                hello[k] = v.clone();
+            }
+        }
+        let writer = Arc::new(Mutex::new(stream.try_clone().unwrap()));
+        writeln!(writer.lock().unwrap(), "{}", json!({ "hello": hello })).unwrap();
+        let reader = BufReader::new(stream);
+        let (tx, incoming) = mpsc::channel();
+        let answers = Arc::clone(&writer);
+        let mut responder = responder;
+        std::thread::spawn(move || {
+            for line in reader.lines().map_while(Result::ok) {
+                let message: Value = serde_json::from_str(&line).unwrap();
+                let is_request = message.get("method").is_some() && message.get("id").is_some();
+                let answer = match (&mut responder, is_request) {
+                    (Some(respond), true) => respond(&message),
+                    _ => None,
+                };
+                match answer {
+                    Some(result) => {
+                        let reply = match result.get("__error") {
+                            Some(error) => {
+                                json!({"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32000, "message": error}})
+                            }
+                            None => {
+                                json!({"jsonrpc": "2.0", "id": message["id"], "result": result})
+                            }
+                        };
+                        let mut out = answers.lock().unwrap();
+                        writeln!(out, "{reply}").unwrap();
+                    }
+                    None => {
+                        if tx.send(message).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        let mut desktop = Desktop {
+            writer,
+            incoming,
+            held: VecDeque::new(),
+            next_id: 1,
+        };
+        // Make sure the engine has registered the window before going on.
+        desktop.request("ping", json!({}));
+        desktop
+    }
+
+    fn write(&self, message: Value) {
+        let mut out = self.writer.lock().unwrap();
+        writeln!(out, "{message}").unwrap();
+        out.flush().unwrap();
+    }
+
+    /// The next message from the engine that nothing answered yet.
+    pub fn next(&mut self) -> Value {
+        if let Some(message) = self.held.pop_front() {
+            return message;
+        }
+        self.incoming
+            .recv_timeout(Duration::from_secs(30))
+            .expect("nothing from the engine")
+    }
+
+    /// Whatever the engine sent that nothing answered yet, without waiting.
+    pub fn unanswered(&mut self) -> Vec<Value> {
+        let mut all: Vec<Value> = self.held.drain(..).collect();
+        while let Ok(message) = self.incoming.try_recv() {
+            all.push(message);
+        }
+        all
+    }
+
+    pub fn reply(&mut self, id: &Value, result: Value) {
+        self.write(json!({"jsonrpc": "2.0", "id": id, "result": result}));
+    }
+
+    pub fn notify(&mut self, method: &str, params: Value) {
+        self.write(json!({"jsonrpc": "2.0", "method": method, "params": params}));
+    }
+
+    /// Asks the engine something and waits for the answer (the whole reply,
+    /// with `result` or `error`).
+    pub fn request(&mut self, method: &str, params: Value) -> Value {
+        let id = format!("w{}", self.next_id);
+        self.next_id += 1;
+        self.write(json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}));
+        loop {
+            let message = self
+                .incoming
+                .recv_timeout(Duration::from_secs(60))
+                .unwrap_or_else(|_| panic!("no answer to {method}"));
+            if message["id"] == id && message.get("method").is_none() {
+                return message;
+            }
+            self.held.push_back(message);
+        }
+    }
 }
 
 fn this_os() -> &'static str {
@@ -241,6 +396,7 @@ impl McpClient {
             .env("OPENAGORA_HOME", &env.data)
             .env("HERMES_CALLS", &env.calls)
             .env("PATH", "/usr/bin:/bin")
+            .envs(env.extra_env.iter().map(|(k, v)| (k, v)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -326,6 +482,21 @@ impl McpClient {
             .iter()
             .map(|t| t["name"].as_str().unwrap().to_string())
             .collect()
+    }
+
+    /// Calls a tool; returns the whole result (content and isError).
+    pub fn call_raw(
+        &mut self,
+        tool: &str,
+        arguments: Value,
+        answer: &mut dyn FnMut(&Value) -> Value,
+    ) -> Value {
+        let reply = self.request(
+            "tools/call",
+            json!({"name": tool, "arguments": arguments}),
+            answer,
+        );
+        reply["result"].clone()
     }
 
     /// Calls a tool; returns (text, is_error).

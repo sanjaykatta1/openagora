@@ -1,6 +1,6 @@
 // The only surface the window's web page gets: a few named calls to the engine.
 
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron";
 import type { AgentPreferences } from "./agents";
 
 contextBridge.exposeInMainWorld("openagora", {
@@ -19,9 +19,9 @@ contextBridge.exposeInMainWorld("openagora", {
   sundaySetup: (choice: string) => ipcRenderer.invoke("sunday-setup", choice),
   sundayConnect: () => ipcRenderer.invoke("sunday-connect"),
   sundayDisconnect: () => ipcRenderer.invoke("sunday-disconnect"),
-  answerConfirm: (id: string, allowed: boolean) => ipcRenderer.invoke("confirm-answer", id, allowed),
-  onConfirm: (callback: (request: { id: string; client: string; title: string; message: string }) => void) => {
-    const handler = (_e: IpcRendererEvent, request: { id: string; client: string; title: string; message: string }) => callback(request);
+  answerConfirm: (id: string, allowed: boolean, choice?: string) => ipcRenderer.invoke("confirm-answer", id, allowed, choice),
+  onConfirm: (callback: (request: unknown) => void) => {
+    const handler = (_e: IpcRendererEvent, request: unknown) => callback(request);
     ipcRenderer.on("confirm-ask", handler);
     return () => ipcRenderer.removeListener("confirm-ask", handler);
   },
@@ -34,6 +34,33 @@ contextBridge.exposeInMainWorld("openagora", {
     const handler = (_e: IpcRendererEvent, id: string) => callback(id);
     ipcRenderer.on("open-app", handler);
     return () => ipcRenderer.removeListener("open-app", handler);
+  },
+  viewChanged: (view: { kind: string; app?: string }) => ipcRenderer.send("view-changed", view),
+  showMain: () => ipcRenderer.invoke("show-main"),
+  panel: {
+    state: () => ipcRenderer.invoke("panel-state"),
+    capture: (options: { allow?: "once" | "always"; pick?: boolean }) => ipcRenderer.invoke("panel-capture", options),
+    hide: () => ipcRenderer.invoke("panel-hide"),
+    onState: (callback: (state: unknown) => void) => {
+      const handler = (_e: IpcRendererEvent, state: unknown) => callback(state);
+      ipcRenderer.on("panel-state", handler);
+      return () => ipcRenderer.removeListener("panel-state", handler);
+    },
+  },
+  desk: {
+    addClipboard: () => ipcRenderer.invoke("desk-add-clipboard"),
+    addFiles: (paths: string[]) => ipcRenderer.invoke("desk-add-files", paths),
+    /** A dropped file's path on this computer. */
+    pathForFile: (file: File) => webUtils.getPathForFile(file),
+  },
+  desktopSettings: () => ipcRenderer.invoke("desktop-settings"),
+  saveDesktopSettings: (value: unknown) => ipcRenderer.invoke("save-desktop-settings", value),
+  openScreenSettings: () => ipcRenderer.invoke("open-screen-settings"),
+  broker: {
+    state: () => ipcRenderer.invoke("broker-state"),
+    revoke: (app: string) => ipcRenderer.invoke("broker-revoke", app),
+    neverAdd: (rule: { name: string; app?: string; title?: string }) => ipcRenderer.invoke("never-add", rule),
+    neverRemove: (name: string) => ipcRenderer.invoke("never-remove", name),
   },
   logs: (id: string) => ipcRenderer.invoke("logs", id),
   openExternal: (url: string) => ipcRenderer.invoke("open-external", url),

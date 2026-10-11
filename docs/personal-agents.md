@@ -1,7 +1,8 @@
 # Sunday, OpenAgora's personal agent
 
-Sunday is OpenAgora's personal agent. It remembers across your apps and will
-carry your work to the coding agents you use. Underneath, Sunday is
+Sunday is OpenAgora's personal agent. It remembers across your apps, can see the
+app you're working in when you call it with its shortcut, and will carry your
+work to the coding agents you use. Underneath, Sunday is
 [Hermes](https://hermes-agent.nousresearch.com/docs/) by Nous Research (MIT):
 OpenAgora does not implement its own agent, chat screen, setup or settings. It
 shows Hermes's own dashboard and pages, labelled Sunday.
@@ -79,8 +80,9 @@ and is kept word for word. If the rest of the file gives the agent another name
 but uses the name Sunday. A test checks that the block passes Hermes's own
 prompt-injection scan, so Hermes loads it without warnings.
 
-What changes from turn to turn (installed apps, connected coding agents, what's on
-screen) is not written to `SOUL.md`; the per-reply hook below supplies it.
+What changes from turn to turn (installed apps, what's on screen, new things on
+the desk, and later connected coding agents) is not written to `SOUL.md`; the
+per-reply hook below supplies it.
 
 ## Sunday and your apps
 
@@ -96,12 +98,15 @@ Hermes profile. It makes the changes only after you agree, using Hermes's own
   OpenAgora names them and leaves them; you can remove them on Hermes's MCP page.
 - **A per-reply hook.** Before each reply, Hermes runs
   `openagora context --hook --client sunday`. It tells Sunday what changed since its
-  last reply: for now, which apps are installed and running. It is marked as data,
-  not instructions, and says nothing when nothing changed, because Hermes keeps
-  the text in the conversation.
+  last reply: which apps are installed and running, and, when you're chatting on
+  this computer, the app you're working in, what Sunday's shortcut captured, and
+  new things on the desk (see below). On a messaging channel it only tells Sunday
+  about apps, never about your screen. It is marked as data, not instructions,
+  and says nothing when nothing changed, because Hermes keeps the text in the
+  conversation.
 - **OpenAgora's skills**, in OpenAgora's own folder, added to
-  `skills.external_dirs`. The first one teaches Sunday the store tools. Hermes shows
-  it only when those tools are there.
+  `skills.external_dirs`: one teaches Sunday the store tools, the other the desk
+  and capture tools. Hermes shows each only when its tools are there.
 - **`hooks_auto_accept: true`, for Sunday's profile only**, so Hermes runs the hook
   without asking at the start of every session, including when Sunday answers on a
   messaging channel. This is the issue's default for hook consent: OpenAgora asks
@@ -126,6 +131,63 @@ configuration to point at, because the desktop app's own copy can move (a Linux
 AppImage runs from a new folder each time). The engine service the copy talks to is
 started by the desktop app, or by the first agent that needs it, and keeps running
 after the window closes so Sunday can still reach OpenAgora from your phone.
+
+## Sunday's shortcut: showing Sunday what you're working on
+
+Press **Ctrl+Shift+Space** (**Command+Shift+Space** on a Mac) in any app on your
+computer, whether OpenAgora installed it or not. Sunday's panel opens over that
+app: Sunday's chat (Hermes's own, for Sunday's profile) in a small window that
+stays on top.
+
+- **Apps you allowed:** OpenAgora captures that app's window and puts the
+  picture on the desk. Sunday is told which app it is and looks at the picture
+  when you ask about it. The panel shows a small copy of what Sunday got.
+- **Apps you haven't allowed:** nothing is captured. The panel says Sunday can't
+  see the app yet, with **Allow once** and **Always allow**. If you ask Sunday
+  about it instead, Sunday says it can't see that app and offers to ask;
+  OpenAgora then asks you itself, in its own window, never in a chat.
+- **Apps OpenAgora never captures:** password managers (1Password, Bitwarden,
+  KeePassXC, LastPass, Dashlane, Keychain Access, Passwords and others), private
+  and incognito browser windows, and Tor Browser. They can't be allowed. Add your
+  own apps, or words in window titles, in **Settings → What Sunday can see**.
+  Browsers mark private windows in their titles, except Safari, so OpenAgora
+  can't tell Safari's private windows apart.
+- **Apps in OpenAgora's tabs** are captured by OpenAgora itself, without any
+  system permission. They need allowing too.
+
+Anything Sunday looks at is sent to the model provider you chose for Sunday.
+OpenAgora says so in the panel and in Settings.
+
+**The desk** is where what you share with Sunday waits: screenshots, and the
+clipboard or files you put there from the panel (**Add clipboard**, or drop files
+on the panel). Items are kept on this computer, in a folder only you can open,
+for 24 hours. `openagora desk` lists and clears them.
+
+**Sunday can look again** with its `capture_window` tool, but only at apps you
+allowed, and **asks to see an app** with `allow_app`, which puts OpenAgora's own
+question in front of you. OpenAgora looks up which windows are in front only
+when it needs to (when you press the shortcut, when Sunday asks, and before each
+of Sunday's replies, to tell it which app you're in); it keeps no record of the
+apps you use. Every capture, allowed or refused, every permission you give or
+take back, and every time Sunday reads the desk goes to the audit log.
+
+**OpenAgora keeps running in the menu bar (or tray) after you close its window**,
+so the shortcut keeps working. **Quit OpenAgora** is in its menu. Turn this off,
+or change the shortcut, in **Settings → What Sunday can see**.
+
+**Per system:**
+
+- **macOS** asks once for **Screen Recording** permission the first time
+  OpenAgora captures another app's window (System Settings → Privacy & Security →
+  Screen Recording). Settings shows a button to that page.
+- **Windows** needs no permission; OpenAgora uses Windows' own window capture.
+- **Linux on X11** needs no permission.
+- **Linux on Wayland** doesn't let apps see which window is in front. Pressing
+  the shortcut opens the panel with **Pick a window**, and the system's own dialog
+  lets you choose the window; your choice is the permission for that one capture.
+  The shortcut itself goes through the desktop's global shortcuts portal. On GNOME
+  without the AppIndicator extension there is no tray icon: open OpenAgora again
+  from your apps to bring its window back.
 
 ## Home screen and settings
 
@@ -157,6 +219,32 @@ deletes only the `sunday` profile with Hermes's own `hermes profile delete sunda
 profile named `sunday` that OpenAgora didn't set up is never deleted.
 
 ## Verification and limits
+
+Phase 3 (capture): Rust tests drive the engine with a stand-in for OpenAgora's
+window and a stand-in window list. They cover: the shortcut over an app
+OpenAgora didn't install (it knows the app's name and captures nothing until it
+is allowed; allowing it once or always; Sunday's hook naming the app and the
+desk item, and `desk_get` returning the picture); `capture_window` and
+`allow_app` (asked in OpenAgora's window only; once means once; no means no);
+password managers, private browser windows and the user's own additions never
+captured and never allowable, with no capture request ever reaching the window;
+app tabs and the panel; Wayland's pick; the desk shared with Sunday only, in a
+private folder; the hook staying quiet about the screen on messaging channels;
+and the audit log's entries. A test against a real X server checks the X11
+window query. UI tests cover the panel, its buttons, captures of an app tab and
+of a real window by its X11 id, the clipboard, Settings → What Sunday can see,
+and keeping OpenAgora running after its window closes. One end-to-end test runs
+the real engine with the real window, capturing another process's real window
+through the OS and reading it back through Sunday's MCP tools.
+
+Not tested automatically, and to be checked by hand: the shortcut and capture on
+a real Mac (Screen Recording permission, the macOS window list and titles, the
+menu bar icon, the panel over full-screen apps), on Windows (the window list,
+app names, Windows' window capture, the tray) and on a Wayland desktop (the
+system's window picker, the global shortcuts portal, the tray); the default
+shortcut not clashing with other apps on your computer; and Sunday, in a real
+Hermes, looking at the screenshot (Hermes passes images from MCP tools to models
+that can see).
 
 Phase 2 (the gateway): Rust tests drive `openagora mcp` exactly as Hermes does.
 They cover: a decline, a cancel and an accept of the engine's in-chat question, then

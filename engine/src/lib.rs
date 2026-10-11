@@ -2,9 +2,13 @@
 
 pub mod apps;
 pub mod audit;
+pub mod broker;
+pub mod capture;
 pub mod catalog;
 pub mod context;
 pub mod daemon;
+pub mod desk;
+pub mod focus;
 pub mod gateway;
 pub mod github;
 pub mod http;

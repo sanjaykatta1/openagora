@@ -1,6 +1,7 @@
 //! The MCP gateway: the one MCP server Sunday connects to. The engine decides
 //! what each client may do and asks the user itself; a client's instructions
-//! are never what keeps an action safe. Every app action goes to the audit log.
+//! are never what keeps an action safe. Every app action and capture goes to
+//! the audit log. Capture and the desk are in `capture.rs`.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -12,6 +13,7 @@ use serde_json::{Value, json};
 
 use crate::apps::{Engine, Status};
 use crate::audit::{self, Entry};
+use crate::capture::{self, Called, WindowState};
 use crate::catalog::Catalog;
 use crate::jsonrpc::{Peer, RequestError};
 use crate::manifest::{Arch, Manifest, Role};
@@ -22,12 +24,16 @@ use crate::paths::Paths;
 const ANSWER_WITHIN: Duration = Duration::from_secs(300);
 
 pub struct Gateway {
-    paths: Paths,
+    pub(crate) paths: Paths,
     catalog: Option<PathBuf>,
     desktop: Mutex<Option<Arc<Peer>>>,
     clients: Mutex<Vec<Weak<Client>>>,
     /// Apps with an install, update or removal in progress.
     busy: Mutex<BTreeSet<String>>,
+    /// What OpenAgora's window said about its own windows.
+    pub(crate) window: Mutex<WindowState>,
+    /// The user's last press of Sunday's shortcut.
+    pub(crate) called: Mutex<Option<Called>>,
 }
 
 /// How a confirmation went.
@@ -43,6 +49,27 @@ pub enum Answer {
     NoOneToAsk,
 }
 
+/// How a question with choices went (asked in OpenAgora's window only).
+#[derive(Debug, PartialEq, Eq)]
+pub enum Choice {
+    /// The id of the choice the user picked.
+    Chose(String),
+    No,
+    NoOneToAsk,
+}
+
+/// A client's name, for people.
+pub fn client_name(id: &str) -> String {
+    match id {
+        "sunday" => "Sunday".into(),
+        "claude-code" => "Claude Code".into(),
+        "codex" => "Codex".into(),
+        "opencode" => "OpenCode".into(),
+        "t3code" => "T3 Code".into(),
+        other => other.into(),
+    }
+}
+
 impl Gateway {
     pub fn new(paths: Paths, catalog: Option<PathBuf>) -> Gateway {
         Gateway {
@@ -51,11 +78,16 @@ impl Gateway {
             desktop: Mutex::new(None),
             clients: Mutex::new(Vec::new()),
             busy: Mutex::new(BTreeSet::new()),
+            window: Mutex::new(WindowState::default()),
+            called: Mutex::new(None),
         }
     }
 
-    /// OpenAgora's window connected: it can show confirmations and open apps.
-    pub fn attach_desktop(&self, peer: Arc<Peer>) {
+    /// OpenAgora's window connected: it can show confirmations, open apps and
+    /// capture windows. `hello` is what it said about itself.
+    pub fn attach_desktop(&self, peer: Arc<Peer>, hello: &Value) {
+        *self.window.lock().unwrap() = WindowState::default();
+        self.set_window(hello);
         *self.desktop.lock().unwrap() = Some(peer);
     }
 
@@ -66,7 +98,7 @@ impl Gateway {
         }
     }
 
-    fn desktop(&self) -> Option<Arc<Peer>> {
+    pub(crate) fn desktop(&self) -> Option<Arc<Peer>> {
         self.desktop
             .lock()
             .unwrap()
@@ -120,14 +152,67 @@ impl Gateway {
         Answer::NoOneToAsk
     }
 
-    fn catalog(&self) -> Result<Catalog> {
+    /// Asks the user in OpenAgora's window, offering choices besides no. The
+    /// window is where the screen is, so questions about what may be seen on
+    /// it are asked there, never in a chat.
+    pub fn ask_choice(
+        &self,
+        client: &Client,
+        title: &str,
+        message: &str,
+        choices: &[(&str, &str)],
+    ) -> Choice {
+        let Some(desktop) = self.desktop() else {
+            return Choice::NoOneToAsk;
+        };
+        let offered: Vec<Value> = choices
+            .iter()
+            .map(|(id, label)| json!({"id": id, "label": label}))
+            .collect();
+        let asked = desktop.request(
+            "confirm/ask",
+            json!({"client": client.id, "title": title, "message": message, "choices": offered}),
+            ANSWER_WITHIN,
+        );
+        match asked {
+            Ok(reply) if reply["allowed"] == true => {
+                let chose = reply["choice"].as_str().unwrap_or_default();
+                match choices.iter().find(|(id, _)| *id == chose) {
+                    Some((id, _)) => Choice::Chose(id.to_string()),
+                    // An answer that isn't one of the choices isn't a yes.
+                    None => Choice::No,
+                }
+            }
+            _ => Choice::No,
+        }
+    }
+
+    /// A request from OpenAgora's window.
+    pub fn desktop_request(&self, method: &str, params: &Value) -> Option<Result<Value, String>> {
+        Some(match method {
+            "ping" => Ok(json!({})),
+            "shortcut/pressed" => Ok(self.shortcut_pressed()),
+            "shortcut/capture" => self.shortcut_capture(params),
+            "desk/add" => self.desk_add(params),
+            _ => return None,
+        })
+    }
+
+    /// A notification from OpenAgora's window.
+    pub fn desktop_notification(&self, method: &str, params: &Value) {
+        if method == "focus/openagora" {
+            self.set_window(params);
+        }
+    }
+
+    pub(crate) fn catalog(&self) -> Result<Catalog> {
         match &self.catalog {
             Some(dir) => Catalog::load(dir),
             None => Catalog::embedded(),
         }
     }
 
-    fn audit(&self, entry: &Entry) {
+    pub(crate) fn audit(&self, entry: &Entry) {
         if let Err(e) = audit::record(&self.paths, entry) {
             eprintln!("openagora: writing the audit log: {e:#}");
         }
@@ -240,13 +325,17 @@ fn store_tools() -> Vec<Value> {
 impl Handler for Gateway {
     fn tools(&self, client: &Client) -> Vec<Value> {
         match client.id.as_str() {
-            // Sunday manages the store; coding agents get their own tools later.
-            "sunday" => store_tools(),
+            // Sunday manages the store and sees what the user shares; coding
+            // agents get their own tools later.
+            "sunday" => store_tools().into_iter().chain(capture::tools()).collect(),
             _ => Vec::new(),
         }
     }
 
     fn call(&self, client: &Client, name: &str, arguments: &Value) -> ToolResult {
+        if let Some(result) = self.call_capture_tool(client, name, arguments) {
+            return result;
+        }
         let result = (|| -> Result<ToolResult> {
             let catalog = self.catalog()?;
             let engine = Engine::new()?;

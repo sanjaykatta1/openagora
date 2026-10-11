@@ -14,7 +14,7 @@ const CLIENT_NAMES: Record<string, string> = {
 
 export const clientName = (id: string) => CLIENT_NAMES[id] ?? id;
 
-export function AgentConfirm(props: { request: ConfirmRequest; waiting: number; onAnswer: (allowed: boolean) => void }) {
+export function AgentConfirm(props: { request: ConfirmRequest; waiting: number; onAnswer: (allowed: boolean, choice?: string) => void }) {
   const { request } = props;
   const deny = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
@@ -23,6 +23,7 @@ export function AgentConfirm(props: { request: ConfirmRequest; waiting: number; 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [request.id]);
+  const choices = request.choices ?? [];
   return (
     <div className="modal-backdrop">
       <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="agent-confirm-title" aria-describedby="agent-confirm-message">
@@ -37,7 +38,11 @@ export function AgentConfirm(props: { request: ConfirmRequest; waiting: number; 
         <p className="muted small">OpenAgora is asking you directly; {clientName(request.client)} can’t answer this for you.{props.waiting > 0 ? ` ${props.waiting} more waiting.` : ""}</p>
         <footer className="modal-foot">
           <button ref={deny} className="btn ghost" onClick={() => props.onAnswer(false)}>Don’t allow</button>
-          <button className="btn primary" onClick={() => props.onAnswer(true)}>Allow</button>
+          {choices.length === 0
+            ? <button className="btn primary" onClick={() => props.onAnswer(true)}>Allow</button>
+            : choices.map((choice, i) => (
+              <button key={choice.id} className={i === choices.length - 1 ? "btn primary" : "btn"} onClick={() => props.onAnswer(true, choice.id)}>{choice.label}</button>
+            ))}
         </footer>
       </div>
     </div>

@@ -31,6 +31,9 @@ async function fakeDaemon() {
     : path.join(dir, 'engine.sock');
   const sockets = [];
   const received = [];
+  const hellos = [];
+  /** The engine's side of the window's requests: method → (params) => result. */
+  const handlers = new Map();
   const server = net.createServer((socket) => {
     let buffer = '';
     socket.setEncoding('utf8');
@@ -42,16 +45,38 @@ async function fakeDaemon() {
         buffer = buffer.slice(i + 1);
         if (!line) continue;
         const message = JSON.parse(line);
-        if (message.hello) sockets.push(socket); else received.push(message);
+        if (message.hello) { sockets.push(socket); hellos.push(message.hello); continue; }
+        received.push(message);
+        const handler = message.method && message.id !== undefined ? handlers.get(message.method) : null;
+        if (handler) {
+          Promise.resolve().then(() => handler(message.params ?? {})).then(
+            (result) => socket.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }) + '\n'),
+            (error) => socket.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: String(error.message ?? error) } }) + '\n'),
+          );
+        }
       }
     });
     socket.on('error', () => {});
   });
   await new Promise((resolve) => server.listen(address, resolve));
-  return {
+  let asked = 0;
+  const api = {
     address,
     connected: () => sockets.length > 0,
+    /** What the window said about itself when it connected, newest last. */
+    hellos,
+    /** Everything the window sent besides its hellos. */
+    received,
+    /** Answers the window's requests for `method`. */
+    handle: (method, handler) => handlers.set(method, handler),
     send: (message) => sockets.at(-1).write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n'),
+    /** Asks the window something, as the engine does, and waits for the whole reply. */
+    ask: async (method, params, timeout = 30000) => {
+      const id = `engine-${++asked}`;
+      api.send({ id, method, params });
+      await waitFor(() => received.some((m) => m.id === id), `the window's answer to ${method}`, timeout);
+      return received.find((m) => m.id === id);
+    },
     /** The window's reply to request `id`, once it arrives. */
     reply: async (id) => {
       await waitFor(() => received.some((m) => m.id === id), `the window's answer to ${id}`, 30000);
@@ -59,6 +84,7 @@ async function fakeDaemon() {
     },
     close: () => { for (const s of sockets) s.destroy(); server.close(); fs.rmSync(dir, { recursive: true, force: true }); },
   };
+  return api;
 }
 
 /** Where Hermes and Sunday stand in the fake engine. */
@@ -66,7 +92,7 @@ function freshFakeState(overrides = {}) {
   return {
     present: false, installed: false, adopted: false, clean: false, version: '0.21.6',
     setup: 'unknown', running: false, dashboardUrl: null, pid: null, connected: false,
-    extraApps: [], calls: [], ...overrides,
+    extraApps: [], calls: [], grants: [], never: [], ...overrides,
   };
 }
 
@@ -76,7 +102,7 @@ async function launch({ directory, fake, daemon }) {
   const app = await electron.launch({
     args: ['.', `--user-data-dir=${directory}`, ...(process.platform === 'linux' ? ['--no-sandbox'] : [])],
     cwd: path.resolve(__dirname, '..'),
-    env: { ...process.env, OPENAGORA_DAEMON_ADDRESS: (daemon ?? ownDaemon).address },
+    env: { ...process.env, OPENAGORA_TEST: '1', OPENAGORA_DAEMON_ADDRESS: (daemon ?? ownDaemon).address },
   });
   if (ownDaemon) app.on('close', () => ownDaemon.close());
   assert.equal(fs.realpathSync(await app.evaluate(({ app }) => app.getPath('userData'))), fs.realpathSync(directory));
@@ -147,6 +173,17 @@ async function installFakeEngine(app, state) {
     });
     handle('sunday-connect', () => { f().calls.push(['sunday-connect']); f().connected = true; return ok; });
     handle('sunday-disconnect', () => { f().calls.push(['sunday-disconnect']); f().connected = false; return ok; });
+    handle('broker-state', () => ({
+      grants: f().grants,
+      never: { built_in: [{ name: '1Password', apps: ['1Password'] }, { name: 'Private browser windows', titles: ['Incognito'] }], user: f().never },
+    }));
+    handle('broker-revoke', (_e, app) => { f().calls.push(['broker-revoke', app]); f().grants = f().grants.filter((g) => g.source !== app); return ok; });
+    handle('never-add', (_e, rule) => {
+      f().calls.push(['never-add', rule]);
+      f().never.push({ name: rule.name, apps: rule.app ? [rule.app] : [], titles: rule.title ? [rule.title] : [] });
+      return ok;
+    });
+    handle('never-remove', (_e, name) => { f().calls.push(['never-remove', name]); f().never = f().never.filter((r) => r.name !== name); return ok; });
     handle('agent-availability', () => ({ detected: true, launchable: true }));
     handle('launch-agent', (_e, id, action) => { f().calls.push(['launch-agent', id, action]); });
   }, state);

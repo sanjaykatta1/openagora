@@ -1,0 +1,87 @@
+# Apps and windows OpenAgora never captures, whatever else the user allowed.
+#
+# `apps` match an app's name (ignoring case and a trailing version number, so
+# "1Password 7" is 1Password), its bundle id on macOS, its executable on
+# Windows, or its window class on Linux. `titles` match words anywhere in a
+# window's title, in any app. Users add their own rules in Settings or with
+# `openagora never add`.
+
+[[rule]]
+name = "1Password"
+apps = ["1Password", "com.1password.1password", "com.agilebits.onepassword7", "com.agilebits.onepassword-osx", "1password.exe", "1password"]
+
+[[rule]]
+name = "Bitwarden"
+apps = ["Bitwarden", "com.bitwarden.desktop", "bitwarden.exe", "bitwarden"]
+
+[[rule]]
+name = "KeePassXC"
+apps = ["KeePassXC", "org.keepassxc.keepassxc", "keepassxc.exe", "keepassxc"]
+
+[[rule]]
+name = "KeePass"
+apps = ["KeePass", "keepass.exe", "keepass2"]
+
+[[rule]]
+name = "KeeWeb"
+apps = ["KeeWeb", "keeweb.exe", "keeweb"]
+
+[[rule]]
+name = "LastPass"
+apps = ["LastPass", "lastpass.exe"]
+
+[[rule]]
+name = "Dashlane"
+apps = ["Dashlane", "dashlane.exe"]
+
+[[rule]]
+name = "Enpass"
+apps = ["Enpass", "in.sinew.Enpass-Desktop", "enpass.exe", "enpass"]
+
+[[rule]]
+name = "Proton Pass"
+apps = ["Proton Pass", "proton pass.exe", "proton-pass"]
+
+[[rule]]
+name = "NordPass"
+apps = ["NordPass", "nordpass.exe", "nordpass"]
+
+[[rule]]
+name = "Keeper"
+apps = ["Keeper", "Keeper Password Manager", "keeperpasswordmanager.exe"]
+
+[[rule]]
+name = "RoboForm"
+apps = ["RoboForm"]
+
+[[rule]]
+name = "Keychain Access"
+apps = ["Keychain Access", "com.apple.keychainaccess"]
+
+[[rule]]
+name = "Passwords"
+apps = ["Passwords", "com.apple.Passwords"]
+
+[[rule]]
+name = "Passwords and Keys"
+apps = ["Passwords and Keys", "seahorse", "org.gnome.seahorse.application"]
+
+[[rule]]
+name = "KWalletManager"
+apps = ["KWalletManager", "kwalletmanager5", "kwalletmanager"]
+
+[[rule]]
+name = "Authy"
+apps = ["Authy", "Authy Desktop", "com.authy.authy-mac", "authy desktop.exe", "authy desktop"]
+
+[[rule]]
+name = "Tor Browser"
+apps = ["Tor Browser", "org.torproject.torbrowser"]
+titles = ["Tor Browser"]
+
+# Browsers mark private windows in their titles: Chrome "(Incognito)", Edge
+# "[InPrivate]", Firefox "Private Browsing". Safari doesn't, so OpenAgora can't
+# tell Safari's private windows apart.
+[[rule]]
+name = "Private browser windows"
+titles = ["Incognito", "InPrivate", "Private Browsing", "(Private)", "Private Window"]

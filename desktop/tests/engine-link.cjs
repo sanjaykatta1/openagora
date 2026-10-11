@@ -8,10 +8,11 @@ const { fakeDaemon, fakeDashboard, freshFakeState, launch, fakeCalls, tempProfil
 
 let session;
 let daemon;
+let dashboard;
 const directory = tempProfile('openagora-engine-link-');
 
 async function run() {
-  const dashboard = await fakeDashboard();
+  dashboard = await fakeDashboard();
   daemon = await fakeDaemon();
   fs.writeFileSync(path.join(directory, 'personal-agent.json'), JSON.stringify({ version: 1, completed: true, selectedAgent: 'hermes' }));
   const notes = {
@@ -71,12 +72,12 @@ async function run() {
   await page.getByRole('status').filter({ hasText: 'Sunday no longer uses OpenAgora' }).waitFor();
   assert.deepEqual((await fakeCalls(app)).at(-1), ['sunday-disconnect']);
   assert.deepEqual(session.errors, []);
-  dashboard.close();
   console.log('Engine link UI passed: connect consent, confirmation allow/deny/escape/queue, app/open, disconnect.');
 }
 
 run().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => {
   if (session) await session.app.close().catch(() => {});
   if (daemon) daemon.close();
+  if (dashboard) dashboard.close();
   fs.rmSync(directory, { recursive: true, force: true });
 });

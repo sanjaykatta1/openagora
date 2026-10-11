@@ -3,6 +3,7 @@ import { bridge, osName, type App as Listing, type ConfirmRequest, type EngineRe
 import { AgentConfirm } from "./Confirm";
 import { NEW_AGENT_PREFERENCES, PERSONAL_AGENTS, SUNDAY_ID, parseAgentPreferences, type AgentPreferences } from "../../electron/agents";
 import { AgentChooser } from "./PersonalAgent";
+import { SeeingSettings } from "./Seeing";
 import { SundayDashboard, SundayHome, SundaySettings, sundayStage } from "./Sunday";
 
 type View = { kind: "sunday" } | { kind: "store" } | { kind: "library" } | { kind: "settings" } | { kind: "app"; id: string } | { kind: "tab"; id: string };
@@ -138,10 +139,15 @@ export function App() {
     return () => { offAsk(); offDone(); offOpen(); };
   }, [refresh]);
 
-  const answer = (request: ConfirmRequest, allowed: boolean) => {
+  const answer = (request: ConfirmRequest, allowed: boolean, choice?: string) => {
     setAsks((a) => a.filter((r) => r.id !== request.id));
-    void bridge?.answerConfirm(request.id, allowed);
+    void bridge?.answerConfirm(request.id, allowed, choice);
   };
+
+  // Sunday's shortcut needs to know which app the main window shows.
+  useEffect(() => {
+    bridge?.viewChanged(view.kind === "tab" ? { kind: "tab", app: view.id } : { kind: view.kind });
+  }, [view]);
 
   const byId = useMemo(() => new Map(apps.map((a) => [a.id, a])), [apps]);
   const agentListing = byId.get(SUNDAY_ID);
@@ -351,7 +357,9 @@ export function App() {
             onConnect={(connect) => void connectSunday(connect)}
             onOpenPage={(route) => void openDashboardPage(route)}
             onChangeAgent={() => setChoosingAgent(true)}
-            onRemove={() => agentListing && void act(agentListing, "uninstall", "Removing Sunday…")} />
+            onRemove={() => agentListing && void act(agentListing, "uninstall", "Removing Sunday…")}>
+            {sundayChosen && <SeeingSettings />}
+          </SundaySettings>
         ))}
 
         {view.kind === "store" && <Store apps={apps} busy={busy} onOpen={(id) => setView({ kind: "app", id })} onInstall={setConfirming} />}
@@ -428,7 +436,7 @@ export function App() {
       )}
 
       {asks.length > 0 && (
-        <AgentConfirm key={asks[0].id} request={asks[0]} waiting={asks.length - 1} onAnswer={(allowed) => answer(asks[0], allowed)} />
+        <AgentConfirm key={asks[0].id} request={asks[0]} waiting={asks.length - 1} onAnswer={(allowed, choice) => answer(asks[0], allowed, choice)} />
       )}
 
       {toast && (

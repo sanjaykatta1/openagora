@@ -15,6 +15,37 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
+/// Keeps file descriptors this process inherited, besides stdin, stdout and
+/// stderr, from passing on to anything it starts. OpenAgora's window leaks
+/// some of its own (pipes, sockets, open files) into the engine; without this
+/// the engine service and every app it starts would hold them open for as
+/// long as they run.
+#[cfg(unix)]
+pub fn stop_fd_inheritance() {
+    // /dev/fd lists this process's open descriptors on Linux and macOS.
+    let Ok(entries) = fs::read_dir("/dev/fd") else {
+        return;
+    };
+    let fds: Vec<i32> = entries
+        .flatten()
+        .filter_map(|e| e.file_name().to_str().and_then(|n| n.parse().ok()))
+        .filter(|fd| *fd > 2)
+        .collect();
+    for fd in fds {
+        // SAFETY: only reads and sets the descriptor's close-on-exec flag; a
+        // descriptor that is already closed makes fcntl fail harmlessly.
+        unsafe {
+            let flags = libc::fcntl(fd, libc::F_GETFD);
+            if flags >= 0 && flags & libc::FD_CLOEXEC == 0 {
+                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+            }
+        }
+    }
+}
+
+#[cfg(not(unix))]
+pub fn stop_fd_inheritance() {}
+
 /// Runs `cmd` to completion with no input, capturing its output, and kills it
 /// if it takes longer than `timeout`.
 pub fn output_within(cmd: &mut Command, timeout: Duration) -> Result<Output> {

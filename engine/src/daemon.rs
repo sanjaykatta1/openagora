@@ -1,6 +1,7 @@
-//! `openagora serve`: the engine as a long-running service. The desktop app and
-//! every MCP client (through `openagora mcp`) connect over the local socket.
-//! Each connection opens with a hello that says what it is.
+//! `openagora serve`: the engine as a long-running service. The desktop app,
+//! every MCP client (through `openagora mcp`) and Sunday's per-reply hook
+//! (`openagora context --hook`) connect over the local socket. Each connection
+//! opens with a hello that says what it is.
 
 use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
@@ -12,9 +13,11 @@ use interprocess::local_socket::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::apps::Engine;
+use crate::context;
 use crate::gateway::Gateway;
 use crate::ipc::{self, read_message};
-use crate::jsonrpc::{Incoming, METHOD_NOT_FOUND, Peer};
+use crate::jsonrpc::{INTERNAL_ERROR, Incoming, METHOD_NOT_FOUND, Peer};
 use crate::mcp::{self, Client};
 use crate::paths::{self, Paths};
 use crate::state;
@@ -44,11 +47,15 @@ pub fn serve(paths: Paths, catalog: Option<PathBuf>) -> Result<()> {
     };
     state::write(&paths.daemon_file(), &me)?;
     eprintln!("openagora: engine listening on {}", me.address);
-    // Sunday's MCP config and hook point at this copy of the engine.
+    // Sunday's MCP config and hook point at this copy of the engine, and its
+    // skills folder at OpenAgora's own; both follow this version.
     let copy_paths = paths.clone();
     std::thread::spawn(move || {
         if let Err(e) = paths::install_stable_exe(&copy_paths) {
             eprintln!("openagora: refreshing the engine copy: {e:#}");
+        }
+        if let Err(e) = crate::sunday::install_skills(&copy_paths) {
+            eprintln!("openagora: refreshing Sunday's skills: {e:#}");
         }
     });
     let gateway = Arc::new(Gateway::new(paths, catalog));
@@ -82,27 +89,79 @@ fn handle(stream: Stream, gateway: Arc<Gateway>) -> Result<()> {
         }
         "desktop" => {
             let peer = Arc::new(Peer::new(Box::new(send)));
-            gateway.attach_desktop(Arc::clone(&peer));
-            let result = desktop_loop(&mut reader, &peer);
+            gateway.attach_desktop(Arc::clone(&peer), &hello["hello"]);
+            let result = desktop_loop(&mut reader, &peer, &gateway);
             peer.close();
             gateway.detach_desktop(&peer);
             result
+        }
+        "hook" => {
+            let peer = Peer::new(Box::new(send));
+            let Some(message) = read_message(&mut reader)? else {
+                return Ok(());
+            };
+            if let Incoming::Request { id, params, .. } = peer.classify(message) {
+                match hook_context(&gateway, client, &params["payload"]) {
+                    Ok(text) => peer.respond(&id, json!({ "context": text }))?,
+                    Err(e) => peer.respond_error(&id, INTERNAL_ERROR, &format!("{e:#}"))?,
+                }
+            }
+            Ok(())
         }
         other => bail!("unknown client role {other:?}"),
     }
 }
 
-/// OpenAgora's window: it answers the engine's questions (confirmations) and
-/// can ping.
-fn desktop_loop(reader: &mut BufReader<impl Read>, peer: &Peer) -> Result<()> {
+/// The per-reply hook's text, with what only the running engine knows: the
+/// window the user is in and their last press of Sunday's shortcut.
+fn hook_context(
+    gateway: &Gateway,
+    client: &str,
+    payload: &serde_json::Value,
+) -> Result<Option<String>> {
+    let engine = Engine::new()?;
+    let catalog = gateway.catalog()?;
+    let live = if context::is_local(payload) {
+        gateway.live_context()
+    } else {
+        context::Live::default()
+    };
+    context::for_turn(&engine, &catalog, client, payload, &live)
+}
+
+/// OpenAgora's window: it answers the engine's questions (confirmations,
+/// captures) and asks the engine things (the shortcut, the desk). Requests
+/// run on their own threads, since answering one may mean asking the window
+/// something back.
+fn desktop_loop(
+    reader: &mut BufReader<impl Read>,
+    peer: &Arc<Peer>,
+    gateway: &Arc<Gateway>,
+) -> Result<()> {
     while let Some(message) = read_message(reader)? {
-        if let Incoming::Request { id, method, .. } = peer.classify(message) {
-            match method.as_str() {
-                "ping" => peer.respond(&id, json!({}))?,
-                _ => {
-                    peer.respond_error(&id, METHOD_NOT_FOUND, &format!("unknown method {method}"))?
-                }
+        match peer.classify(message) {
+            Incoming::Request { id, method, params } => {
+                let peer = Arc::clone(peer);
+                let gateway = Arc::clone(gateway);
+                std::thread::spawn(move || {
+                    let sent = match gateway.desktop_request(&method, &params) {
+                        Some(Ok(result)) => peer.respond(&id, result),
+                        Some(Err(message)) => peer.respond_error(&id, INTERNAL_ERROR, &message),
+                        None => peer.respond_error(
+                            &id,
+                            METHOD_NOT_FOUND,
+                            &format!("unknown method {method}"),
+                        ),
+                    };
+                    if let Err(e) = sent {
+                        eprintln!("openagora: replying to the window's {method}: {e:#}");
+                    }
+                });
             }
+            Incoming::Notification { method, params } => {
+                gateway.desktop_notification(&method, &params)
+            }
+            Incoming::Reply | Incoming::Invalid => {}
         }
     }
     Ok(())

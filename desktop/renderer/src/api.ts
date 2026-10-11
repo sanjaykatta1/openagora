@@ -78,6 +78,63 @@ export interface ConfirmRequest {
   client: string;
   title: string;
   message: string;
+  /** Ways to say yes, e.g. "Allow once" and "Always allow". */
+  choices?: { id: string; label: string }[];
+}
+
+/** Where Sunday's shortcut stands; shown in the Sunday panel. */
+export interface ShortcutState {
+  phase: "looking" | "pressed" | "capturing" | "offline" | "error";
+  /** The window the shortcut was pressed over. */
+  target?: { kind: "window" | "tab"; app: string; key: string } | null;
+  verdict?: "allowed" | "not-allowed" | "never" | "unknown";
+  /** The never-capture rule that covers it. */
+  rule?: string | null;
+  /** Why OpenAgora couldn't tell which window was in front. */
+  unknown?: string | null;
+  item?: { id: string; description: string } | null;
+  error?: string | null;
+  /** A small copy of what Sunday got. */
+  picture?: string | null;
+}
+
+export type ScreenAccess = "granted" | "denied" | "not-determined" | "restricted" | "unknown" | "not-needed";
+
+export interface DesktopSettings {
+  version: 1;
+  shortcut: string;
+  keepRunning: boolean;
+}
+
+/** OpenAgora's own settings on this computer, and what the system allows. */
+export interface DesktopState {
+  settings: DesktopSettings;
+  /** Why the shortcut couldn't be set, if it couldn't. */
+  shortcutError: string | null;
+  screen: ScreenAccess;
+  platform: string;
+}
+
+/** What the user allowed Sunday to see; mirrors `openagora grants list --json`. */
+export interface Grant {
+  client: string;
+  source: string;
+  source_name: string;
+  destination: string;
+  type: string;
+  scope: "once" | "always";
+  granted_at: number;
+}
+
+export interface NeverRule {
+  name: string;
+  apps?: string[];
+  titles?: string[];
+}
+
+export interface BrokerState {
+  grants: Grant[];
+  never: { built_in: NeverRule[]; user: NeverRule[] };
 }
 
 export interface EngineResult {
@@ -112,10 +169,33 @@ export interface Bridge {
   sundaySetup(choice: SundaySetupChoice): Promise<EngineResult>;
   sundayConnect(): Promise<EngineResult>;
   sundayDisconnect(): Promise<EngineResult>;
-  answerConfirm(id: string, allowed: boolean): Promise<void>;
+  answerConfirm(id: string, allowed: boolean, choice?: string): Promise<void>;
   onConfirm(callback: (request: ConfirmRequest) => void): () => void;
   onConfirmDone(callback: (id: string) => void): () => void;
   onOpenApp(callback: (id: string) => void): () => void;
+  /** Tells OpenAgora what the main window shows (for Sunday's shortcut). */
+  viewChanged(view: { kind: string; app?: string }): void;
+  showMain(): Promise<void>;
+  panel: {
+    state(): Promise<ShortcutState | null>;
+    capture(options: { allow?: "once" | "always"; pick?: boolean }): Promise<ShortcutState>;
+    hide(): Promise<void>;
+    onState(callback: (state: ShortcutState) => void): () => void;
+  };
+  desk: {
+    addClipboard(): Promise<{ id: string }>;
+    addFiles(paths: string[]): Promise<{ id: string }[]>;
+    pathForFile(file: File): string;
+  };
+  desktopSettings(): Promise<DesktopState>;
+  saveDesktopSettings(value: DesktopSettings): Promise<DesktopState>;
+  openScreenSettings(): Promise<void>;
+  broker: {
+    state(): Promise<BrokerState>;
+    revoke(app: string): Promise<EngineResult>;
+    neverAdd(rule: { name: string; app?: string; title?: string }): Promise<EngineResult>;
+    neverRemove(name: string): Promise<EngineResult>;
+  };
   logs(id: string): Promise<EngineResult>;
   openExternal(url: string): Promise<void>;
   update: {

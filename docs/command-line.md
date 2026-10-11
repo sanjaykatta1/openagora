@@ -135,7 +135,7 @@ openagora daemon stop
 openagora serve               # run it in the foreground instead
 openagora mcp --client sunday # the MCP server on stdin/stdout, for an agent's config
 openagora context             # what the per-reply hook would tell Sunday now
-openagora audit               # every app action, who asked and who confirmed
+openagora audit               # every app action and capture, who asked and who confirmed
 ```
 
 Through the MCP gateway, Sunday gets the store tools: `store_search`,
@@ -145,6 +145,39 @@ wait for your confirmation, which the engine asks for itself: in Sunday's chat
 (Hermes shows its own approval prompt, wherever the conversation is), or in
 OpenAgora's window when the asking agent can't ask in chat. If neither can ask,
 nothing happens. Sunday can't update, stop or remove itself this way.
+
+## What Sunday can see
+
+Sunday sees a window only when you press Sunday's shortcut in OpenAgora's
+desktop app, or Sunday asks, and only for apps you allowed. These commands show
+and change the same settings as **Settings → What Sunday can see**.
+
+```sh
+openagora focus                          # the windows in front, front first, and whether Sunday may see each
+openagora grants                         # the apps Sunday may see
+openagora grants allow firefox --name Firefox   # allow an app, by the key `focus` shows (add --once for one capture)
+openagora grants revoke Firefox          # take it back (by key or name)
+openagora never                          # the never-capture list: built in, and yours
+openagora never add Banking --title "My Bank"   # never capture windows with these words in their title
+openagora never add Signal --app Signal         # never capture an app (by name or key)
+openagora never remove Banking           # remove one of your own rules
+openagora desk                           # what's on the desk (kept for 24 hours)
+openagora desk add --text "…"            # put text or a link on the desk for Sunday (or --file <path>)
+openagora desk show <id> --out shot.png  # save an item
+openagora desk clear                     # clear the desk
+```
+
+An app's key is its bundle id on macOS (`com.google.Chrome`), its executable on
+Windows (`chrome.exe`) and its window class on Linux (`google-chrome`).
+Password managers, private browser windows and Tor Browser are never captured;
+the built-in list can be extended but not shortened. `openagora focus` needs a
+macOS, Windows or X11 desktop (on macOS, window titles need Screen Recording
+permission); Wayland doesn't let apps see other apps' windows.
+
+The engine gives Sunday these tools through its gateway: `capture_window`,
+`desk_list`, `desk_get` and `allow_app`. `allow_app` asks you in OpenAgora's
+window. Every capture, allowed or refused, every grant and revocation, and
+every desk read is in `openagora audit`.
 
 ## Uninstall the command line tool
 

@@ -107,7 +107,10 @@ export function App() {
         const done = { install: "installed", uninstall: "removed", start: "started", stop: "stopped" }[action];
         setToast({ text: `${app.name} ${done}.`, error: false });
         if (action === "install" && app.id === preferences?.selectedAgent) setView({ kind: "personal-agent" });
-        if (action === "stop" || action === "uninstall") setTabs((t) => t.filter((id) => id !== app.id));
+        if (action === "stop" || action === "uninstall") {
+          setTabs((t) => t.filter((id) => id !== app.id));
+          void bridge.closePopOut(app.id);
+        }
         if (action === "start" && app.ui === "web") openTab(app.id);
       } else {
         setToast({ text: result.stderr.trim() || `${app.name}: ${action} failed.`, error: true });
@@ -125,6 +128,17 @@ export function App() {
   const closeTab = (id: string) => {
     setTabs((t) => t.filter((x) => x !== id));
     if (view.kind === "tab" && view.id === id) setView({ kind: "library" });
+  };
+
+  /** Move a tab into its own window. Its saved session comes along, so the
+   *  app stays signed in. */
+  const popOut = async (app: Listing, url: string) => {
+    try {
+      await bridge?.popOut(app.id, app.name, url);
+      closeTab(app.id);
+    } catch (e) {
+      setToast({ text: `Couldn't open ${app.name} in its own window: ${e instanceof Error ? e.message : String(e)}`, error: true });
+    }
   };
 
   const installedCount = apps.filter((a) => a.installed).length;
@@ -146,6 +160,7 @@ export function App() {
   );
 
   if (!preferences.completed) return <main className="onboarding">
+    <div className="drag-strip" aria-hidden />
     {!bridge && <div className="notice">Browser preview — your choice here is separate from the desktop app.</div>}
     <AgentChooser firstLaunch selected={preferences.selectedAgent} saving={savingPreferences} error={preferenceError}
       onSave={(id) => void saveAgent(id)} onCancel={() => {}} />
@@ -200,6 +215,9 @@ export function App() {
       </aside>
 
       <main className="content">
+        {/* Without a title bar, this strip is where the window is grabbed to move it.
+            An app tab's own top bar does the same. */}
+        {view.kind !== "tab" && <div className="drag-strip" aria-hidden />}
         {!bridge && (
           <div className="notice">
             This is the OpenAgora window opened in a browser. Install, start and stop only work in the desktop app.
@@ -262,7 +280,7 @@ export function App() {
               />
             );
           }
-          return <AppTab key={`${id}:${app.pid}`} app={app} visible={visible} />;
+          return <AppTab key={`${id}:${app.pid}`} app={app} visible={visible} onPopOut={(url) => void popOut(app, url)} />;
         })}
       </main>
 
@@ -743,7 +761,7 @@ function entryUrl(app: Listing): string {
   return app.url ?? app.home_url ?? "about:blank";
 }
 
-function AppTab({ app, visible }: { app: Listing; visible: boolean }) {
+function AppTab({ app, visible, onPopOut }: { app: Listing; visible: boolean; onPopOut: (url: string) => void }) {
   const ref = useRef<WebviewElement | null>(null);
   const [src] = useState(() => entryUrl(app));
   const [failure, setFailure] = useState<string | null>(null);
@@ -785,6 +803,9 @@ function AppTab({ app, visible }: { app: Listing; visible: boolean }) {
         <span className="bar-actions">
           <button className="link" onClick={() => (setFailure(null), ref.current?.reload())}>
             Reload
+          </button>
+          <button className="link" onClick={() => onPopOut(app.home_url ?? src)} title="Open in its own window">
+            Pop out
           </button>
           <button className="link" onClick={openInBrowser}>
             Open in browser ↗

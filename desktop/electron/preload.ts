@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld("openagora", {
   stop: (id: string) => ipcRenderer.invoke("stop", id),
   logs: (id: string) => ipcRenderer.invoke("logs", id),
   openExternal: (url: string) => ipcRenderer.invoke("open-external", url),
+  popOut: (id: string, name: string, url: string) => ipcRenderer.invoke("pop-out", id, name, url),
+  closePopOut: (id: string) => ipcRenderer.invoke("close-pop-out", id),
   update: {
     state: () => ipcRenderer.invoke("update-state"),
     check: () => ipcRenderer.invoke("update-check"),

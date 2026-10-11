@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { readAgentPreferences, saveAgentPreferences } from "./preferences";
 import { registerUpdater } from "./updater";
+import { closePopOut, popOut } from "./popout";
 import { agentAvailability, commandDirectories, launchAgent } from "./agent-launcher";
 
 const EXE = process.platform === "win32" ? "openagora.exe" : "openagora";
@@ -94,6 +95,11 @@ function registerIpc(): void {
     });
   }
   ipcMain.handle("logs", (_e, id: unknown) => runEngine(["logs", checkId(id), "-n", "200"]));
+  ipcMain.handle("pop-out", (_e, id: unknown, name: unknown, url: unknown) => {
+    if (typeof name !== "string" || typeof url !== "string" || !LOCAL_URL.test(url)) throw new Error("invalid app window");
+    popOut(checkId(id), name, url, LOCAL_URL);
+  });
+  ipcMain.handle("close-pop-out", (_e, id: unknown) => closePopOut(checkId(id)));
   ipcMain.handle("open-external", (_e, url: unknown) => {
     // Websites, and the user's own apps on this machine ("Open in browser").
     if (typeof url === "string" && (url.startsWith("https://") || LOCAL_URL.test(url))) {
@@ -101,6 +107,8 @@ function registerIpc(): void {
     }
   });
 }
+
+let mainWindow: BrowserWindow | null = null;
 
 function createWindow(): void {
   const window = new BrowserWindow({
@@ -118,6 +126,10 @@ function createWindow(): void {
       nodeIntegration: false,
       webviewTag: true,
     },
+  });
+  mainWindow = window;
+  window.on("closed", () => {
+    if (mainWindow === window) mainWindow = null;
   });
   window.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
 }
@@ -146,5 +158,6 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  // Popped-out apps may still be open; the Dock icon brings back OpenAgora itself.
+  if (!mainWindow) createWindow();
 });

@@ -68,6 +68,9 @@ export interface Bridge {
   stop(id: string): Promise<EngineResult>;
   logs(id: string): Promise<EngineResult>;
   openExternal(url: string): Promise<void>;
+  /** Show an app in its own window, signed in like its tab. */
+  popOut(id: string, name: string, url: string): Promise<void>;
+  closePopOut(id: string): Promise<void>;
   update: {
     state(): Promise<UpdateState>;
     check(): Promise<void>;

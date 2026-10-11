@@ -1,13 +1,13 @@
 ---
 name: openagora-handoff
 description: Hand what the user is working on (screenshots, text, links, files) to their coding agents (Claude Code, Codex, OpenCode, T3 Code and others) through OpenAgora, start tasks there, and report back.
-version: 1.1.0
+version: 1.2.0
 author: OpenAgora
 license: MIT
 metadata:
   hermes:
     category: openagora
-    tags: [openagora, coding agents, handoff, t3code]
+    tags: [openagora, coding agents, handoff, t3code, opencode]
     requires_tools: [mcp__openagora__send_to]
 ---
 
@@ -23,7 +23,7 @@ Your tools on the `openagora` MCP server (`mcp__openagora__<tool>` in Hermes):
 |---|---|
 | `destinations` | see where you can send things, what each takes, and whether it's ready |
 | `send_to` | send desk items to a coding agent's inbox, with a note; add them to a task you started; or, for anything else, put one on the clipboard (`clipboard`) or save them into a folder (`folder`, with its full path) |
-| `start_task` | start a task in an app that runs them (a new T3 Code thread), with desk items attached |
+| `start_task` | start a task where tasks run (a new T3 Code thread, a new OpenCode session), with desk items attached |
 | `task_status` | see whether a task finished; it can wait up to 240 seconds at a time |
 | `task_result` | read what a task did: the agent's messages, commands and changes |
 
@@ -44,9 +44,17 @@ the user first.
 4. For T3 Code: `start_task` with the user's request as the prompt, the desk
    items, and the project (ask if T3 Code has several and the user didn't say).
    Give the user the thread's link, written exactly as OpenAgora returns it.
-5. When the user asks how it went, use `task_status` (wait in steps if it's
+5. When the user wants OpenCode to do the work itself (not just read what you
+   send): `start_task` with `to: "opencode"`, the prompt, the desk items and
+   `project` set to one of the folders OpenCode knows (`destinations` lists
+   them; ask which if the user didn't say). OpenCode asks before it edits
+   files or runs commands, and OpenAgora asks the user about each while you
+   follow the task with `task_status`: keep checking while it runs, and tell
+   the user to answer in OpenAgora's window. You can't answer for them. Give
+   them the command OpenAgora returns to open the session in OpenCode.
+6. When the user asks how it went, use `task_status` (wait in steps if it's
    still running) and then `task_result`, and summarize it for them.
-6. For an agent or app that isn't set up, or isn't listed: `send_to` with
+7. For an agent or app that isn't set up, or isn't listed: `send_to` with
    `clipboard` (one item: a picture or text, for the user to paste) or with
    `folder` and the folder's full path (e.g. the user's project; ask which if
    you don't know). Tell the user where it went: OpenAgora's answer says.

@@ -25,6 +25,7 @@ pub mod manifest;
 pub mod mcp;
 pub mod memory;
 pub mod oauth;
+pub mod opencode;
 pub mod paths;
 pub mod process;
 pub mod screen_text;

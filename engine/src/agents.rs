@@ -78,8 +78,9 @@ pub struct Found {
 }
 
 impl Found {
-    /// OpenCode 2 writes a project's config unless told `--global`.
-    fn major(&self) -> Option<u32> {
+    /// The major version (OpenCode 2 writes a project's config unless told
+    /// `--global`, and has a shared server).
+    pub(crate) fn major(&self) -> Option<u32> {
         let version = self.version.as_deref()?;
         version
             .split(|c: char| !c.is_ascii_digit() && c != '.')

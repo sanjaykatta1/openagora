@@ -289,6 +289,20 @@ before each change. The sign-in lasts 30 days; you can take it back in T3
 Code's Settings → Connections. Sunday can also use T3 Code's own tools: reading
 threads needs no question, anything else asks you first.
 
+**OpenCode can run the work itself too.** Ask Sunday to **start an OpenCode
+session** on the screenshot, in one of your projects (a folder you've worked in
+with OpenCode before). OpenAgora asks you first, saying which folder, then
+starts the session with the picture, through OpenCode's own server: OpenCode
+2's background service (OpenAgora starts it with `opencode service start` if it
+isn't running), or, for OpenCode 1, an `opencode serve` that OpenAgora runs on
+your computer only, with a password of its own. The session asks before
+OpenCode edits a file, runs a command or fetches a web page: while Sunday follows
+the task, OpenAgora puts each of those questions to you in its own window
+(**Allow once**, **Allow for this task**, or **Don't allow**) and passes your
+answer on. Sunday can't answer for you. Open the session in OpenCode with the
+command Sunday gives you (`opencode -s <session>`, or `opencode <folder> -s
+<session>` for OpenCode 1), and ask Sunday how it went.
+
 **Any other agent or app: the clipboard or a folder.** For an agent that isn't
 set up, or any app at all, Sunday can put a screenshot or text **on the
 clipboard** for you to paste (one thing at a time), or **save it into your

@@ -49,6 +49,10 @@ pub struct Task {
     /// A link that opens it in the destination, when there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<String>,
+    /// The destination's own command that opens it, when there is one
+    /// (`opencode -s <session>`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_with: Option<String>,
 }
 
 /// How a task is going.
@@ -98,6 +102,19 @@ pub trait Destination {
     /// Hands one item over: into the agent's inbox, or into `task`. Says
     /// where it went.
     fn deliver(&self, item: &Item, task: Option<&Task>, message: Option<&str>) -> Result<String>;
+    /// Checks a task can start in `project` before the user is asked.
+    fn check_task(&self, project: Option<&str>) -> Result<()> {
+        let _ = project;
+        Ok(())
+    }
+    /// What the user's question says about how the task runs.
+    fn task_note(&self, project: Option<&str>) -> String {
+        let _ = project;
+        format!(
+            "{} runs it with the access you gave OpenAgora there.",
+            self.name()
+        )
+    }
     /// Starts a task with `prompt` and `items`, in `project` where the
     /// destination has projects.
     fn start_task(

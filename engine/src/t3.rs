@@ -747,6 +747,7 @@ impl Destination for T3 {
             remote,
             items: items.iter().map(|i| i.id.clone()).collect(),
             link: Some(format!("t3-thread://v1/{thread}")),
+            open_with: None,
         })
     }
 

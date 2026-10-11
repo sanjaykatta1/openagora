@@ -127,6 +127,13 @@ pub fn spawn(program: &Path, args: &[String], cwd: &Path, log: &Path) -> Result<
         .with_context(|| format!("starting {}", program.display()))
 }
 
+/// Starts `cmd` detached, as apps are started: it keeps running after
+/// `openagora` exits.
+pub fn spawn_detached(cmd: &mut Command) -> Result<Child> {
+    detach(cmd);
+    Ok(cmd.spawn()?)
+}
+
 #[cfg(unix)]
 fn detach(cmd: &mut Command) {
     use std::os::unix::process::CommandExt;

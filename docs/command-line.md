@@ -229,6 +229,11 @@ openagora disconnect t3code              # forget that sign-in
 In the agent, ask "what did Sunday send me?": it calls `context_inbox` and
 `context_get`. T3 Code needs `connect` once (choose Supervised or more, so Sunday
 can start threads); after that Sunday starts threads there with `start_task`.
+Sunday starts OpenCode sessions with `start_task` too, in a folder OpenCode
+knows, through OpenCode 2's background service (started with `opencode service
+start` if needed) or an `opencode serve` OpenAgora runs for OpenCode 1 (its log:
+`<data folder>/logs/opencode-serve.log`). OpenCode asks before it edits files or
+runs commands, and OpenAgora asks you about each in its window.
 The sign-in lasts 30 days and is kept in a file only you can open. For any
 other agent or app, Sunday can put one item on the clipboard (`clipboard`) or
 save items into a folder in your home (`folder`); OpenAgora's window must be

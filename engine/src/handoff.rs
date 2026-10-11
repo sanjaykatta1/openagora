@@ -250,6 +250,13 @@ impl Gateway {
                 "A folder only takes items from send_to, with folder set to its full path.".into(),
             );
         }
+        if id == crate::opencode::ID {
+            // OpenCode takes things into its inbox, and runs tasks.
+            return Ok(Box::new(crate::opencode::destination(
+                &self.paths,
+                self.desktop(),
+            )));
+        }
         if let Some(name) = agents::name(&self.paths, id) {
             return Ok(Box::new(Pull {
                 paths: self.paths.clone(),
@@ -403,8 +410,27 @@ impl Gateway {
                 _ => "not set up yet: the user sets it up in OpenAgora's Settings → Coding agents"
                     .to_string(),
             };
+            // OpenCode also runs tasks, in a folder it knows.
+            let tasks = if d.id == crate::opencode::ID {
+                let known = crate::opencode::projects();
+                if known.is_empty() {
+                    " It also runs tasks (start_task, with project set to a folder it knows), once the user has opened a folder in it.".to_string()
+                } else {
+                    format!(
+                        " It also runs tasks: start_task with project set to one of the folders it knows: {}.",
+                        known
+                            .iter()
+                            .take(10)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }
+            } else {
+                String::new()
+            };
             lines.push(format!(
-                "- {} ({}): coding agent, takes pictures, text and files; {state}",
+                "- {} ({}): coding agent, takes pictures, text and files; {state}.{tasks}",
                 d.name, d.id
             ));
         }
@@ -759,9 +785,14 @@ impl Gateway {
             .filter(|t| !t.is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| prompt.chars().take(60).collect());
+        // A task that can't start isn't put to the user.
+        if let Err(e) = dest.check_task(args["project"].as_str()) {
+            return ToolResult::error(format!("{e:#}"));
+        }
         // Starting a task is an action in the app: the user says yes to it,
         // with the items, in one question.
-        if let Err(why) = self.approve_task(client, dest.as_ref(), &title, prompt, &items) {
+        let note = dest.task_note(args["project"].as_str());
+        if let Err(why) = self.approve_task(client, dest.as_ref(), &title, prompt, &items, &note) {
             return ToolResult::text(why);
         }
         let mut entry = Entry::new(&client.id, "start_task", dest.id());
@@ -784,11 +815,18 @@ impl Gateway {
                         &format!("attached to {}", task.id),
                     );
                 }
-                let link = task
+                let mut link = task
                     .link
                     .as_ref()
                     .map(|l| format!(" Link it for the user as [{}]({l}).", task.title))
                     .unwrap_or_default();
+                if let Some(command) = &task.open_with {
+                    link.push_str(&format!(
+                        " The user can open it in {} with `{command}`; {} asks before it edits files or runs commands, and OpenAgora asks the user about each while you check on the task.",
+                        dest.name(),
+                        dest.name()
+                    ));
+                }
                 ToolResult::text(format!(
                     "Started \"{}\" in {} as task {}.{link} Check on it with task_status (it can wait up to 240 s at a time), and read what it did with task_result.",
                     task.title,
@@ -816,6 +854,7 @@ impl Gateway {
         title: &str,
         prompt: &str,
         items: &[Item],
+        note: &str,
     ) -> Result<(), String> {
         let name = dest.name().to_string();
         let always = matches!(
@@ -846,7 +885,7 @@ impl Gateway {
         };
         let shown: String = prompt.chars().take(600).collect();
         let question = format!(
-            "{who} wants to start a task in {name}: \"{title}\".\n\n{shown}{attached}\n\n{name} runs it with the access you gave OpenAgora there. You can take \"always\" back in OpenAgora's Settings.",
+            "{who} wants to start a task in {name}: \"{title}\".\n\n{shown}{attached}\n\n{note} You can take \"always\" back in OpenAgora's Settings.",
             who = client_name(&client.id),
         );
         let choices = [("once", "Start it"), ("always", "Always allow")];

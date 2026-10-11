@@ -16,8 +16,8 @@ An open-source app store for your desktop.
   (**Command+Shift+Space** on a Mac) in any app to call Sunday over it; Sunday sees
   that app's window only if you allowed the app, and never sees password managers
   or private browser windows. Ask Sunday to send what you're working on to
-  your coding agent (Claude Code, Codex, OpenCode, or a new T3 Code thread),
-  each set up once with its own command. Ask it "what did I do in my coding
+  your coding agent (Claude Code, Codex, OpenCode, or a new T3 Code thread or
+  OpenCode session), each set up once with its own command. Ask it "what did I do in my coding
   sessions today?" and it answers from those agents' own records, after asking
   you; give it long-term memory on your computer with Holographic. Sunday can
   read a window's text, and if you turn on background mode (off unless you do),

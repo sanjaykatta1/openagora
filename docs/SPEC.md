@@ -418,6 +418,34 @@ interface (`engine/src/destinations.rs`):
   the status (waited in steps of at most 240 s, under Hermes's 300 s call
   limit) and `t3_thread_read` the messages, commands and changes. A refused
   grant is forgotten and the user asked to connect again.
+- **Push, OpenCode next** (built: phase 6; `engine/src/opencode.rs`). OpenCode
+  stays a pull destination (`send_to` into its inbox) and also runs tasks,
+  through its own local server API. OpenCode 2: its shared background service,
+  found through the registration file OpenCode writes for its clients
+  (`$XDG_STATE_HOME/opencode/service.json`, else `~/.local/state`; a URL on
+  127.0.0.1, the service's pid and password), started with OpenCode's own
+  `opencode service start` when it isn't running, after the user said yes to
+  the task. OpenCode 1: `opencode serve --hostname 127.0.0.1 --port <free>`, run
+  by OpenAgora with a random password in its environment
+  (`OPENCODE_SERVER_PASSWORD`; nothing goes into OpenCode's config), recorded
+  in `<data>/run/opencode.toml` and reused while it runs. Both are asked with
+  HTTP Basic auth. A task runs only in a folder OpenCode already knows (read
+  from its own database; by path, or by a name that fits one folder), checked
+  before the user is asked. The session is created with rules that make
+  OpenCode ask before it edits files, runs commands, fetches or searches the
+  web, or leaves the folder, and deny its own questions (`permission` rules in
+  OpenCode 1, `permissions` in OpenCode 2), then prompted with the text and the
+  desk pictures as `data:` URIs (file parts in 1, files in 2; text items
+  inline). While Sunday follows the task (`task_status`), OpenAgora lists
+  OpenCode's pending requests and asks the user about each in its own window
+  ("Allow once", "Allow for this task", or no), and answers OpenCode itself:
+  Sunday has no way to. Without the window, a request waits and Sunday is told.
+  `task_result` returns the assistant's text (no reasoning, no synthetic
+  parts) and any error. Where a pushed task is shown (the issue's open
+  question): in the agent's own interface, `opencode -s <session>` for
+  OpenCode 2 and `opencode <folder> -s <session>` for 1, which Sunday gives the
+  user; Sunday reports status and results itself. Audit: `start_task`,
+  `task_permission` (client `opencode`, the user's answer).
 - **Fallbacks, for any agent or app.** `send_to` with `to = "clipboard"` puts
   one picture (PNG or JPEG) or text on the clipboard, written by OpenAgora's
   window; `to = "folder"`, with `folder`, saves items as new files into an

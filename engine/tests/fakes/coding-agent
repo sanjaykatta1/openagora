@@ -2,7 +2,10 @@
 # Stands in for Claude Code (`claude`), Codex (`codex`) and OpenCode
 # (`opencode`) in tests. Copied under each name, it acts as that tool's
 # `--version` and `mcp add|get|list|remove`, records every call in
-# $AGENT_CALLS, and keeps its MCP servers in $HOME/.fake-<tool>-mcp/.
+# $AGENT_CALLS, and keeps its MCP servers in $HOME/.fake-<tool>-mcp/. As
+# OpenCode it also runs $FAKE_OPENCODE_SERVER: OpenCode 1's `serve`, or
+# OpenCode 2's `service start`, which registers the service in
+# $XDG_STATE_HOME/opencode/service.json.
 tool=$(basename "$0")
 echo "$tool $*" >> "${AGENT_CALLS:-/dev/null}"
 dir="$HOME/.fake-$tool-mcp"
@@ -15,6 +18,27 @@ case "$1" in
     esac
     exit 0 ;;
   mcp) ;;
+  serve)
+    [ "$tool" = opencode ] || { echo "unknown command: $*" >&2; exit 2; }
+    shift
+    port=0
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --port) port=$2; shift 2 ;;
+        --hostname) shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    exec python3 "$FAKE_OPENCODE_SERVER" --api 1 --port "$port" ;;
+  service)
+    [ "$tool" = opencode ] && [ "$2" = start ] || { echo "unknown command: $*" >&2; exit 2; }
+    state="${XDG_STATE_HOME:-$HOME/.local/state}/opencode"
+    mkdir -p "$state"
+    nohup python3 "$FAKE_OPENCODE_SERVER" --api 2 --registration "$state/service.json" >/dev/null 2>&1 &
+    i=0
+    while [ ! -s "$state/service.json" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+    python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["url"])' "$state/service.json"
+    exit 0 ;;
   plugin)
     # Claude Code's plugin commands: marketplace add|remove, install|uninstall.
     plugins="$HOME/.fake-$tool-plugins"

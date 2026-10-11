@@ -632,6 +632,43 @@ fn opencode_db(home: &Path) -> PathBuf {
     }
 }
 
+/// The folders OpenCode has sessions in, the most recently used first: the
+/// projects it knows (read only, from both sets of its tables).
+pub fn opencode_projects(home: &Path) -> Vec<String> {
+    let reader = OpenCode {
+        db: opencode_db(home),
+    };
+    if !reader.db.is_file() {
+        return Vec::new();
+    }
+    let Ok(db) = reader.open() else {
+        return Vec::new();
+    };
+    let mut newest: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for table in ["session_v2", "session"] {
+        if !OpenCode::has_table(&db, table) {
+            continue;
+        }
+        let sql = format!(
+            "SELECT directory, max(time_updated) FROM {table} \
+             WHERE directory IS NOT NULL AND directory != '' GROUP BY directory"
+        );
+        let Ok(mut query) = db.prepare(&sql) else {
+            continue;
+        };
+        let rows = query.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        });
+        for (dir, at) in rows.into_iter().flatten().flatten() {
+            let entry = newest.entry(dir).or_insert(at);
+            *entry = (*entry).max(at);
+        }
+    }
+    let mut dirs: Vec<(String, i64)> = newest.into_iter().collect();
+    dirs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    dirs.into_iter().map(|(dir, _)| dir).take(100).collect()
+}
+
 /// The most of one session file that is read.
 const MAX_FILE: u64 = 64 * 1024 * 1024;
 

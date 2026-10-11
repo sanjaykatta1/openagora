@@ -3,7 +3,7 @@
 // Sunday's shortcut and panel, and the menu bar or tray icon that keeps
 // OpenAgora running after its window closes.
 
-import { app, BaseWindow, BrowserWindow, clipboard, ClipboardItem, globalShortcut, ipcMain, Menu, nativeImage, screen, session, shell, Tray } from "electron";
+import { app, BaseWindow, BrowserWindow, clipboard, ClipboardItem, globalShortcut, ipcMain, Menu, nativeImage, screen, session, shell, systemPreferences, Tray } from "electron";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -14,7 +14,7 @@ import { EngineLink, type ConfirmAnswer, type ConfirmRequest, type Picture } fro
 import { capture, mayCapture, screenAccess } from "./capture";
 import { readDesktopSettings, saveDesktopSettings, type DesktopSettings } from "./desktop-settings";
 import { TRAY_ICON } from "./tray-icon";
-import { bringBack, closeTab, configureTabs, coverTabs, describeTabs, focusedPopout, mainClosed, openTab, placeTab, poppedTabs, popouts, popOut, reloadTab, showPopout, shownInMain, tabUrl } from "./tabs";
+import { bringBack, closeTab, configureTabs, coverTabs, describeTabs, focusedPopout, mainClosed, openTab, placeTab, poppedTabs, popouts, popOut, reloadTab, showPopout, shownInMain, tabText, tabUrl } from "./tabs";
 
 const EXE = process.platform === "win32" ? "openagora.exe" : "openagora";
 const LOCAL_URL = /^http:\/\/(127\.0\.0\.1|localhost):\d+(\/|$)/;
@@ -385,6 +385,7 @@ function startEngineLink(): EngineLink {
       if (purpose === "shortcut") lastPicture = thumbnail(picture);
       return picture;
     },
+    readText: tabText,
     writeClipboard: async (content) => {
       if (content.kind === "text") return clipboard.writeText(content.text);
       // The clipboard takes pictures as PNG: a JPEG goes on as one.
@@ -628,7 +629,10 @@ function registerIpc(): void {
   handle("sessions-revoke", (_e, agent: unknown) => runEngine(["sessions", "revoke", checkId(agent)]));
 
   // What Sunday can see: OpenAgora's own settings and the engine's broker.
-  const desktopState = () => ({ settings, shortcutError, screen: screenAccess(), platform: process.platform });
+  // macOS: reading other apps' text needs Accessibility permission (null
+  // elsewhere, where nothing asks).
+  const accessibility = () => (process.platform === "darwin" ? systemPreferences.isTrustedAccessibilityClient(false) : null);
+  const desktopState = () => ({ settings, shortcutError, screen: screenAccess(), accessibility: accessibility(), platform: process.platform });
   handle("desktop-settings", desktopState);
   handle("save-desktop-settings", (_e, value: unknown) => {
     settings = saveDesktopSettings(app.getPath("userData"), value);
@@ -638,6 +642,13 @@ function registerIpc(): void {
   });
   handle("open-screen-settings", () => {
     if (process.platform === "darwin") return shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture");
+  });
+  handle("open-accessibility-settings", () => {
+    if (process.platform !== "darwin") return;
+    // Lists OpenAgora under Accessibility (macOS asks the user itself), then
+    // shows that page.
+    systemPreferences.isTrustedAccessibilityClient(true);
+    return shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
   });
   handle("audit-log", async () => {
     const r = await runEngine(["audit", "-n", "1000", "--json"]);

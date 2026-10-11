@@ -191,6 +191,9 @@ export interface DesktopState {
   /** Why the shortcut couldn't be set, if it couldn't. */
   shortcutError: string | null;
   screen: ScreenAccess;
+  /** macOS: whether OpenAgora may read other apps' text (Accessibility);
+   *  null where the system doesn't ask. */
+  accessibility: boolean | null;
   platform: string;
 }
 
@@ -298,6 +301,7 @@ export interface Bridge {
   desktopSettings(): Promise<DesktopState>;
   saveDesktopSettings(value: DesktopSettings): Promise<DesktopState>;
   openScreenSettings(): Promise<void>;
+  openAccessibilitySettings(): Promise<void>;
   codingAgents: {
     state(): Promise<CodingAgentsState>;
     setUp(id: string): Promise<EngineResult>;

@@ -74,6 +74,7 @@ contextBridge.exposeInMainWorld("openagora", {
   desktopSettings: () => ipcRenderer.invoke("desktop-settings"),
   saveDesktopSettings: (value: unknown) => ipcRenderer.invoke("save-desktop-settings", value),
   openScreenSettings: () => ipcRenderer.invoke("open-screen-settings"),
+  openAccessibilitySettings: () => ipcRenderer.invoke("open-accessibility-settings"),
   codingAgents: {
     state: () => ipcRenderer.invoke("coding-agents"),
     setUp: (id: string) => ipcRenderer.invoke("agent-setup", id),

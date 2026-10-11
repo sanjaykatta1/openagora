@@ -187,7 +187,16 @@ only you can open, for 24 hours. `openagora desk` lists and clears them.
 
 **Sunday can look again** with its `capture_window` tool, but only at apps you
 allowed, and **asks to see an app** with `allow_app`, which puts OpenAgora's own
-question in front of you (for the app Sunday names, or the one you're in). OpenAgora looks up which windows are in front only
+question in front of you (for the app Sunday names, or the one you're in).
+
+**Sunday can read a window's text** with `read_window`, when it needs the words
+rather than the picture (a page, a document, an error message), from the same
+apps it may see: allowing an app covers its screenshots and its text, and the
+never-capture list holds, checked again with the title as read. The text goes on
+the desk like a screenshot. OpenAgora reads its own tabs (and popped-out apps)
+from the app's page, without any system permission; any other window through
+the system's accessibility support (below). Some apps share no text with the
+system; Sunday then uses a screenshot. OpenAgora looks up which windows are in front only
 when it needs to (when you press the shortcut, when Sunday asks, and before each
 of Sunday's replies, to tell it which app you're in); it keeps no record of the
 apps you use. Every capture, allowed or refused, every permission you give or
@@ -207,9 +216,17 @@ or change the shortcut, in **Settings → What Sunday can see**.
 
 - **macOS** asks once for **Screen Recording** permission the first time
   OpenAgora captures another app's window (System Settings → Privacy & Security →
-  Screen Recording). Settings shows a button to that page.
-- **Windows** needs no permission; OpenAgora uses Windows' own window capture.
-- **Linux on X11** needs no permission.
+  Screen Recording). Settings shows a button to that page. Reading other apps'
+  text needs **Accessibility** permission (System Settings → Privacy & Security →
+  Accessibility); Settings says when it's missing, with a button that lists
+  OpenAgora there. Chrome and Electron apps build their text for the system when
+  OpenAgora asks.
+- **Windows** needs no permission; OpenAgora uses Windows' own window capture,
+  and UI Automation for text.
+- **Linux on X11** needs no permission. Text comes through AT-SPI, the
+  accessibility bus: GTK apps share theirs; browsers, Electron and Qt apps only
+  while the system's accessibility support (a screen reader, say) is on.
+  OpenAgora doesn't switch it on for you.
 - **Linux on Wayland** doesn't let apps see which window is in front. Pressing
   the shortcut opens the panel with **Pick a window**, and the system's own dialog
   lets you choose the window; your choice is the permission for that one capture

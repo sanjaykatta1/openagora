@@ -266,6 +266,21 @@ export function poppedTabs(): string[] {
   return [...tabs.values()].filter((t) => alive(t.popout)).map((t) => t.id);
 }
 
+/** A script world of OpenAgora's own in an app's page, apart from the page's
+ *  scripts (0 is the page's, 999 Electron's). */
+const TEXT_WORLD = 1001;
+/** The most text read from a page, in characters. */
+const MAX_TEXT = 200_000;
+
+/** The text an app's page shows, wherever it is: for the engine (Sunday's
+ *  read_window). No OS permission needed. */
+export async function tabText(appId: string): Promise<{ title: string; text: string }> {
+  const contents = tabContents(appId);
+  if (!contents) throw new Error("that app's tab isn't open in OpenAgora");
+  const text: unknown = await contents.executeJavaScriptInIsolatedWorld(TEXT_WORLD, [{ code: "document.body ? document.body.innerText : ''" }]);
+  return { title: contents.getTitle(), text: typeof text === "string" ? text.slice(0, MAX_TEXT) : "" };
+}
+
 /** The page of an app's tab, wherever it is: for captures. */
 export function tabContents(appId: string): WebContents | undefined {
   const contents = tabs.get(appId)?.view.webContents;

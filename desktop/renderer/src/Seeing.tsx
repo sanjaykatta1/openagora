@@ -66,7 +66,7 @@ export function SeeingSettings() {
   return (
     <div className="panel" aria-labelledby="seeing-title">
       <h3 id="seeing-title">What Sunday can see</h3>
-      <p className="muted small">Sunday sees a window only when you press its shortcut or ask it to look, and only for apps you allow. Captures stay on this computer, on the desk, for 24 hours. {PROVIDER_NOTICE}</p>
+      <p className="muted small">Sunday sees a window, or reads its text, only when you press its shortcut or ask it to look, and only for apps you allow. Captures stay on this computer, on the desk, for 24 hours. {PROVIDER_NOTICE}</p>
 
       {desktop && <>
         <div className="settings-row">
@@ -96,6 +96,11 @@ export function SeeingSettings() {
         {platform === "darwin" && desktop.screen !== "granted" && (
           <p className="notice">macOS needs Screen Recording permission before OpenAgora can capture other apps’ windows{desktop.screen === "not-determined" ? "; it asks the first time" : ""}.{" "}
             <button className="link" onClick={() => void bridge!.openScreenSettings()}>Open System Settings</button>
+          </p>
+        )}
+        {desktop.accessibility === false && (
+          <p className="notice">Sunday can read the text on other apps’ windows (only apps you allow) once macOS gives OpenAgora Accessibility permission.{" "}
+            <button className="link" onClick={() => void bridge!.openAccessibilitySettings()}>Open System Settings</button>
           </p>
         )}
       </>}

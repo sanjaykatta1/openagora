@@ -1,10 +1,10 @@
 // Popping an app out of its tab into a window of its own (acceptance test 13,
 // the window's side): the app's page moves without reloading, OpenAgora's
 // window tells the engine which window shows which app and which has focus,
-// the popped-out page can be captured, a dialog of OpenAgora's is never
-// hidden under an app's page, and closing the window brings the app back to
-// its tab. Popped-out apps outlive the main window. The engine is a stand-in;
-// engine/tests/capture.rs covers its side.
+// the popped-out page can be captured and its text read, a dialog of
+// OpenAgora's is never hidden under an app's page, and closing the window
+// brings the app back to its tab. Popped-out apps outlive the main window.
+// The engine is a stand-in; engine/tests/capture.rs covers its side.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -105,6 +105,14 @@ async function run() {
   assert.ok(capture.result, JSON.stringify(capture.error));
   assert.ok(Buffer.from(capture.result.data, 'base64').subarray(0, 8).equals(PNG));
   assert.ok(capture.result.width > 300);
+  // And read its text, from the app's page: no OS permission needed.
+  const read = await daemon.ask('capture/text', { target: { kind: 'tab', app: 'notes' } });
+  assert.ok(read.result, JSON.stringify(read.error));
+  assert.match(read.result.text, /Fake Hermes dashboard\s+\/notes/);
+  assert.equal(read.result.title, 'Hermes');
+  // Other windows' text the engine reads itself, through the OS.
+  const refused = await daemon.ask('capture/text', { target: { kind: 'window', id: 7 } });
+  assert.match(refused.error.message, /its own tabs only/);
 
   // Bring it back: the same page, in its tab again.
   await page.bringToFront();

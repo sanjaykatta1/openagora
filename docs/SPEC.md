@@ -300,9 +300,30 @@ engine decides what may be captured, keeps the result, and logs it.
 - **Desk from the window:** `desk/add` for the clipboard and for files dropped on
   the panel, which the panel reads and sends as their contents: OpenAgora's
   window never reads a file by a path a page gives it.
+- **On-screen text** (built: phase 6; `engine/src/screen_text.rs`):
+  `read_window` reads the text on the window the user is in, or a named app's,
+  under the same grant as its screenshots (`image/*`: seeing an app), with the
+  same once-grant and never-capture checks (again with the title as read), and
+  puts it on the desk as text. OpenAgora's own tabs and popped-out apps:
+  OpenAgora's window reads the page's text (`capture/text`, in a script world of
+  its own), without any OS permission. Other windows: the engine asks the OS's
+  accessibility support, only when asked. macOS: the app's AXUIElement tree,
+  from a JavaScript for Automation script (`osascript`), which needs
+  Accessibility permission; it sets `AXManualAccessibility` so Chromium and
+  Electron apps build their tree. Windows: UI Automation from the window's
+  handle, in a PowerShell script (a document's text pattern, an edit field's
+  value, the names of text, buttons and links; off-screen parts skipped).
+  Linux: AT-SPI over D-Bus (`zbus`): the app's windows by process id (the
+  accessibility bus's connection credentials), the window by title, else the
+  active one; the text interface of every element on screen, else a leaf's
+  name. At most 4,000 elements and 60,000 characters per window, within a few
+  seconds. `OPENAGORA_SCREEN_TEXT_FILE` replaces the OS in tests; a test against
+  a real GTK window reads it through the real AT-SPI bus (skipped where AT-SPI
+  isn't installed). Audit: `read_window`.
 - **Tools for Sunday:** `capture_window` (the window the user is in, or a named
-  app; returns the image), `desk_list`, `desk_get` (images as image content,
-  text marked as data), and `allow_app` (a named app, or the one the user is in),
+  app; returns the image), `read_window` (its text, as above), `desk_list`,
+  `desk_get` (images as image content, text marked as data), and `allow_app` (a
+  named app, or the one the user is in),
   which asks the user in OpenAgora's window only, with "Allow once" and "Always
   allow" (`confirm/ask` with `choices`), never in a chat. A never-listed app can't
   be allowed. Coding agents read only what is sent to them (phase 4, below).

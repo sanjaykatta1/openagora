@@ -26,6 +26,7 @@ pub mod memory;
 pub mod oauth;
 pub mod paths;
 pub mod process;
+pub mod screen_text;
 pub mod sessions;
 pub mod state;
 pub mod sunday;

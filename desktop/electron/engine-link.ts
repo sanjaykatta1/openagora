@@ -2,9 +2,9 @@
 // its local socket. The engine asks the user to confirm agents' actions here
 // when the asking agent can't ask in its own chat, asks to show apps in tabs,
 // and asks the window to capture windows (only the window may ask the OS for
-// a picture), write the clipboard and open an app by its own URL scheme. The
-// window tells the engine about its own windows and the shortcut, and puts
-// things on the desk.
+// a picture) and read its own tabs' text, write the clipboard and open an app
+// by its own URL scheme. The window tells the engine about its own windows
+// and the shortcut, and puts things on the desk.
 
 import net from "node:net";
 
@@ -59,6 +59,9 @@ export interface EngineLinkEvents {
   openApproval(app: string, url: string): Promise<void>;
   /** The engine asks for a picture of a window. */
   capture(target: CaptureTarget, maxEdge: number, purpose: CapturePurpose): Promise<Picture>;
+  /** The engine asks for the text an app's page in OpenAgora shows (other
+   *  windows' text the engine reads itself, through the OS). */
+  readText(app: string): Promise<{ title: string; text: string }>;
   /** Sunday handed something to the clipboard, for the user to paste. */
   writeClipboard(content: ClipboardContent): Promise<void>;
   /** Sunday handed a file to an app that opens files by its own URL scheme. */
@@ -208,6 +211,10 @@ export class EngineLink {
       const max = typeof params.max === "number" && params.max >= 64 ? Math.min(params.max, 4096) : 1920;
       const purpose: CapturePurpose = params.purpose === "shortcut" ? "shortcut" : "tool";
       this.events.capture(target, max, purpose).then(reply, fail);
+    } else if (message.method === "capture/text" && message.id !== undefined) {
+      const target = parseTarget(params.target);
+      if (target?.kind !== "tab") { fail("OpenAgora's window reads the text of its own tabs only"); return; }
+      this.events.readText(target.app).then(reply, fail);
     } else if (message.method === "oauth/open" && message.id !== undefined) {
       if (typeof params.app !== "string" || typeof params.url !== "string") { fail("an approval page needs an app and an address"); return; }
       this.events.openApproval(params.app, params.url).then(() => reply({ opened: true }), fail);

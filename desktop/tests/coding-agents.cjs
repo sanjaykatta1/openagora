@@ -4,8 +4,9 @@
 // connected on its own approval page, which OpenAgora's window shows with
 // T3's own session and closes once T3 answers. Settings → Memory (tests 11
 // and 12, the window's side): Holographic and the digest only after the user
-// sees what runs, and sessions Sunday may read taken back one by one. The
-// engine is a stand-in; Rust tests cover its side.
+// sees what runs, and sessions Sunday may read taken back one by one.
+// Settings → Activity: the audit log, newest first, filtered by who and by
+// words. The engine is a stand-in; Rust tests cover its side.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -54,6 +55,11 @@ async function run() {
         ] }],
         sessions: [{ agent: 'claude-code', name: 'Claude Code', always: false }, { agent: 'codex', name: 'Codex', always: false }],
       },
+      audit: [
+        { at: 1760000000, client: 'sunday', action: 'capture', target: 'firefox', decision: 'confirmed', via: 'window', outcome: 'ok' },
+        { at: 1760000100, client: 'claude-code', action: 'context_get', target: 'ctx-1', decision: 'allowed', outcome: 'ok' },
+        { at: 1760000200, client: 'sunday', action: 'sessions_read', target: 'codex', decision: 'declined', via: 'window', outcome: 'not read' },
+      ],
     }),
   });
   const { app, page } = session;
@@ -165,8 +171,32 @@ async function run() {
   await memoryRow('Digest').getByRole('button', { name: 'Turn off' }).click();
   await page.getByRole('status').filter({ hasText: 'Sunday’s memory digest is off.' }).waitFor();
   assert.deepEqual((await fakeCalls(app)).at(-1), ['memory-digest', false]);
+
+  // Settings → Activity: the audit log, newest first, by who and by words.
+  await heading(page, 'Activity');
+  const log = page.getByRole('list', { name: 'Audit log' });
+  const lines = async () => (await log.getByRole('listitem').allInnerTexts()).map((t) => t.replace(/\s+/g, ' '));
+  let listed = await lines();
+  assert.equal(listed.length, 3);
+  assert.match(listed[0], /^Sunday read coding sessions: codex — you said no in OpenAgora's window; not read/);
+  assert.match(listed[1], /^Claude Code read what Sunday sent: ctx-1 — allowed/);
+  assert.match(listed[2], /^Sunday capture a window: firefox — you said yes in OpenAgora's window/);
+  await page.getByRole('combobox', { name: 'Who' }).selectOption({ label: 'Claude Code' });
+  listed = await lines();
+  assert.equal(listed.length, 1);
+  assert.match(listed[0], /^Claude Code/);
+  await page.getByRole('combobox', { name: 'Who' }).selectOption({ label: 'Everyone' });
+  await page.getByRole('searchbox', { name: 'Search the activity' }).fill('firefox');
+  listed = await lines();
+  assert.equal(listed.length, 1);
+  assert.match(listed[0], /firefox/);
+  await page.getByRole('searchbox', { name: 'Search the activity' }).fill('');
+  await app.evaluate(() => globalThis.fake.audit.push({ at: 1760000300, client: 'openagora', action: 'memory_digest', target: 'run', decision: 'allowed', outcome: '2 sessions: Saved 2 decisions to memory.' }));
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await waitFor(async () => (await lines()).length === 4, 'the new entry to show');
+  assert.match((await lines())[0], /^OpenAgora memory digest: run — allowed; 2 sessions: Saved 2 decisions to memory\./);
   assert.deepEqual(session.errors, []);
-  console.log('Coding agents and memory UI passed: set up with the exact command, manual removal, T3 Code connect, approval window with the app’s session, Holographic, digest, sessions taken back.');
+  console.log('Coding agents, memory and activity UI passed: set up with the exact command, manual removal, T3 Code connect, approval window with the app’s session, Holographic, digest, sessions taken back, the audit log newest first and filtered.');
 }
 
 run().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => {

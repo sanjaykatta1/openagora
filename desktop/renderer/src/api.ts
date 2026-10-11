@@ -88,6 +88,20 @@ export interface CodingAgentsState {
   connections: AppConnection[];
 }
 
+/** One line of the audit log; mirrors `openagora audit --json`. */
+export interface AuditEntry {
+  /** Seconds since the epoch. */
+  at: number;
+  /** Who asked: an agent's id (`sunday`, `claude-code`, …), `user` or `openagora`. */
+  client: string;
+  action: string;
+  target: string;
+  /** `allowed`, `confirmed`, `declined` or `refused`. */
+  decision: string;
+  via?: string;
+  outcome: string;
+}
+
 /** Sunday's memory; mirrors `openagora sunday memory status --json`. */
 export interface MemoryState {
   /** The memory provider Hermes uses for Sunday, or null for built-in only. */
@@ -262,6 +276,8 @@ export interface Bridge {
     connect(app: string): Promise<{ app: string; connected: boolean; can_act: boolean }>;
     disconnect(app: string): Promise<EngineResult>;
   };
+  /** The newest entries of the audit log, oldest first. */
+  auditLog(): Promise<AuditEntry[]>;
   memory: {
     state(): Promise<MemoryState>;
     use(provider: string): Promise<EngineResult>;

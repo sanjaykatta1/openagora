@@ -548,8 +548,9 @@ or `denied`). The broker checks every capture against the user's grants and the
 never-capture list, asks when needed, and logs it (built: phase 3), and every
 handoff to a coding agent or app, task and app action too (built: phase 4).
 Allowed apps and handoffs can be taken back, and the never-capture list
-extended, in Settings → What Sunday can see; a full grants and audit view comes
-in phase 6.
+extended, in Settings → What Sunday can see; reading coding sessions in Settings
+→ Memory; and the audit log is in Settings → Activity, newest first, filtered by
+who asked and by words (built: phase 6).
 
 ## 7. Shell
 
@@ -561,9 +562,9 @@ in phase 6.
   shortcut, keeping OpenAgora in the menu bar or tray, macOS Screen Recording
   permission, allowed apps and handoffs, the never-capture list); Coding agents
   (each agent found on this computer, set up or removed with its own command,
-  shown first; apps that take work, connected on their own approval page); the
-  personal-agent choice; removing Sunday. A full grants and audit view comes in
-  phase 6.
+  shown first; apps that take work, connected on their own approval page);
+  Memory (phase 5); Activity, the audit log (phase 6); the personal-agent
+  choice; removing Sunday.
 - **Approval pages** (built: phase 4): an app's own OAuth page (T3 Code's), in
   a window of OpenAgora's with the app's tab session, local addresses only,
   closed once the app sends the user back to the engine.

@@ -611,6 +611,11 @@ function registerIpc(): void {
   handle("open-screen-settings", () => {
     if (process.platform === "darwin") return shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture");
   });
+  handle("audit-log", async () => {
+    const r = await runEngine(["audit", "-n", "1000", "--json"]);
+    if (!r.ok) throw new Error(r.stderr || "could not read the audit log");
+    return JSON.parse(r.stdout);
+  });
   handle("broker-state", async () => {
     const [grants, never] = await Promise.all([runEngine(["grants", "list", "--json"]), runEngine(["never", "list", "--json"])]);
     if (!grants.ok || !never.ok) throw new Error(grants.stderr || never.stderr || "could not read what Sunday may see");

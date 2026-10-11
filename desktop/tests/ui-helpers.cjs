@@ -92,7 +92,7 @@ function freshFakeState(overrides = {}) {
   return {
     present: false, installed: false, adopted: false, clean: false, version: '0.21.6',
     setup: 'unknown', running: false, dashboardUrl: null, pid: null, connected: false,
-    extraApps: [], calls: [], grants: [], never: [], agents: [], connections: [],
+    extraApps: [], calls: [], grants: [], never: [], agents: [], connections: [], audit: [],
     memory: {
       provider: null, digest: false, sessions: [],
       providers: [{ id: 'holographic', name: 'Holographic', needs: '0.21.5', commands: [
@@ -212,6 +212,7 @@ async function installFakeEngine(app, state) {
       f().connections = f().connections.filter((c) => c.app !== app);
       return ok;
     });
+    handle('audit-log', () => f().audit);
     handle('memory-state', () => f().memory);
     handle('memory-use', (_e, provider) => { f().calls.push(['memory-use', provider]); f().memory.provider = provider; return ok; });
     handle('memory-off', () => { f().calls.push(['memory-off']); f().memory.provider = null; return ok; });

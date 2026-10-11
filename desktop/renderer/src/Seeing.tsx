@@ -51,8 +51,9 @@ export function SeeingSettings() {
   const trayName = platform === "darwin" ? "menu bar" : "tray";
   const grants = broker?.grants ?? [];
   // Sunday seeing apps' windows; Sunday sending to coding agents or starting
-  // work in apps; coding agents seeing apps.
-  const seeing = grants.filter((g) => g.client === "sunday" && g.destination === "sunday");
+  // work in apps; coding agents seeing apps. Reading coding sessions is in
+  // Settings → Memory.
+  const seeing = grants.filter((g) => g.client === "sunday" && g.destination === "sunday" && g.type !== "sessions/*");
   const sending = grants.filter((g) => g.client === "sunday" && g.destination !== "sunday");
   const agentsSee = grants.filter((g) => g.client !== "sunday");
   const scopeText = (g: Grant) => g.scope === "once" ? "once" : "always";

@@ -63,6 +63,7 @@ contextBridge.exposeInMainWorld("openagora", {
     connect: (app: string) => ipcRenderer.invoke("app-connect", app),
     disconnect: (app: string) => ipcRenderer.invoke("app-disconnect", app),
   },
+  auditLog: () => ipcRenderer.invoke("audit-log"),
   memory: {
     state: () => ipcRenderer.invoke("memory-state"),
     use: (provider: string) => ipcRenderer.invoke("memory-use", provider),

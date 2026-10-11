@@ -129,7 +129,9 @@ five minutes means no. Sunday can't update, stop or remove itself.
 
 **The audit log.** Every app action Sunday asks for is written to
 `<data folder>/audit/audit.jsonl`: who asked, what, the decision, where you
-answered, and the outcome. `openagora audit` shows it. It stays on this computer.
+answered, and the outcome. Settings → Activity shows it, newest first, and finds
+entries by who asked or by words; `openagora audit` prints it. It stays on this
+computer.
 
 **Disconnect** in Settings → Sunday (or `openagora sunday disconnect`) removes only
 what OpenAgora added and puts `hooks_auto_accept` back as it was.

@@ -1,6 +1,6 @@
 # OpenAgora: specification
 
-Status: draft v0.3, 2026-10-11. The personal agent is **Sunday**, built from
+Status: draft v0.4, 2026-10-11. The personal agent is **Sunday**, built from
 Hermes ([issue #9](https://github.com/sanjaykatta1/openagora/issues/9)). Sections
 mark what is **built** and what is **planned**, by the phase of issue #9 that
 delivers it. User-facing detail is in [Sunday](personal-agents.md) and
@@ -45,8 +45,8 @@ Principles that hold everywhere:
           ▼                                ▼
  ┌──────────────── OpenAgora engine (Rust) ─────────────────────────────────┐
  │  Catalog · install · run · supervise · update · audit log (built)        │
- │  MCP gateway: one server, many clients (built: store and desk tools)    │
- │  Desk · Focus tracker · Broker (built) · Registry · Router (planned)    │
+ │  MCP gateway: one server, many clients (built)                           │
+ │  Desk · Focus tracker · Broker · Registry · Router (built)               │
  └────────┬───────────────────────────────┬────────────────────────────────┘
           │ MCP + per-reply hook          │ MCP (pull) / adapters (push)
           ▼                               ▼
@@ -56,7 +56,7 @@ Principles that hold everywhere:
 
 | Part | Language | Job |
 |---|---|---|
-| Engine | Rust | Catalog, install, run, supervise, update, uninstall; Sunday's profile; the daemon with the MCP gateway, the desk, the broker, the focus query and the audit log. |
+| Engine | Rust | Catalog, install, run, supervise, update, uninstall; Sunday's profile; the daemon with the MCP gateway, the desk, the broker, the focus query and the audit log; the destinations (coding agents and apps) and their adapters. |
 | Shell | Electron (TypeScript) | The window: Sunday's home screen, sidebar, tabs, store, settings; Sunday's shortcut and panel; the menu bar or tray icon; capturing windows when the engine asks. |
 | Sunday | Hermes (upstream) | The agent, under its own profile. Installed by the engine from the store, or adopted when already installed. |
 | Catalog | TOML files | One `app.toml` per app, in this repo under `catalog/apps/<id>/`. |
@@ -79,6 +79,7 @@ A listing describes an app in these parts. The full schema is in
 | `[run]` | command (same everywhere or per OS) and args, port (`auto`, fixed, or none), health check (`tcp` or `process`) |
 | `[ui]` | `web` (tab), `terminal`, `window` or `background`, plus URL for `web`, and optionally `url_from_log_after` for apps that print a one-time sign-in link (only 127.0.0.1/localhost addresses are accepted) |
 | `[agent]` | the app's MCP URL and auth, plus the permissions Sunday asks for |
+| `[destination]` | what Sunday may hand to the app: the MIME types or families it `accepts` (and `provides`), and how it's delivered: `mcp` (its own MCP server, through a built-in `adapter`), `folder`, `url-scheme` or `clipboard` |
 
 Placeholders the engine fills in: `{app_dir}` (the app's own folder under
 OpenAgora's data directory), `{download}` (the file a step downloaded), `{port}`
@@ -96,6 +97,13 @@ Rules the validator enforces:
   and use `{profile}` in `run`, so the agent never runs outside its own profile.
   Only the agent has a profile.
 - The agent cannot declare `[uninstall]`: removing it deletes only its profile.
+- A destination accepts at least one type, and names exactly what its way of
+  delivering needs: `mcp` needs `[agent.mcp]` and a built-in adapter (`t3code`
+  for now); `folder` a folder under `{app_dir}` or `{home}`; `url-scheme` a URL
+  in the app's own scheme with `{file}`.
+- An app with an MCP server and `port = "auto"` keeps its port from start to
+  start (`<data>/state/<id>.port.toml`), because OAuth grants name the server's
+  address. It moves only when something else took the port.
 
 ### Catalog governance
 
@@ -130,6 +138,10 @@ openagora focus               the windows in front, and whether OpenAgora may ca
 openagora desk                the desk: list, show, add, remove, clear
 openagora grants              the apps Sunday may see: list, allow, revoke
 openagora never               the never-capture list: list, add, remove
+openagora agents              coding agents: list, setup, remove (their own commands), add, forget
+openagora connect <app>       connect OpenAgora to an app that signs agents in with OAuth (T3 Code)
+openagora disconnect <app>    forget that sign-in
+openagora connections         the apps OpenAgora is connected to
 ```
 
 Details as built:
@@ -182,8 +194,8 @@ Details as built:
   `structuredContent`, which some clients use instead of images).
 - **Store tools for Sunday:** `store_search`, `store_show`, `app_install`,
   `app_update`, `app_uninstall`, `app_start`, `app_stop`, `app_status`,
-  `app_open`. Other clients get no store tools; coding agents get their own tools
-  in phase 4.
+  `app_open`. Other clients get no store tools; coding agents get their own
+  tools (phase 4, below).
 - **Confirmation is the engine's.** Install, update and uninstall always wait for
   an explicit yes, which the engine asks for itself:
   - first through the client's own chat, by MCP elicitation, when the client
@@ -286,7 +298,7 @@ engine decides what may be captured, keeps the result, and logs it.
   text marked as data), and `allow_app` (a named app, or the one the user is in),
   which asks the user in OpenAgora's window only, with "Allow once" and "Always
   allow" (`confirm/ask` with `choices`), never in a chat. A never-listed app can't
-  be allowed. Coding agents get no desk tools until phase 4.
+  be allowed. Coding agents read only what is sent to them (phase 4, below).
 - **What Sunday is told** (tool results and the per-reply hook): apps it may see
   are named, always-allowed ones with their window titles. Other apps aren't
   named, unless Sunday named the app itself or the user pressed the shortcut over
@@ -303,6 +315,70 @@ engine decides what may be captured, keeps the result, and logs it.
 - **Audit:** every capture (allowed or refused, by the user's shortcut or by
   Sunday), every grant and revocation, desk reads and additions, and changes to
   the never-capture list.
+
+### Coding agents and destinations (built: phase 4)
+
+Every coding agent, and every app that takes work, is a destination behind one
+interface (`engine/src/destinations.rs`):
+`deliver(item, task)`, `start_task(prompt, items, project)`, `status(task)`,
+`result(task)`. T3 Code is only the first adapter.
+
+- **Registry.** Destinations are the coding agents OpenAgora knows how to set up
+  (Claude Code, Codex, OpenCode: found on PATH and where their installers put
+  their commands, `engine/src/agents.rs`), any other MCP agent the user adds
+  (`openagora agents add <id>`), and installed catalog apps with a
+  `[destination]`.
+- **Pull, for every MCP agent.** OpenAgora's MCP server is added to the agent's
+  own configuration with the agent's own command, only after the user agrees
+  (the command is shown first): `claude mcp add --scope user --transport stdio
+  openagora -- <engine> mcp --client claude-code`, `codex mcp add openagora --
+  …`, `opencode mcp add openagora [--global] -- …` (OpenCode 2 writes a
+  project's config without `--global`). Removing uses `claude mcp remove` and
+  `codex mcp remove`; OpenCode has no such command, so OpenAgora says how
+  instead of editing its file. The engine points them at its stable copy. A
+  coding agent connects as its own MCP client and gets three tools:
+  `context_inbox` (what Sunday sent it, with Sunday's note), `context_get`
+  (pictures as image content, text as text, other files as embedded resources;
+  never `structuredContent`, which makes Codex drop images) and
+  `context_search`. It sees only items sent to it (the desk item is shared
+  with it, and its inbox lists it) or items from apps the user allowed for it
+  (`openagora grants allow <app> --for <agent>`), never the whole desk.
+- **Prompt hook (Claude Code).** Claude Code also gets a plugin from OpenAgora's
+  own marketplace folder, added with Claude Code's own commands (`claude plugin
+  marketplace add <folder> --scope user`, `claude plugin install
+  openagora@openagora --scope user`). Its `UserPromptSubmit` hook runs `openagora
+  context --hook --client claude-code --format claude-code`, which tells Claude
+  Code about new items with the user's next prompt, once. Codex's hooks need the
+  user's trust in its own interface and OpenCode's are JavaScript plugins, so
+  there the user asks "what did Sunday send me?".
+- **Push, T3 Code first** (`engine/src/t3.rs`). The engine is T3's OAuth client,
+  so T3's own approval page shows OpenAgora: discovery (RFC 8414), registration
+  (RFC 7591), authorization code with PKCE (S256) and a loopback redirect to the
+  engine, then the token (30 days, no refresh), kept in
+  `<data>/connections/t3code.toml`, readable only by the user. OpenAgora's
+  window shows the approval page with T3's own tab session, so a paired T3
+  approves without a pairing code; `openagora connect t3code` uses the
+  browser. The user must pick Supervised or more for Sunday to start threads;
+  read-only is reported. The engine speaks T3's MCP over Streamable HTTP (no
+  `Origin` header, the session id, a new session after a 404), uploads desk
+  pictures itself (`t3_attachment_prepare_upload`, then the bytes to the signed
+  address), and starts the thread (`t3_thread_launch` with `projectId`, or
+  `scratch` when T3 has no project) with them attached. `t3_thread_wait` gives
+  the status (waited in steps of at most 240 s, under Hermes's 300 s call
+  limit) and `t3_thread_read` the messages, commands and changes. A refused
+  grant is forgotten and the user asked to connect again.
+- **Sunday's tools:** `destinations`, `send_to` (to an agent's inbox, or into a
+  task), `start_task`, `task_status`, `task_result`, and the connected app's own
+  tools passed through as `<app>__<tool>` (reading is allowed once the user
+  connected the app; anything else asks first; uploads stay the engine's). The
+  hook lists the coding agents and apps Sunday can send to. The
+  `openagora-handoff` skill teaches it.
+- **Broker and audit.** Handing over asks the user in OpenAgora's window, once
+  or always, keyed by Sunday × source app × destination × type family; starting
+  a task, and acting in an app with its own tools, ask too. Items from apps on
+  the never-capture list never leave, even where sending was always allowed.
+  Setups, removals, connections, handoffs, tasks, reads by coding agents and app
+  tool calls are all in the audit log.
 
 ### Toolchain
 
@@ -367,11 +443,15 @@ stays in the menu bar or tray after its window closes, so the shortcut keeps
 working. The engine enforces all of it (§4); the `openagora-desk` skill teaches
 Sunday the tools.
 
+**Built (phase 4).** "Send this to my coding agent": Sunday sends what the user
+is working on to Claude Code, Codex, OpenCode or any other MCP agent, which
+reads it with its own tools (the user asks it "what did Sunday send me?";
+Claude Code hears about it with the next prompt). Sunday starts T3 Code threads
+with the items attached and reports the result. Each agent is set up once, from
+Settings → Coding agents, with its own command (§4).
+
 **Planned.**
 
-- *Phase 4:* coding agents as destinations: the pull path through MCP for every
-  agent, one-click setup for Claude Code, Codex and OpenCode, and the T3 Code push
-  adapter.
 - *Phase 5:* memory across apps and agents: live lookup, a local memory provider,
   and a scheduled refresh job.
 
@@ -389,10 +469,11 @@ Sunday the tools.
 Each listing's `[agent]` section declares what Sunday may do with the app.
 At install the user sees each permission with its default (`granted`, `ask`
 or `denied`). The broker checks every capture against the user's grants and the
-never-capture list, asks when needed, and logs it (built: phase 3); handoffs to
-coding agents go through it in phase 4. Allowed apps can be removed, and the
-never-capture list extended, in Settings → What Sunday can see; a full grants and
-audit view comes in phase 6.
+never-capture list, asks when needed, and logs it (built: phase 3), and every
+handoff to a coding agent or app, task and app action too (built: phase 4).
+Allowed apps and handoffs can be taken back, and the never-capture list
+extended, in Settings → What Sunday can see; a full grants and audit view comes
+in phase 6.
 
 ## 7. Shell
 
@@ -402,8 +483,14 @@ audit view comes in phase 6.
   navigation away from 127.0.0.1/localhost opens in the default browser instead.
 - **Settings** (built): Sunday's Hermes pages; What Sunday can see (the
   shortcut, keeping OpenAgora in the menu bar or tray, macOS Screen Recording
-  permission, allowed apps, the never-capture list); the personal-agent choice;
-  removing Sunday. A full grants and audit view comes in phase 6.
+  permission, allowed apps and handoffs, the never-capture list); Coding agents
+  (each agent found on this computer, set up or removed with its own command,
+  shown first; apps that take work, connected on their own approval page); the
+  personal-agent choice; removing Sunday. A full grants and audit view comes in
+  phase 6.
+- **Approval pages** (built: phase 4): an app's own OAuth page (T3 Code's), in
+  a window of OpenAgora's with the app's tab session, local addresses only,
+  closed once the app sends the user back to the engine.
 - **Sunday panel** (built: phase 3): a configurable global shortcut opens
   Sunday's chat in a small always-on-top window over any app, with what Sunday
   can see of that app and buttons to allow it. Confirmations while it is open
@@ -435,7 +522,7 @@ real accounts are checked by hand.
 | 1. Sunday basics | Hermes only; the `sunday` profile; identity; home screen; settings | Tests 1–4 and 14 | Built |
 | 2. Engine daemon + gateway | daemon, MCP gateway with store tools, per-reply hook, first skills | Test 5 | Built |
 | 3. Capture | desk, capture, focus tracker, shortcut and panel, broker basics | Tests 6, 8, 10 | Built |
-| 4. Coding agents | registry, destinations, pull path, T3 Code push adapter | Test 7 | Planned |
+| 4. Coding agents | registry, destinations, pull path, T3 Code push adapter | Test 7 | Built |
 | 5. Memory | live lookup, memory provider, refresh job | Tests 11, 12 | Planned |
 | 6. Polish | grants and audit UI, background mode, on-screen text, OpenCode push, pop-out windows | Tests 9, 13 | Planned |
 

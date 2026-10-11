@@ -1,7 +1,8 @@
-// Marks a window the way a window manager would (WM_STATE = NormalState).
-// The UI tests run under a bare X server (Xvfb) with no window manager, and
-// Chromium lists only windows a window manager manages. Speaks X11 itself,
-// so the tests need no X tools.
+// Does to a window what a window manager would: marks it managed (WM_STATE =
+// NormalState) and raises it above the others. The UI tests run under a bare X
+// server (Xvfb) with no window manager: Chromium lists only windows a window
+// manager manages, and nothing keeps a window the user "clicked" on top.
+// Speaks X11 itself, so the tests need no X tools.
 const fs = require('node:fs');
 const net = require('node:net');
 
@@ -57,8 +58,8 @@ async function reply(read, what) {
   return packet;
 }
 
-/** Gives the X11 window `id` WM_STATE = NormalState. */
-async function markNormal(id) {
+/** Opens a connection to the X server and runs `work(socket, read)`. */
+async function withX(work) {
   const display = (process.env.DISPLAY ?? '').replace(/^[^:]*:/, '').split('.')[0];
   if (!display) throw new Error('no X display');
   const { socket, read } = connect(display);
@@ -75,7 +76,21 @@ async function markNormal(id) {
     const head = await read(8);
     await read(head.readUInt16LE(6) * 4);
     if (head[0] !== 1) throw new Error('the X server refused the connection');
+    await work(socket, read);
+    // A round trip: an error in what was sent would come back first.
+    const focus = Buffer.alloc(4);
+    focus.writeUInt8(43, 0); // GetInputFocus
+    focus.writeUInt16LE(1, 2);
+    socket.write(focus);
+    await reply(read, 'request');
+  } finally {
+    socket.destroy();
+  }
+}
 
+/** Gives the X11 window `id` WM_STATE = NormalState. */
+async function markNormal(id) {
+  await withX(async (socket, read) => {
     const atom = Buffer.from('WM_STATE');
     const intern = Buffer.alloc(8);
     intern.writeUInt8(16, 0); // InternAtom
@@ -95,15 +110,20 @@ async function markNormal(id) {
     change.writeUInt32LE(1, 24); // NormalState
     change.writeUInt32LE(0, 28); // no icon window
     socket.write(change);
-    // A round trip: an error in the change would come back first.
-    const focus = Buffer.alloc(4);
-    focus.writeUInt8(43, 0); // GetInputFocus
-    focus.writeUInt16LE(1, 2);
-    socket.write(focus);
-    await reply(read, 'ChangeProperty');
-  } finally {
-    socket.destroy();
-  }
+  });
 }
 
-module.exports = { markNormal };
+/** Raises the X11 window `id` above every other window. */
+async function raise(id) {
+  await withX(async (socket) => {
+    const configure = Buffer.alloc(16);
+    configure.writeUInt8(12, 0); // ConfigureWindow
+    configure.writeUInt16LE(4, 2);
+    configure.writeUInt32LE(id, 4);
+    configure.writeUInt16LE(0x40, 8); // stack-mode
+    configure.writeUInt32LE(0, 12); // Above
+    socket.write(configure);
+  });
+}
+
+module.exports = { markNormal, raise };

@@ -2,8 +2,9 @@
 //! (`openagora context --hook`). Hermes runs the hook before each turn and adds
 //! its `{"context": …}` to that turn's message, which stays in the
 //! conversation, so the hook only says what is new since the previous turn:
-//! installed apps, the app the user is working in, their last press of
-//! Sunday's shortcut, and new things on the desk.
+//! installed apps, the coding agents Sunday can hand work to, the app the user
+//! is working in, their last press of Sunday's shortcut, and new things on the
+//! desk.
 
 use std::fs;
 use std::path::PathBuf;
@@ -13,6 +14,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::agents;
 use crate::apps::{Engine, Status};
 use crate::catalog::Catalog;
 use crate::desk;
@@ -50,6 +52,8 @@ pub struct Live {
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub apps: Vec<String>,
+    #[serde(default)]
+    pub agents: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub front: Option<String>,
     #[serde(default)]
@@ -97,6 +101,28 @@ pub fn apps(engine: &Engine, catalog: &Catalog) -> Vec<String> {
         .collect()
 }
 
+/// The coding agents Sunday can hand work to: set up through OpenAgora, seen
+/// connecting, or added by the user. Known without asking each agent.
+pub fn coding_agents(paths: &Paths) -> Vec<String> {
+    let seen = agents::seen(paths).unwrap_or_default();
+    let mut out: Vec<String> = agents::AGENTS
+        .iter()
+        .filter(|d| {
+            seen.iter()
+                .any(|s| s.id == d.id && (s.set_up_at.is_some() || s.connected_at.is_some()))
+        })
+        .map(|d| format!("{} ({})", d.name, d.id))
+        .collect();
+    out.extend(
+        agents::custom(paths)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| format!("{} ({})", c.name, c.id)),
+    );
+    out.extend(crate::t3::connected_destinations(paths));
+    out
+}
+
 fn session_file(paths: &Paths, client: &str, session: &str) -> PathBuf {
     let key = sha256_hex(format!("{client}\n{session}").as_bytes());
     paths
@@ -132,6 +158,18 @@ pub fn for_turn(
             lines.push("Apps installed in OpenAgora: none yet.".to_string());
         } else {
             lines.push(format!("Apps installed in OpenAgora: {}.", apps.join("; ")));
+        }
+    }
+
+    let coding = coding_agents(&engine.paths);
+    if (first && !coding.is_empty()) || (!first && coding != before.agents) {
+        if coding.is_empty() {
+            lines.push("No coding agents are set up to take work from you any more.".to_string());
+        } else {
+            lines.push(format!(
+                "Coding agents and apps you can send things to (send_to, start_task): {}.",
+                coding.join("; ")
+            ));
         }
     }
 
@@ -214,6 +252,7 @@ pub fn for_turn(
 
     let snapshot = (!session.is_empty()).then(|| Snapshot {
         apps,
+        agents: coding,
         front: live.front.clone(),
         called_at,
         desk: told,

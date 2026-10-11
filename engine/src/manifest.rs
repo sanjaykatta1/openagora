@@ -1,8 +1,8 @@
 //! The `app.toml` listing format (schema `openagora/v1`).
 //!
-//! A listing says how to install an app, how to run it, how to show it, and how
-//! the built-in agent may connect to it. Unknown fields are rejected so a typo
-//! never reads as a working setting.
+//! A listing says how to install an app, how to run it, how to show it, how
+//! the built-in agent may connect to it, and what Sunday may hand to it.
+//! Unknown fields are rejected so a typo never reads as a working setting.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -20,6 +20,16 @@ const STEP_PLACEHOLDERS: &[&str] = &["app_dir", "download"];
 const RUN_PLACEHOLDERS: &[&str] = &["app_dir", "port"];
 const AGENT_RUN_PLACEHOLDERS: &[&str] = &["app_dir", "port", "profile"];
 const URL_PLACEHOLDERS: &[&str] = &["port"];
+/// `{home}`: the user's home folder.
+const FOLDER_PLACEHOLDERS: &[&str] = &["app_dir", "home"];
+/// `{file}`: the handed-over file, saved on this computer.
+const SCHEME_PLACEHOLDERS: &[&str] = &["file"];
+
+/// The push adapters built into the engine: each speaks one app's own tools
+/// behind the common destination interface (`destinations.rs`).
+pub const ADAPTERS: &[&str] = &["t3code"];
+/// The type families a destination can take.
+const FAMILIES: &[&str] = &["image", "text", "application", "audio", "video"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -282,6 +292,49 @@ pub struct Agent {
     pub permissions: Vec<Permission>,
 }
 
+/// How an app takes what Sunday hands over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Deliver {
+    /// Through its own MCP server (`[agent.mcp]`), by a built-in adapter.
+    Mcp,
+    /// Saved into a folder it watches.
+    Folder,
+    /// Opened with a URL in its own scheme.
+    UrlScheme,
+    /// Put on the clipboard, for the user to paste.
+    Clipboard,
+}
+
+impl Deliver {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Deliver::Mcp => "mcp",
+            Deliver::Folder => "folder",
+            Deliver::UrlScheme => "url-scheme",
+            Deliver::Clipboard => "clipboard",
+        }
+    }
+}
+
+/// An app as a destination for what Sunday hands over.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Destination {
+    /// What it takes: MIME types or families, e.g. `image/png`, `image/*`.
+    pub accepts: Vec<String>,
+    /// What it gives back for Sunday to read, e.g. a thread's `text/*`.
+    #[serde(default)]
+    pub provides: Vec<String>,
+    pub deliver: Deliver,
+    /// `deliver = "mcp"`: the built-in adapter that speaks its tools.
+    pub adapter: Option<String>,
+    /// `deliver = "folder"`: where files go (`{app_dir}`, `{home}`).
+    pub folder: Option<String>,
+    /// `deliver = "url-scheme"`: the URL to open, with `{file}` for the file.
+    pub url: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
@@ -307,6 +360,8 @@ pub struct Manifest {
     pub ui: Ui,
     /// How the built-in agent connects to this app. Absent: the agent cannot see it.
     pub agent: Option<Agent>,
+    /// What Sunday may hand to this app, and how. Absent: nothing.
+    pub destination: Option<Destination>,
 }
 
 fn default_role() -> Role {
@@ -486,6 +541,9 @@ impl Manifest {
                 }
             }
         }
+        if let Some(destination) = &self.destination {
+            self.destination_problems(&mut out, destination);
+        }
         match (self.role, &self.profile) {
             (Role::Agent, None) => {
                 out.push("role = \"agent\" needs a profile: OpenAgora runs the agent only under its own profile".into())
@@ -521,6 +579,98 @@ impl Manifest {
         }
         out
     }
+}
+
+impl Manifest {
+    fn destination_problems(&self, out: &mut Vec<String>, d: &Destination) {
+        if d.accepts.is_empty() {
+            out.push("destination.accepts is empty".into());
+        }
+        for t in d.accepts.iter().chain(&d.provides) {
+            if !valid_type(t) {
+                out.push(format!(
+                    "destination: {t:?} isn't a MIME type or family, like \"image/png\" or \"image/*\""
+                ));
+            }
+        }
+        let needs = |field: &str, present: bool, out: &mut Vec<String>| {
+            if !present {
+                out.push(format!(
+                    "destination.{field} is required for deliver = \"{}\"",
+                    d.deliver.as_str()
+                ));
+            }
+        };
+        match d.deliver {
+            Deliver::Mcp => {
+                if self.agent.is_none() {
+                    out.push("destination: deliver = \"mcp\" needs [agent.mcp]".into());
+                }
+                needs("adapter", d.adapter.is_some(), out);
+                if let Some(adapter) = d.adapter.as_deref().filter(|a| !ADAPTERS.contains(a)) {
+                    out.push(format!(
+                        "destination.adapter {adapter:?} isn't built in (known: {})",
+                        ADAPTERS.join(", ")
+                    ));
+                }
+            }
+            Deliver::Folder => {
+                needs("folder", d.folder.is_some(), out);
+                if let Some(folder) = &d.folder {
+                    check_placeholders(out, "destination.folder", folder, FOLDER_PLACEHOLDERS);
+                    if !(folder.starts_with("{app_dir}") || folder.starts_with("{home}")) {
+                        out.push("destination.folder must be under {app_dir} or {home}".into());
+                    }
+                }
+            }
+            Deliver::UrlScheme => {
+                needs("url", d.url.is_some(), out);
+                if let Some(url) = &d.url {
+                    check_placeholders(out, "destination.url", url, SCHEME_PLACEHOLDERS);
+                    if !url.contains("{file}") {
+                        out.push("destination.url must use {file}".into());
+                    }
+                    let scheme = url.split(':').next().unwrap_or_default().to_lowercase();
+                    let own = !scheme.is_empty()
+                        && scheme
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c));
+                    if !own
+                        || ["http", "https", "file", "javascript", "data"]
+                            .contains(&scheme.as_str())
+                    {
+                        out.push("destination.url must use the app's own URL scheme".into());
+                    }
+                }
+            }
+            Deliver::Clipboard => {}
+        }
+        for (field, present, deliver) in [
+            ("adapter", d.adapter.is_some(), Deliver::Mcp),
+            ("folder", d.folder.is_some(), Deliver::Folder),
+            ("url", d.url.is_some(), Deliver::UrlScheme),
+        ] {
+            if present && d.deliver != deliver {
+                out.push(format!(
+                    "destination.{field} is only for deliver = \"{}\"",
+                    deliver.as_str()
+                ));
+            }
+        }
+    }
+}
+
+/// `image/png` or a family like `image/*`.
+fn valid_type(t: &str) -> bool {
+    let Some((top, sub)) = t.split_once('/') else {
+        return false;
+    };
+    FAMILIES.contains(&top)
+        && (sub == "*"
+            || (!sub.is_empty()
+                && sub
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "+.-".contains(c))))
 }
 
 /// Reports `{name}` placeholders that are not in `allowed`. Braces that are not

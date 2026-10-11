@@ -12,7 +12,7 @@ const path = require('node:path');
 const readline = require('node:readline');
 const { _electron: electron } = require('playwright-core');
 const { waitFor } = require('./ui-helpers.cjs');
-const { markNormal } = require('./fixtures/x11-wm-state.cjs');
+const { markNormal, raise } = require('./fixtures/x11-wm-state.cjs');
 
 const EXE = process.platform === 'win32' ? 'openagora.exe' : 'openagora';
 const engine = [
@@ -79,6 +79,15 @@ async function run() {
   await waitFor(() => fs.existsSync(path.join(env.OPENAGORA_HOME, 'run', 'daemon.toml')), 'the window to start the engine service', 30000);
   // The window reports its own windows when it connects; give it a moment.
   await new Promise((r) => setTimeout(r, 1000));
+
+  // The user works in the stand-in, so nothing covers it: OpenAgora's main
+  // window moves aside (Xvfb has no window manager to keep the window the
+  // user is in on top).
+  await app.evaluate(({ BrowserWindow }) => {
+    const main = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith('index.html'));
+    main?.setBounds({ x: 470, y: 380, width: 900, height: 600 });
+  });
+  if (process.platform === 'linux') await raise(id);
 
   // Not allowed yet: the panel says so, and nothing is captured.
   await app.evaluate(() => globalThis.openagoraTest.pressShortcut());

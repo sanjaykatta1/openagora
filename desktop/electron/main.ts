@@ -260,6 +260,43 @@ function thumbnail(picture: Picture): string | null {
   }
 }
 
+// --- Apps' approval pages --------------------------------------------------
+
+/** Approval pages open now, by app. */
+const approvals = new Map<string, BrowserWindow>();
+
+/** An app's own page for approving OpenAgora (its OAuth sign-in), in a window
+ *  of OpenAgora's that uses the app's tab session: an app the user already
+ *  signed in to there (T3 Code's paired browser) approves without a code.
+ *  Only pages on this computer; the window closes once the app sends the
+ *  answer back to the engine. */
+async function openApproval(app: string, url: string): Promise<void> {
+  if (!VALID_ID.test(app) || !LOCAL_URL.test(url)) throw new Error("that isn't an approval page on this computer");
+  approvals.get(app)?.close();
+  const window = new BrowserWindow({
+    width: 560,
+    height: 760,
+    title: "Approve OpenAgora",
+    autoHideMenuBar: true,
+    backgroundColor: "#0f1115",
+    webPreferences: { partition: `persist:app-${app}`, sandbox: true, contextIsolation: true, nodeIntegration: false },
+  });
+  approvals.set(app, window);
+  window.on("closed", () => { if (approvals.get(app) === window) approvals.delete(app); });
+  window.webContents.on("will-navigate", (event, next) => { if (!LOCAL_URL.test(next)) event.preventDefault(); });
+  window.webContents.on("will-redirect", (event, next) => { if (!LOCAL_URL.test(next)) event.preventDefault(); });
+  // The app sends the user back to the engine, which answers with a short
+  // page: leave it up for a moment.
+  window.webContents.on("did-navigate", (_event, next) => {
+    if (/^http:\/\/(127\.0\.0\.1|localhost):\d+\/callback\?/.test(next)) {
+      setTimeout(() => { if (!window.isDestroyed()) window.close(); }, 1500);
+    }
+  });
+  void window.loadURL(url).catch(() => { /* The page shows its own error. */ });
+  window.show();
+  window.focus();
+}
+
 // --- The global shortcut and the tray ------------------------------------
 
 function registerShortcut(accelerator: string): void {
@@ -321,6 +358,7 @@ function startEngineLink(): EngineLink {
       if (!VALID_ID.test(id)) return;
       void mainWindow().then((window) => { window.show(); window.webContents.send("open-app", id); });
     },
+    openApproval,
     capture: async (target, maxEdge, purpose) => {
       const picture = await capture(target, maxEdge);
       // The panel shows what the shortcut captured, not what Sunday did.
@@ -496,6 +534,34 @@ function registerIpc(): void {
     return added;
   });
 
+  // Coding agents: set up with each agent's own command (the window shows the
+  // exact command first), and apps OpenAgora connects to.
+  const engineJson = async (args: string[], what: string) => {
+    const r = await runEngine(args);
+    if (!r.ok) throw new Error(r.stderr || `could not read ${what}`);
+    return JSON.parse(r.stdout);
+  };
+  handle("coding-agents", async () => {
+    const [agents, connections] = await Promise.all([
+      engineJson(["agents", "list", "--json"], "the coding agents"),
+      engineJson(["connections", "--json"], "the connections"),
+    ]);
+    return { agents, connections };
+  });
+  handle("agent-setup", (_e, id: unknown) => runEngine(["agents", "setup", checkId(id), "--yes"]));
+  handle("agent-remove", (_e, id: unknown) => runEngine(["agents", "remove", checkId(id), "--yes"]));
+  handle("app-connect", async (_e, id: unknown) => {
+    const app = checkId(id);
+    if (!link?.connected) throw new Error("OpenAgora's engine isn't running");
+    try {
+      // The user has five minutes to approve on the app's page.
+      return await link.request("connections/connect", { app }, 330_000);
+    } finally {
+      approvals.get(app)?.close();
+    }
+  });
+  handle("app-disconnect", (_e, id: unknown) => runEngine(["disconnect", checkId(id)]));
+
   // What Sunday can see: OpenAgora's own settings and the engine's broker.
   const desktopState = () => ({ settings, shortcutError, screen: screenAccess(), platform: process.platform });
   handle("desktop-settings", desktopState);
@@ -513,7 +579,14 @@ function registerIpc(): void {
     if (!grants.ok || !never.ok) throw new Error(grants.stderr || never.stderr || "could not read what Sunday may see");
     return { grants: JSON.parse(grants.stdout), never: JSON.parse(never.stdout) };
   });
-  handle("broker-revoke", (_e, key: unknown) => runEngine(["grants", "revoke", "--", argument(key, "app")]));
+  handle("broker-revoke", (_e, key: unknown, scope: unknown) => {
+    // Optionally only one client's permission, or only sending to one place.
+    const s = scope && typeof scope === "object" ? scope as Record<string, unknown> : {};
+    const args = ["grants", "revoke"];
+    if (s.client !== undefined) args.push(`--for=${checkId(s.client)}`);
+    if (s.destination !== undefined) args.push(`--to=${checkId(s.destination)}`);
+    return runEngine([...args, "--", argument(key, "app")]);
+  });
   handle("never-add", (_e, rule: unknown) => {
     const r = rule && typeof rule === "object" ? rule as Record<string, unknown> : {};
     const name = argument(r.name, "name");

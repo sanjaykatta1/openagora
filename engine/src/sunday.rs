@@ -449,6 +449,10 @@ const SKILLS: &[(&str, &str)] = &[
         "openagora/openagora-desk/SKILL.md",
         include_str!("../../sunday/skills/openagora-desk/SKILL.md"),
     ),
+    (
+        "openagora/openagora-handoff/SKILL.md",
+        include_str!("../../sunday/skills/openagora-handoff/SKILL.md"),
+    ),
 ];
 
 /// The hook command Hermes runs before each of Sunday's replies.

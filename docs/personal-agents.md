@@ -88,9 +88,9 @@ and is kept word for word. If the rest of the file gives the agent another name
 but uses the name Sunday. A test checks that the block passes Hermes's own
 prompt-injection scan, so Hermes loads it without warnings.
 
-What changes from turn to turn (installed apps, what's on screen, new things on
-the desk, and later connected coding agents) is not written to `SOUL.md`; the
-per-reply hook below supplies it.
+What changes from turn to turn (installed apps, the coding agents Sunday can
+send to, what's on screen, new things on the desk) is not written to `SOUL.md`;
+the per-reply hook below supplies it.
 
 ## Sunday and your apps
 
@@ -215,6 +215,53 @@ or change the shortcut, in **Settings → What Sunday can see**.
   without the AppIndicator extension there is no tray icon: open OpenAgora again
   from your apps to bring its window back.
 
+## Sending your work to a coding agent
+
+Ask Sunday to **send this to Claude Code** (or Codex, or OpenCode), and it sends
+what you're working on, usually the screenshot your shortcut just put on the
+desk, with a note. In that coding agent, ask **"what did Sunday send me?"**: it
+reads its inbox through OpenAgora and sees the picture. Claude Code hears about
+it with your next prompt without being asked.
+
+**Set each agent up once**, in **Settings → Coding agents** (or with `openagora
+agents setup <agent>`). OpenAgora shows you the exact command it will run, then
+runs the agent's own command to add OpenAgora's MCP server to that agent's
+settings:
+
+- Claude Code: `claude mcp add --scope user --transport stdio openagora -- …`,
+  plus a small plugin, installed with `claude plugin marketplace add` and
+  `claude plugin install`, that tells Claude Code about new items with your next
+  prompt.
+- Codex: `codex mcp add openagora -- …`.
+- OpenCode: `opencode mcp add openagora -- …` (`--global` for OpenCode 2).
+
+OpenAgora never edits an agent's settings files itself. Removing works the same
+way, with the agent's own command; OpenCode has none, so OpenAgora tells you what
+to remove from its `opencode.json`. Another MCP agent can read what Sunday sends
+it too: add a server named `openagora` that runs `openagora mcp --client <name>`
+to its settings, then `openagora agents add <name> --name "<Name>"`.
+
+**T3 Code runs the work itself.** Ask Sunday to **start a T3 Code thread** with
+the screenshot: OpenAgora uploads the picture to T3 Code, starts the thread in
+your project with it attached, and Sunday gives you the thread's link. Later,
+ask Sunday how it went: it reads the thread's messages, commands and changes
+and tells you. Connect T3 Code once, in **Settings → Coding agents → T3 Code →
+Connect**: T3 Code's own approval page opens in a window (with T3's own sign-in,
+so you don't need a pairing code), and you approve OpenAgora there. Choose
+**Supervised** or more so Sunday can start threads; T3 Code still asks you
+before each change. The sign-in lasts 30 days; you can take it back in T3
+Code's Settings → Connections. Sunday can also use T3 Code's own tools: reading
+threads needs no question, anything else asks you first.
+
+**What you send stays yours to decide.** OpenAgora asks you before Sunday sends
+anything to an agent (**Send once** or **Always allow**, per app and agent),
+before it starts a task, and before it acts in an app. Nothing from an app on the
+never-capture list ever leaves, even where you always allowed sending. An agent
+only ever sees what was sent to it, never the rest of your desk, and what you
+send is shared with that agent and the model provider it uses. Every setup,
+connection, handoff, task and read is in the audit log. Take back "always" in
+**Settings → What Sunday can see**.
+
 ## Home screen and settings
 
 The home screen is Hermes's dashboard for Sunday's profile, labelled **Sunday**,
@@ -246,6 +293,29 @@ deletes only the `sunday` profile with Hermes's own `hermes profile delete sunda
 profile named `sunday` that OpenAgora didn't set up is never deleted.
 
 ## Verification and limits
+
+Phase 4 (coding agents): Rust tests run the engine against stand-ins for Claude
+Code, Codex and OpenCode (scripts that record every call) and for T3 Code's
+server (its OAuth, its MCP server and its uploads, as T3's source has them).
+They cover test 7: each agent set up only with its own command and only after a
+yes, and nothing else of the agent's touched; Sunday sending a screenshot after
+the user's yes in OpenAgora's window; each agent reading it through its own MCP
+connection as an image, without `structuredContent`; Claude Code's prompt hook
+telling it once; an agent seeing only what was sent to it, or apps the user
+allowed for it; a no, and the never-capture list, stopping a send; connecting
+T3 Code on its approval page (PKCE, the grant in a file only you can open), a
+thread started with the uploaded picture attached, its status and its result,
+more for the same thread, T3's own tools (reading free, acting asked), a
+read-only connection, a declined one, and a taken-back sign-in; the command
+line's connect through the browser; and the audit rows. A UI test covers
+Settings → Coding agents (the exact command shown before anything runs, manual
+removal for OpenCode, T3 Code's connect) and the approval window with T3's own
+session.
+
+Not tested automatically, and to be checked by hand: the real Claude Code,
+Codex and OpenCode commands on each OS, each agent reading the picture (and
+Claude Code's hook running, in a trusted folder); T3 Code's real approval page
+with its paired session, and a real thread with the picture; the 30-day expiry.
 
 Phase 3 (capture): Rust tests drive the engine with a stand-in for OpenAgora's
 window and a stand-in window list. They cover: the shortcut over an app

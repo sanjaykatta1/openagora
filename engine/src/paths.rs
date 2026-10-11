@@ -4,6 +4,7 @@
 //! <root>/apps/<id>/      the app's own folder ({app_dir})
 //! <root>/state/<id>.toml what was installed
 //! <root>/state/<id>.profile.toml  the personal agent's own profile
+//! <root>/state/<id>.port.toml     the port an app with an MCP server keeps
 //! <root>/run/<id>.toml   the running process, while it runs
 //! <root>/logs/<id>.log   the app's output
 //! <root>/tmp/            downloads in progress
@@ -56,6 +57,11 @@ impl Paths {
     /// The personal agent's profile record (see `state::AgentProfile`).
     pub fn agent_profile_file(&self, id: &str) -> PathBuf {
         self.root.join("state").join(format!("{id}.profile.toml"))
+    }
+
+    /// The port an app with an MCP server keeps (see `state::StickyPort`).
+    pub fn port_file(&self, id: &str) -> PathBuf {
+        self.root.join("state").join(format!("{id}.port.toml"))
     }
 
     pub fn log_file(&self, id: &str) -> PathBuf {

@@ -3,7 +3,7 @@
 //! are never what keeps an action safe. Every app action and capture goes to
 //! the audit log. Capture and the desk are in `capture.rs`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
@@ -34,6 +34,8 @@ pub struct Gateway {
     pub(crate) window: Mutex<WindowState>,
     /// The user's last press of Sunday's shortcut.
     pub(crate) called: Mutex<Option<Called>>,
+    /// Connected apps' own tools for Sunday, as last asked (`app_tools.rs`).
+    pub(crate) app_tools: Mutex<BTreeMap<String, (std::time::Instant, Vec<Value>)>>,
 }
 
 /// How a confirmation went.
@@ -80,6 +82,7 @@ impl Gateway {
             busy: Mutex::new(BTreeSet::new()),
             window: Mutex::new(WindowState::default()),
             called: Mutex::new(None),
+            app_tools: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -107,6 +110,11 @@ impl Gateway {
     }
 
     pub fn register(&self, client: &Arc<Client>) {
+        if crate::agents::is_agent(&self.paths, &client.id) {
+            if let Err(e) = crate::agents::mark_connected(&self.paths, &client.id) {
+                eprintln!("openagora: noting that {} connected: {e:#}", client.id);
+            }
+        }
         let mut clients = self.clients.lock().unwrap();
         clients.retain(|c| c.strong_count() > 0);
         clients.push(Arc::downgrade(client));
@@ -194,6 +202,7 @@ impl Gateway {
             "shortcut/pressed" => Ok(self.shortcut_pressed()),
             "shortcut/capture" => self.shortcut_capture(params),
             "desk/add" => self.desk_add(params),
+            "connections/connect" => self.connect_app(params),
             _ => return None,
         })
     }
@@ -325,15 +334,28 @@ fn store_tools() -> Vec<Value> {
 impl Handler for Gateway {
     fn tools(&self, client: &Client) -> Vec<Value> {
         match client.id.as_str() {
-            // Sunday manages the store and sees what the user shares; coding
-            // agents get their own tools later.
-            "sunday" => store_tools().into_iter().chain(capture::tools()).collect(),
+            // Sunday manages the store, sees what the user shares, and hands
+            // work to coding agents.
+            "sunday" => store_tools()
+                .into_iter()
+                .chain(capture::tools())
+                .chain(crate::handoff::sunday_tools())
+                .chain(self.passthrough_tools())
+                .collect(),
+            // A coding agent reads only what it was sent.
+            id if crate::agents::is_agent(&self.paths, id) => crate::handoff::agent_tools(),
             _ => Vec::new(),
         }
     }
 
     fn call(&self, client: &Client, name: &str, arguments: &Value) -> ToolResult {
         if let Some(result) = self.call_capture_tool(client, name, arguments) {
+            return result;
+        }
+        if let Some(result) = self.call_handoff_tool(client, name, arguments) {
+            return result;
+        }
+        if let Some(result) = self.call_passthrough(client, name, arguments) {
             return result;
         }
         let result = (|| -> Result<ToolResult> {

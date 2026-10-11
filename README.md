@@ -14,7 +14,9 @@ An open-source app store for your desktop.
   you, and OpenAgora asks you first every time. Press **Ctrl+Shift+Space**
   (**Command+Shift+Space** on a Mac) in any app to call Sunday over it; Sunday sees
   that app's window only if you allowed the app, and never sees password managers
-  or private browser windows. Carrying your work to coding agents is coming next.
+  or private browser windows. Ask Sunday to send what you're working on to
+  your coding agent (Claude Code, Codex, OpenCode, or a new T3 Code thread),
+  each set up once with its own command.
   Other personal agents are coming soon. See [Sunday](docs/personal-agents.md).
 
 ## Download

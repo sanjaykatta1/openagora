@@ -203,8 +203,19 @@ pub fn grants(paths: &Paths) -> Result<Vec<Grant>> {
         .grants)
 }
 
+/// Every type family: a grant for all of an app's content.
+pub const ANY: &str = "*/*";
+
 fn same_key(g: &Grant, client: &str, source: &str, destination: &str, family: &str) -> bool {
     g.client == client && g.source == source && g.destination == destination && g.family == family
+}
+
+/// Whether a grant covers `family`: the same family, or every family.
+fn covers(g: &Grant, client: &str, source: &str, destination: &str, family: &str) -> bool {
+    g.client == client
+        && g.source == source
+        && g.destination == destination
+        && (g.family == family || g.family == ANY)
 }
 
 /// Whether the user allowed this, and how. "Always" wins over "once".
@@ -218,7 +229,7 @@ pub fn allowed(
     let grants = grants(paths)?;
     let mut scopes = grants
         .iter()
-        .filter(|g| same_key(g, client, source, destination, family))
+        .filter(|g| covers(g, client, source, destination, family))
         .map(|g| g.scope);
     let first = scopes.next();
     Ok(match first {
@@ -259,7 +270,7 @@ pub fn use_once(
     let before = grants.grants.len();
     grants
         .grants
-        .retain(|g| !(same_key(g, client, source, destination, family) && g.scope == Scope::Once));
+        .retain(|g| !(covers(g, client, source, destination, family) && g.scope == Scope::Once));
     if grants.grants.len() == before {
         return Ok(false);
     }
@@ -270,13 +281,27 @@ pub fn use_once(
 /// Takes back everything allowed for an app (by key or name). Returns how
 /// many grants went.
 pub fn revoke(paths: &Paths, app: &str) -> Result<usize> {
+    revoke_where(paths, app, None, None)
+}
+
+/// Takes back what was allowed for an app (by key or name), only for
+/// `client` and only towards `destination` when given.
+pub fn revoke_where(
+    paths: &Paths,
+    app: &str,
+    client: Option<&str>,
+    destination: Option<&str>,
+) -> Result<usize> {
     let _guard = WRITE.lock().unwrap();
     let mut grants = state::read::<Grants>(&grants_file(paths))?.unwrap_or_default();
     let before = grants.grants.len();
     let wanted = normalize(app);
-    grants
-        .grants
-        .retain(|g| g.source != app && normalize(&g.source_name) != wanted);
+    grants.grants.retain(|g| {
+        let same_app = g.source == app || normalize(&g.source_name) == wanted;
+        let same_client = client.is_none_or(|c| g.client == c);
+        let same_destination = destination.is_none_or(|d| g.destination == d);
+        !(same_app && same_client && same_destination)
+    });
     let removed = before - grants.grants.len();
     if removed > 0 {
         state::write(&grants_file(paths), &grants)?;

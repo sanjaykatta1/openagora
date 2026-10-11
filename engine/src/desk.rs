@@ -9,6 +9,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, bail};
@@ -235,6 +236,8 @@ pub fn image_type(bytes: &[u8]) -> Option<&'static str> {
 }
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
+/// Changes to an item already on the desk, one at a time.
+static CHANGE: Mutex<()> = Mutex::new(());
 
 /// Puts something on the desk.
 pub fn add(paths: &Paths, new: New) -> Result<Item> {
@@ -338,6 +341,24 @@ pub fn get(paths: &Paths, id: &str) -> Result<Option<Item>> {
         return Ok(None);
     }
     Ok(read_item(&item_file(paths, id)).filter(|item| item.expires_at > state::now()))
+}
+
+/// Lets one more client read an item (an agent Sunday sent it to). Returns
+/// the item as it is now; None if it expired.
+pub fn share(paths: &Paths, id: &str, client: &str) -> Result<Option<Item>> {
+    let _guard = CHANGE.lock().unwrap();
+    let Some(mut item) = get(paths, id)? else {
+        return Ok(None);
+    };
+    if !item.is_shared_with(client) {
+        item.shared_with.push(client.to_string());
+        let file = item_file(paths, id);
+        let partial = file.with_extension("json.partial");
+        fs::write(&partial, serde_json::to_vec_pretty(&item)?)
+            .with_context(|| format!("writing {}", partial.display()))?;
+        fs::rename(&partial, &file)?;
+    }
+    Ok(Some(item))
 }
 
 /// An item's payload.

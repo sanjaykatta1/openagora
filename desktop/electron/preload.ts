@@ -56,9 +56,16 @@ contextBridge.exposeInMainWorld("openagora", {
   desktopSettings: () => ipcRenderer.invoke("desktop-settings"),
   saveDesktopSettings: (value: unknown) => ipcRenderer.invoke("save-desktop-settings", value),
   openScreenSettings: () => ipcRenderer.invoke("open-screen-settings"),
+  codingAgents: {
+    state: () => ipcRenderer.invoke("coding-agents"),
+    setUp: (id: string) => ipcRenderer.invoke("agent-setup", id),
+    remove: (id: string) => ipcRenderer.invoke("agent-remove", id),
+    connect: (app: string) => ipcRenderer.invoke("app-connect", app),
+    disconnect: (app: string) => ipcRenderer.invoke("app-disconnect", app),
+  },
   broker: {
     state: () => ipcRenderer.invoke("broker-state"),
-    revoke: (app: string) => ipcRenderer.invoke("broker-revoke", app),
+    revoke: (app: string, scope?: { client?: string; destination?: string }) => ipcRenderer.invoke("broker-revoke", app, scope),
     neverAdd: (rule: { name: string; app?: string; title?: string }) => ipcRenderer.invoke("never-add", rule),
     neverRemove: (name: string) => ipcRenderer.invoke("never-remove", name),
   },

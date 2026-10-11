@@ -25,6 +25,9 @@ fn shipped_catalog_is_valid() {
         t3.agent.is_some(),
         "T3 Code must declare how the agent connects"
     );
+    let destination = t3.destination.as_ref().expect("T3 Code is a destination");
+    assert_eq!(destination.adapter.as_deref(), Some("t3code"));
+    assert!(destination.accepts.iter().any(|t| t == "image/png"));
     for os in [Os::Macos, Os::Linux, Os::Windows] {
         assert!(t3.steps_for(os).count() > 0, "no T3 install step for {os}");
     }
@@ -343,5 +346,84 @@ fn a_catalog_has_at_most_one_agent() {
     assert!(
         err.contains("only one listing can have role = \"agent\""),
         "{err}"
+    );
+}
+
+fn destination_problems(destination: &str) -> String {
+    let listing = format!(
+        "{VALID}\n[agent.mcp]\nurl = \"http://127.0.0.1:{{port}}/mcp\"\nauth = \"oauth\"\n\n[destination]\n{destination}\n"
+    );
+    Manifest::parse(&listing).err().unwrap_or_default()
+}
+
+#[test]
+fn destinations_say_what_they_take_and_how() {
+    // Through the app's MCP server, by a built-in adapter.
+    assert_eq!(
+        destination_problems(
+            "accepts = [\"image/*\", \"text/plain\"]\ndeliver = \"mcp\"\nadapter = \"t3code\""
+        ),
+        ""
+    );
+    assert!(
+        destination_problems("accepts = [\"image/*\"]\ndeliver = \"mcp\"")
+            .contains("destination.adapter is required")
+    );
+    assert!(
+        destination_problems("accepts = [\"image/*\"]\ndeliver = \"mcp\"\nadapter = \"slack\"")
+            .contains("isn't built in")
+    );
+    let without_mcp = Manifest::parse(&format!(
+        "{VALID}\n[destination]\naccepts = [\"image/*\"]\ndeliver = \"mcp\"\nadapter = \"t3code\"\n"
+    ))
+    .unwrap_err();
+    assert!(without_mcp.contains("needs [agent.mcp]"), "{without_mcp}");
+    // Into a folder, by a URL scheme, or on the clipboard.
+    assert_eq!(
+        destination_problems(
+            "accepts = [\"image/*\"]\ndeliver = \"folder\"\nfolder = \"{app_dir}/inbox\""
+        ),
+        ""
+    );
+    assert!(
+        destination_problems("accepts = [\"image/*\"]\ndeliver = \"folder\"\nfolder = \"/tmp/x\"")
+            .contains("under {app_dir} or {home}")
+    );
+    assert_eq!(
+        destination_problems(
+            "accepts = [\"text/*\"]\ndeliver = \"url-scheme\"\nurl = \"notes://open?file={file}\""
+        ),
+        ""
+    );
+    assert!(
+        destination_problems("accepts = [\"text/*\"]\ndeliver = \"url-scheme\"\nurl = \"https://example.com/?f={file}\"")
+            .contains("own URL scheme")
+    );
+    assert!(
+        destination_problems(
+            "accepts = [\"text/*\"]\ndeliver = \"url-scheme\"\nurl = \"notes://new\""
+        )
+        .contains("must use {file}")
+    );
+    assert_eq!(
+        destination_problems("accepts = [\"text/*\"]\ndeliver = \"clipboard\""),
+        ""
+    );
+    // Types, and fields that belong to another way of delivering.
+    assert!(
+        destination_problems("accepts = []\ndeliver = \"clipboard\"").contains("accepts is empty")
+    );
+    assert!(
+        destination_problems("accepts = [\"pictures\"]\ndeliver = \"clipboard\"")
+            .contains("isn't a MIME type or family")
+    );
+    assert!(
+        destination_problems(
+            "accepts = [\"text/*\"]\ndeliver = \"clipboard\"\nadapter = \"t3code\""
+        )
+        .contains("only for deliver = \"mcp\"")
+    );
+    assert!(
+        destination_problems("accepts = [\"text/*\"]\ndeliver = \"pigeon\"").contains("pigeon")
     );
 }

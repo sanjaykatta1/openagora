@@ -7,7 +7,9 @@ use openagora::catalog::{Catalog, load_listing};
 use openagora::manifest::{Arch, Manifest, Os, Role};
 use openagora::paths::Paths;
 use openagora::sunday::{self, MIN_VERSION, Start};
-use openagora::{audit, broker, context, daemon, desk, focus, ipc, state};
+use openagora::{
+    agents, audit, broker, connections, context, daemon, desk, focus, ipc, paths, state, t3,
+};
 use std::io::{BufRead, IsTerminal, Write};
 
 #[derive(Parser)]
@@ -106,6 +108,11 @@ enum Cmd {
         /// stdin and print `{"context": …}`, or nothing when nothing changed.
         #[arg(long)]
         hook: bool,
+        /// How to print it: `hermes` (Hermes's `{"context": …}`), or
+        /// `claude-code` (plain text for a Claude Code UserPromptSubmit hook:
+        /// what Sunday sent it).
+        #[arg(long, default_value = "hermes")]
+        format: String,
         /// Who the context is for, e.g. `sunday`.
         #[arg(long, default_value = "sunday")]
         client: String,
@@ -125,6 +132,23 @@ enum Cmd {
     Grants {
         #[command(subcommand)]
         action: Option<GrantsCmd>,
+    },
+    /// Coding agents on this computer (Claude Code, Codex, OpenCode, and any
+    /// other MCP agent you add) and whether each can read what Sunday sends it.
+    Agents {
+        #[command(subcommand)]
+        action: Option<AgentsCmd>,
+    },
+    /// Connect OpenAgora to an app that signs agents in with OAuth (T3 Code):
+    /// its approval page opens, and you approve OpenAgora there.
+    Connect { app: String },
+    /// Forget OpenAgora's sign-in to an app.
+    Disconnect { app: String },
+    /// The apps OpenAgora is connected to.
+    Connections {
+        /// Print JSON (for the desktop app).
+        #[arg(long)]
+        json: bool,
     },
     /// The never-capture list: apps and windows OpenAgora never captures.
     Never {
@@ -191,9 +215,61 @@ enum GrantsCmd {
         /// For the next capture only.
         #[arg(long)]
         once: bool,
+        /// Let a coding agent see everything from the app on the desk,
+        /// instead of Sunday seeing its windows (e.g. `--for claude-code`).
+        #[arg(long = "for")]
+        for_client: Option<String>,
     },
     /// Take back what you allowed for an app (by key or name).
-    Revoke { app: String },
+    Revoke {
+        app: String,
+        /// Only what this client may do (e.g. `sunday`, `claude-code`).
+        #[arg(long = "for")]
+        for_client: Option<String>,
+        /// Only sending to this destination (e.g. `claude-code`, `t3code`).
+        #[arg(long)]
+        to: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum AgentsCmd {
+    /// List them (the default).
+    List {
+        /// Print JSON (for the desktop app).
+        #[arg(long)]
+        json: bool,
+    },
+    /// Add OpenAgora's MCP server to an agent, with the agent's own command
+    /// (asks first).
+    Setup {
+        id: String,
+        /// Don't ask for confirmation.
+        #[arg(short, long)]
+        yes: bool,
+        /// Claude Code: leave out the prompt hook that tells it what Sunday
+        /// sent, with your next prompt.
+        #[arg(long)]
+        no_hook: bool,
+    },
+    /// Remove OpenAgora's MCP server from an agent, with the agent's own
+    /// command (asks first).
+    Remove {
+        id: String,
+        /// Don't ask for confirmation.
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Another MCP agent you connected yourself (its MCP config runs
+    /// `openagora mcp --client ID`), so Sunday can send things to it.
+    Add {
+        id: String,
+        /// Its name, for people.
+        #[arg(long)]
+        name: String,
+    },
+    /// Forget an agent you added.
+    Forget { id: String },
 }
 
 #[derive(Subcommand)]
@@ -527,7 +603,31 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Cmd::Mcp { client } => {
             daemon::bridge(&Paths::from_env()?, cli.catalog.as_deref(), &client)?;
         }
-        Cmd::Context { hook, client } => {
+        Cmd::Context {
+            hook,
+            format,
+            client,
+        } => {
+            if format == "claude-code" {
+                // Claude Code's prompt hook: what Sunday sent this agent since
+                // it was last told, as plain text Claude Code adds to the
+                // user's prompt. Claude Code's own event on stdin isn't needed.
+                if hook {
+                    let mut input = String::new();
+                    let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut input);
+                }
+                let paths = Paths::from_env()?;
+                if let Some((text, told)) =
+                    openagora::gateway::Gateway::agent_notice(&paths, &client)?
+                {
+                    println!("{text}");
+                    openagora::inbox::mark_told(&paths, &client, &told)?;
+                }
+                return Ok(());
+            }
+            if format != "hermes" {
+                anyhow::bail!("unknown --format {format:?} (hermes or claude-code)");
+            }
             let payload = if hook {
                 let mut input = String::new();
                 std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
@@ -717,6 +817,293 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 }
             }
         }
+        Cmd::Agents { action } => {
+            let paths = Paths::from_env()?;
+            match action.unwrap_or(AgentsCmd::List { json: false }) {
+                AgentsCmd::List { json } => {
+                    let listed = agents_json(&paths)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&listed)?);
+                    } else {
+                        for a in listed.as_array().into_iter().flatten() {
+                            let state = if a["custom"] == true {
+                                "added by you".to_string()
+                            } else if a["installed"] != true {
+                                "not installed".to_string()
+                            } else if a["set_up"] == true {
+                                "set up: it can read what Sunday sends it".to_string()
+                            } else {
+                                format!(
+                                    "installed, not set up (openagora agents setup {})",
+                                    a["id"].as_str().unwrap_or_default()
+                                )
+                            };
+                            println!(
+                                "{:<12} {:<12} {state}",
+                                a["id"].as_str().unwrap_or_default(),
+                                a["name"].as_str().unwrap_or_default()
+                            );
+                        }
+                    }
+                }
+                AgentsCmd::Setup { id, yes, no_hook } => {
+                    let d = agents::descriptor(&id).ok_or_else(|| {
+                        anyhow::anyhow!("no coding agent {id:?} that OpenAgora can set up (claude-code, codex, opencode); for another one, see: openagora agents add --help")
+                    })?;
+                    let found = agents::find(d);
+                    if found.exe.is_none() {
+                        anyhow::bail!(
+                            "{} isn't installed on this computer (see {})",
+                            d.name,
+                            d.homepage
+                        );
+                    }
+                    let hook = d.id == "claude-code" && !no_hook;
+                    let mut commands = vec![agents::display(
+                        d.command,
+                        &agents::add_args(&found, &paths.stable_exe()),
+                    )];
+                    if hook {
+                        commands.extend(
+                            agents::claude_hook::install_args(&paths)
+                                .iter()
+                                .map(|args| agents::display(d.command, args)),
+                        );
+                    }
+                    let question = format!(
+                        "Add OpenAgora's MCP server to {}'s settings, so it can read what Sunday sends it{}? OpenAgora runs {}'s own commands:\n  {}\n",
+                        d.name,
+                        if hook {
+                            ", and a plugin that tells it about new items with your next prompt"
+                        } else {
+                            ""
+                        },
+                        d.name,
+                        commands.join("\n  ")
+                    );
+                    if !confirm(&question, yes)? {
+                        println!("Nothing changed.");
+                        return Ok(());
+                    }
+                    let exe = paths::install_stable_exe(&paths)?;
+                    let mut entry = audit::Entry::new("user", "agent_setup", &id);
+                    entry.decision = "confirmed".into();
+                    entry.via = Some("command line".into());
+                    let ran = agents::set_up(&found, &exe);
+                    entry.outcome = match &ran {
+                        Ok(ran) => ran.clone(),
+                        Err(e) => format!("failed: {e:#}"),
+                    };
+                    audit::record(&paths, &entry)?;
+                    ran?;
+                    agents::mark_set_up(&paths, &id)?;
+                    println!(
+                        "{} can now read what Sunday sends it (ask it: \"what did Sunday send me?\").",
+                        d.name
+                    );
+                    if hook {
+                        let mut entry = audit::Entry::new("user", "agent_hook", &id);
+                        entry.decision = "confirmed".into();
+                        entry.via = Some("command line".into());
+                        match agents::claude_hook::install(&found, &paths, &exe) {
+                            Ok(ran) => {
+                                entry.outcome = ran.join("; ");
+                                println!(
+                                    "It also hears about new items with your next prompt (restart open Claude Code sessions, or run /reload-plugins in them)."
+                                );
+                            }
+                            Err(e) => {
+                                entry.outcome = format!("failed: {e:#}");
+                                eprintln!(
+                                    "warning: the prompt hook wasn't installed ({e:#}); ask Claude Code \"what did Sunday send me?\" instead."
+                                );
+                            }
+                        }
+                        audit::record(&paths, &entry)?;
+                    }
+                }
+                AgentsCmd::Remove { id, yes } => {
+                    let d = agents::descriptor(&id).ok_or_else(|| {
+                        anyhow::anyhow!("no coding agent {id:?} that OpenAgora set up")
+                    })?;
+                    let found = agents::find(d);
+                    let Some(args) = agents::remove_args(&found) else {
+                        anyhow::bail!("{}", agents::remove_by_hand(&found));
+                    };
+                    let mut commands = vec![agents::display(d.command, &args)];
+                    if d.id == "claude-code" {
+                        commands.extend(
+                            agents::claude_hook::uninstall_args()
+                                .iter()
+                                .map(|args| agents::display(d.command, args)),
+                        );
+                    }
+                    let question = format!(
+                        "Remove OpenAgora's MCP server from {}? OpenAgora runs:\n  {}\n",
+                        d.name,
+                        commands.join("\n  ")
+                    );
+                    if !confirm(&question, yes)? {
+                        println!("Nothing changed.");
+                        return Ok(());
+                    }
+                    let mut entry = audit::Entry::new("user", "agent_remove", &id);
+                    entry.decision = "confirmed".into();
+                    entry.via = Some("command line".into());
+                    let ran = agents::remove(&found);
+                    let mut outcome = match &ran {
+                        Ok(ran) => ran.clone(),
+                        Err(e) => format!("failed: {e:#}"),
+                    };
+                    // The prompt hook goes too, if it was there.
+                    if d.id == "claude-code"
+                        && agents::claude_hook::marketplace_dir(&paths).exists()
+                    {
+                        for result in agents::claude_hook::uninstall(&found) {
+                            match result {
+                                Ok(ran) => outcome.push_str(&format!("; {ran}")),
+                                Err(e) => outcome.push_str(&format!("; {e:#}")),
+                            }
+                        }
+                        let _ =
+                            std::fs::remove_dir_all(agents::claude_hook::marketplace_dir(&paths));
+                    }
+                    entry.outcome = outcome;
+                    audit::record(&paths, &entry)?;
+                    ran?;
+                    agents::mark_removed(&paths, &id)?;
+                    println!("{} no longer has OpenAgora's MCP server.", d.name);
+                }
+                AgentsCmd::Add { id, name } => {
+                    agents::add_custom(&paths, &id, &name)?;
+                    let command =
+                        agents::display("", &agents::server_command(&paths.stable_exe(), &id));
+                    println!(
+                        "Sunday can now send things to {name}. In {name}'s MCP settings, add a server named \"openagora\" that runs:\n {command}"
+                    );
+                }
+                AgentsCmd::Forget { id } => {
+                    if agents::forget_custom(&paths, &id)? {
+                        println!("Forgot {id}.");
+                    } else {
+                        println!("No agent {id} was added.");
+                    }
+                }
+            }
+        }
+        Cmd::Connect { app } => {
+            let paths = Paths::from_env()?;
+            let catalog = load_catalog(&cli.catalog)?;
+            let m = listing(&catalog, &app)?;
+            let oauth = m
+                .agent
+                .as_ref()
+                .is_some_and(|a| a.mcp.auth == openagora::manifest::McpAuth::Oauth);
+            if !oauth {
+                anyhow::bail!(
+                    "{} doesn't sign agents in with OAuth; there's nothing to connect",
+                    m.name
+                );
+            }
+            let engine = Engine::new()?;
+            let port = match engine.status(&m.id)? {
+                Status::Running(r) => r.port,
+                Status::Stopped => None,
+            }
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{} isn't running. Start it first: openagora start {}",
+                    m.name,
+                    m.id
+                )
+            })?;
+            let name = m.name.clone();
+            let open = |url: &str| -> anyhow::Result<()> {
+                println!(
+                    "Approve OpenAgora on {name}'s page (choose Supervised or more, so Sunday can start threads):\n  {url}"
+                );
+                open_in_browser(url);
+                Ok(())
+            };
+            let mut entry = audit::Entry::new("user", "connect", &m.id);
+            entry.via = Some(format!("{}'s page (command line)", m.name));
+            let result = t3::connect(&paths, &m.id, port, &open);
+            match &result {
+                Ok(c) => {
+                    entry.decision = "confirmed".into();
+                    entry.outcome = c.scope.clone().unwrap_or_else(|| "connected".into());
+                }
+                Err(e) => {
+                    entry.decision = "failed".into();
+                    entry.outcome = format!("{e:#}");
+                }
+            }
+            audit::record(&paths, &entry)?;
+            let connection = result?;
+            println!("OpenAgora is connected to {}.", m.name);
+            if !connection.can_act() {
+                println!(
+                    "{} gave OpenAgora read-only access: Sunday can read threads but not start them. Connect again and choose Supervised or more to let it.",
+                    m.name
+                );
+            }
+        }
+        Cmd::Disconnect { app } => {
+            let paths = Paths::from_env()?;
+            let removed = connections::remove(&paths, &app)?;
+            let mut entry = audit::Entry::new("user", "disconnect", &app);
+            entry.via = Some("command line".into());
+            entry.outcome = if removed {
+                "forgotten"
+            } else {
+                "not connected"
+            }
+            .into();
+            audit::record(&paths, &entry)?;
+            if removed {
+                println!(
+                    "OpenAgora forgot its sign-in to {app}. The app may still list OpenAgora among its connections until you remove it there."
+                );
+            } else {
+                println!("OpenAgora wasn't connected to {app}.");
+            }
+        }
+        Cmd::Connections { json } => {
+            let paths = Paths::from_env()?;
+            let all = connections::list(&paths)?;
+            if json {
+                let rows: Vec<serde_json::Value> = all
+                    .iter()
+                    .map(|c| {
+                        serde_json::json!({
+                            "app": c.app,
+                            "connected_at": c.connected_at,
+                            "expires_at": c.expires_at,
+                            "usable": c.usable(),
+                            "can_act": c.can_act(),
+                            "scope": c.scope,
+                            "port": c.port,
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&rows)?);
+            } else if all.is_empty() {
+                println!("OpenAgora isn't connected to any app.");
+            } else {
+                for c in all {
+                    let state = if c.usable() {
+                        if c.can_act() {
+                            "connected"
+                        } else {
+                            "connected, read-only"
+                        }
+                    } else {
+                        "signed out: connect again"
+                    };
+                    println!("{:<10} {state}", c.app);
+                }
+            }
+        }
         Cmd::Grants { action } => {
             let paths = Paths::from_env()?;
             match action.unwrap_or(GrantsCmd::List { json: false }) {
@@ -735,7 +1122,12 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                         }
                     }
                 }
-                GrantsCmd::Allow { app, name, once } => {
+                GrantsCmd::Allow {
+                    app,
+                    name,
+                    once,
+                    for_client,
+                } => {
                     let name = name.unwrap_or_else(|| app.clone());
                     let source = broker::Source {
                         app: &name,
@@ -751,14 +1143,25 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     } else {
                         broker::Scope::Always
                     };
+                    // Sunday sees an app's windows; a coding agent sees what
+                    // comes from the app on the desk.
+                    let (client, family) = match &for_client {
+                        Some(agent) if agents::is_agent(&paths, agent) => {
+                            (agent.clone(), broker::ANY)
+                        }
+                        Some(other) => {
+                            anyhow::bail!("{other:?} isn't a coding agent (see openagora agents)")
+                        }
+                        None => ("sunday".to_string(), broker::IMAGES),
+                    };
                     broker::grant(
                         &paths,
                         broker::Grant {
-                            client: "sunday".into(),
+                            client: client.clone(),
                             source: app.clone(),
                             source_name: name.clone(),
-                            destination: "sunday".into(),
-                            family: broker::IMAGES.into(),
+                            destination: client.clone(),
+                            family: family.into(),
                             scope,
                             granted_at: state::now(),
                         },
@@ -766,20 +1169,31 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     let mut entry = audit::Entry::new("user", "allow_app", &app);
                     entry.decision = "confirmed".into();
                     entry.via = Some("command line".into());
-                    entry.outcome = if once { "once" } else { "always" }.into();
+                    entry.outcome =
+                        format!("{} for {client}", if once { "once" } else { "always" });
                     audit::record(&paths, &entry)?;
-                    println!("Sunday may now see {name}.");
+                    println!(
+                        "{} may now see {name}.",
+                        agents::name(&paths, &client).unwrap_or_else(|| "Sunday".into())
+                    );
                 }
-                GrantsCmd::Revoke { app } => {
-                    let removed = broker::revoke(&paths, &app)?;
+                GrantsCmd::Revoke {
+                    app,
+                    for_client,
+                    to,
+                } => {
+                    let removed =
+                        broker::revoke_where(&paths, &app, for_client.as_deref(), to.as_deref())?;
                     let mut entry = audit::Entry::new("user", "revoke", &app);
                     entry.via = Some("command line".into());
                     entry.outcome = format!("{removed} grant(s)");
                     audit::record(&paths, &entry)?;
                     if removed == 0 {
                         println!("Nothing was allowed for {app}.");
-                    } else {
+                    } else if for_client.is_none() && to.is_none() {
                         println!("Sunday may no longer see {app}.");
+                    } else {
+                        println!("Took back {removed} permission(s) for {app}.");
                     }
                 }
             }
@@ -979,6 +1393,107 @@ fn describe(m: &Manifest) {
     }
 }
 
+/// The coding agents, for `openagora agents`: each built-in agent as found on
+/// this computer (asked in parallel: each agent's own command is slow to
+/// start), then the ones the user added.
+fn agents_json(paths: &Paths) -> anyhow::Result<serde_json::Value> {
+    let engine = paths.stable_exe();
+    let found: Vec<serde_json::Value> = std::thread::scope(|scope| {
+        let handles: Vec<_> = agents::AGENTS
+            .iter()
+            .map(|d| {
+                let engine = &engine;
+                scope.spawn(move || {
+                    let found = agents::find(d);
+                    let set_up = found.exe.is_some() && agents::is_set_up(&found).unwrap_or(false);
+                    let remove = agents::remove_args(&found).map(|args| agents::display(d.command, &args));
+                    let (hook, hook_remove): (Vec<String>, Vec<String>) = if d.id == "claude-code" {
+                        (
+                            agents::claude_hook::install_args(paths)
+                                .iter()
+                                .map(|args| agents::display(d.command, args))
+                                .collect(),
+                            agents::claude_hook::uninstall_args()
+                                .iter()
+                                .map(|args| agents::display(d.command, args))
+                                .collect(),
+                        )
+                    } else {
+                        (Vec::new(), Vec::new())
+                    };
+                    serde_json::json!({
+                        "id": d.id,
+                        "name": d.name,
+                        "homepage": d.homepage,
+                        "custom": false,
+                        "installed": found.exe.is_some(),
+                        "command": found.exe.as_ref().map(|p| p.display().to_string()),
+                        "version": found.version,
+                        "set_up": set_up,
+                        "setup_command": agents::display(d.command, &agents::add_args(&found, engine)),
+                        "hook_commands": hook,
+                        "remove_command": remove,
+                        "hook_remove_commands": hook_remove,
+                        "remove_by_hand": agents::remove_args(&found).is_none().then(|| agents::remove_by_hand(&found)),
+                    })
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or_default())
+            .collect()
+    });
+    let mut all = found;
+    for c in agents::custom(paths)? {
+        all.push(serde_json::json!({
+            "id": c.id,
+            "name": c.name,
+            "custom": true,
+            "installed": true,
+            "set_up": true,
+            "mcp_command": agents::display("", &agents::server_command(&engine, &c.id)).trim().to_string(),
+        }));
+    }
+    Ok(serde_json::Value::Array(all))
+}
+
+/// Opens a page in the user's browser: `$BROWSER` if set, else the system's
+/// own opener. Failing is fine: the address was printed too.
+fn open_in_browser(url: &str) {
+    let mut cmd = match std::env::var("BROWSER")
+        .ok()
+        .filter(|b| !b.trim().is_empty())
+    {
+        Some(browser) => {
+            let mut c = std::process::Command::new(browser);
+            c.arg(url);
+            c
+        }
+        None if cfg!(target_os = "macos") => {
+            let mut c = std::process::Command::new("open");
+            c.arg(url);
+            c
+        }
+        None if cfg!(windows) => {
+            // No shell between the address and the opener.
+            let mut c = std::process::Command::new("rundll32");
+            c.args(["url.dll,FileProtocolHandler", url]);
+            c
+        }
+        None => {
+            let mut c = std::process::Command::new("xdg-open");
+            c.arg(url);
+            c
+        }
+    };
+    let _ = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
 /// Asks a yes/no question; without a terminal, only `--yes` proceeds.
 fn confirm(question: &str, yes: bool) -> anyhow::Result<bool> {
     if yes {
@@ -1021,6 +1536,13 @@ fn listing_json(engine: &Engine, m: &Manifest) -> anyhow::Result<serde_json::Val
             })
         })
         .collect();
+    let destination = m.destination.as_ref().map(|d| {
+        serde_json::json!({"accepts": d.accepts, "deliver": d.deliver.as_str(), "adapter": d.adapter})
+    });
+    let mcp_auth = m.agent.as_ref().map(|a| match a.mcp.auth {
+        openagora::manifest::McpAuth::Oauth => "oauth",
+        openagora::manifest::McpAuth::None => "none",
+    });
     let record = engine.installed(&m.id)?;
     let installed = record.is_some();
     let (status, pid, url, port) = match engine.status(&m.id)? {
@@ -1049,6 +1571,8 @@ fn listing_json(engine: &Engine, m: &Manifest) -> anyhow::Result<serde_json::Val
         "ui": format!("{:?}", m.ui.kind).to_lowercase(),
         "steps": steps,
         "permissions": permissions,
+        "destination": destination,
+        "mcp_auth": mcp_auth,
         "installed": installed,
         "adopted": record.as_ref().is_some_and(|i| i.adopted),
         "present": engine.present(m),

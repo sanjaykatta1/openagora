@@ -49,6 +49,9 @@ export interface EngineLinkEvents {
   confirm(request: ConfirmRequest): Promise<ConfirmAnswer>;
   /** An agent asked to show an app. */
   openApp(id: string): void;
+  /** The engine connects to an app that signs agents in with OAuth: show
+   *  the app's own approval page. Resolves once it is shown. */
+  openApproval(app: string, url: string): Promise<void>;
   /** The engine asks for a picture of a window. */
   capture(target: CaptureTarget, maxEdge: number, purpose: CapturePurpose): Promise<Picture>;
   /** What the engine should know about this window when it (re)connects. */
@@ -196,6 +199,9 @@ export class EngineLink {
       const max = typeof params.max === "number" && params.max >= 64 ? Math.min(params.max, 4096) : 1920;
       const purpose: CapturePurpose = params.purpose === "shortcut" ? "shortcut" : "tool";
       this.events.capture(target, max, purpose).then(reply, fail);
+    } else if (message.method === "oauth/open" && message.id !== undefined) {
+      if (typeof params.app !== "string" || typeof params.url !== "string") { fail("an approval page needs an app and an address"); return; }
+      this.events.openApproval(params.app, params.url).then(() => reply({ opened: true }), fail);
     } else if (message.method === "app/open" && typeof params.id === "string") {
       this.events.openApp(params.id);
     } else if (message.id !== undefined && message.method !== undefined) {

@@ -358,6 +358,9 @@ fn connecting_sunday_uses_hermess_own_config_command_on_sundays_profile_only() {
     assert!(skill.contains("requires_tools: [mcp__openagora__store_search]"));
     let desk = std::fs::read_to_string(skills.join("openagora/openagora-desk/SKILL.md")).unwrap();
     assert!(desk.contains("requires_tools: [mcp__openagora__capture_window]"));
+    let handoff =
+        std::fs::read_to_string(skills.join("openagora/openagora-handoff/SKILL.md")).unwrap();
+    assert!(handoff.contains("requires_tools: [mcp__openagora__send_to]"));
     assert_eq!(env.json(&["sunday", "status", "--json"])["connected"], true);
     // Connecting twice changes nothing more.
     env.ok(&["sunday", "connect", "--yes"]);

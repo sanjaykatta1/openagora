@@ -13,7 +13,7 @@ use crate::github;
 use crate::manifest::{Arch, Health, Manifest, Os, Port, Role, Shell};
 use crate::paths::{self, Paths};
 use crate::process;
-use crate::state::{self, Installed, Running};
+use crate::state::{self, Installed, Running, StickyPort};
 use crate::sunday;
 
 /// How long a web app gets to start listening.
@@ -262,6 +262,7 @@ impl Engine {
         fs::create_dir_all(&app_dir).with_context(|| format!("creating {}", app_dir.display()))?;
         let port = match &m.run.port {
             Some(Port::Fixed(port)) => Some(*port),
+            Some(Port::Named(_)) if m.agent.is_some() => Some(self.sticky_port(&m.id)?),
             Some(Port::Named(_)) => Some(process::free_port()?),
             None => None,
         };
@@ -331,6 +332,22 @@ impl Engine {
             }
         }
         Ok(running)
+    }
+
+    /// The port an app with an MCP server keeps: the engine's OAuth grant
+    /// names the server's address, so it stays the same from start to start.
+    /// Only when something else holds it does the app get a new one (and the
+    /// grant is checked again on its next use).
+    fn sticky_port(&self, id: &str) -> Result<u16> {
+        let file = self.paths.port_file(id);
+        if let Some(StickyPort { port }) = state::read::<StickyPort>(&file)? {
+            if !process::port_open(port) {
+                return Ok(port);
+            }
+        }
+        let port = process::free_port()?;
+        state::write(&file, &StickyPort { port })?;
+        Ok(port)
     }
 
     pub fn stop(&self, m: &Manifest) -> Result<bool> {

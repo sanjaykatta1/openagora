@@ -92,7 +92,7 @@ function freshFakeState(overrides = {}) {
   return {
     present: false, installed: false, adopted: false, clean: false, version: '0.21.6',
     setup: 'unknown', running: false, dashboardUrl: null, pid: null, connected: false,
-    extraApps: [], calls: [], grants: [], never: [], ...overrides,
+    extraApps: [], calls: [], grants: [], never: [], agents: [], connections: [], ...overrides,
   };
 }
 
@@ -184,6 +184,27 @@ async function installFakeEngine(app, state) {
       return ok;
     });
     handle('never-remove', (_e, name) => { f().calls.push(['never-remove', name]); f().never = f().never.filter((r) => r.name !== name); return ok; });
+    handle('coding-agents', () => ({ agents: f().agents, connections: f().connections }));
+    handle('agent-setup', (_e, id) => {
+      f().calls.push(['agent-setup', id]);
+      f().agents = f().agents.map((a) => (a.id === id ? { ...a, set_up: true } : a));
+      return ok;
+    });
+    handle('agent-remove', (_e, id) => {
+      f().calls.push(['agent-remove', id]);
+      f().agents = f().agents.map((a) => (a.id === id ? { ...a, set_up: false } : a));
+      return ok;
+    });
+    handle('app-connect', (_e, app) => {
+      f().calls.push(['app-connect', app]);
+      f().connections = [{ app, connected_at: 1, expires_at: 0, usable: true, can_act: true, scope: 'orchestration:read orchestration:operate' }];
+      return { app, connected: true, can_act: true };
+    });
+    handle('app-disconnect', (_e, app) => {
+      f().calls.push(['app-disconnect', app]);
+      f().connections = f().connections.filter((c) => c.app !== app);
+      return ok;
+    });
     handle('agent-availability', () => ({ detected: true, launchable: true }));
     handle('launch-agent', (_e, id, action) => { f().calls.push(['launch-agent', id, action]); });
   }, state);

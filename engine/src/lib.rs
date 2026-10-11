@@ -1,22 +1,30 @@
 //! OpenAgora engine. See docs/SPEC.md for the design.
 
+pub mod agents;
+pub mod app_tools;
 pub mod apps;
 pub mod audit;
 pub mod broker;
 pub mod capture;
 pub mod catalog;
+pub mod connections;
 pub mod context;
 pub mod daemon;
 pub mod desk;
+pub mod destinations;
 pub mod focus;
 pub mod gateway;
 pub mod github;
+pub mod handoff;
 pub mod http;
+pub mod inbox;
 pub mod ipc;
 pub mod jsonrpc;
 pub mod manifest;
 pub mod mcp;
+pub mod oauth;
 pub mod paths;
 pub mod process;
 pub mod state;
 pub mod sunday;
+pub mod t3;

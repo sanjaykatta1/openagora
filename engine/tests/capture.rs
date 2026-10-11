@@ -643,15 +643,21 @@ fn the_desk_is_shared_with_sunday_only_and_without_the_window_nothing_is_capture
         "{text}"
     );
 
-    // Coding agents get no desk tools yet, and can't read Sunday's items.
+    // Coding agents get only their own inbox tools, and can't read Sunday's
+    // items unless Sunday sends them.
     let mut codex = McpClient::start(&env, "codex", false);
-    assert!(codex.tools().is_empty());
+    assert_eq!(
+        codex.tools(),
+        ["context_inbox", "context_get", "context_search"]
+    );
     let read = codex.request(
         "tools/call",
         json!({"name": "desk_get", "arguments": {"id": id}}),
         &mut no_questions,
     );
     assert!(read.get("error").is_some(), "{read}");
+    let (denied, error) = codex.call("context_get", json!({"id": id}), &mut no_questions);
+    assert!(error && denied.contains("no item"), "{denied}");
 
     // The desk is a folder only this user can open, and it can be cleared.
     let listed = env.json(&["desk", "list", "--json"]);

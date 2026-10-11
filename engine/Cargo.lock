@@ -312,6 +312,7 @@ dependencies = [
  "anyhow",
  "base64",
  "clap",
+ "getrandom",
  "interprocess",
  "libc",
  "regex",

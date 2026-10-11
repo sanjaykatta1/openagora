@@ -181,6 +181,32 @@ may not see unless you pressed the shortcut over them. Every capture, allowed or
 refused, every grant and revocation, and every desk read is in `openagora audit`,
 rules included.
 
+## Coding agents
+
+Sunday sends what you're working on to your coding agents. Each agent reads it
+through OpenAgora's MCP server, which these commands add to the agent's own
+settings with the agent's own command (they show it and ask first):
+
+```sh
+openagora agents                         # coding agents on this computer, and whether each is set up
+openagora agents list --json             # the same, with the exact commands, for scripts
+openagora agents setup claude-code       # claude mcp add … (and its prompt-hook plugin; --no-hook leaves it out)
+openagora agents setup codex             # codex mcp add openagora -- …
+openagora agents setup opencode          # opencode mcp add openagora -- … (--global for OpenCode 2)
+openagora agents remove claude-code      # with the agent's own command (OpenCode has none: OpenAgora says how)
+openagora agents add zed --name Zed      # another MCP agent you set up yourself
+openagora grants allow Notes --for claude-code   # let an agent see what comes from an app, without Sunday sending it
+openagora grants revoke firefox --to claude-code # Sunday asks again before sending Firefox to Claude Code
+openagora connect t3code                 # approve OpenAgora on T3 Code's own page (it opens in your browser)
+openagora connections                    # the apps OpenAgora is connected to
+openagora disconnect t3code              # forget that sign-in
+```
+
+In the agent, ask "what did Sunday send me?": it calls `context_inbox` and
+`context_get`. T3 Code needs `connect` once (choose Supervised or more, so Sunday
+can start threads); after that Sunday starts threads there with `start_task`.
+The sign-in lasts 30 days and is kept in a file only you can open.
+
 ## Uninstall the command line tool
 
 - macOS `.pkg`: `sudo rm /usr/local/bin/openagora && sudo pkgutil --forget app.openagora.cli`

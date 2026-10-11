@@ -55,6 +55,13 @@ pub struct Running {
     pub profile: Option<String>,
 }
 
+/// The port an app with an MCP server keeps from start to start: OAuth grants
+/// name the server's address.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct StickyPort {
+    pub port: u16,
+}
+
 pub fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -79,6 +86,30 @@ pub fn write<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let tmp = path.with_extension("toml.tmp");
     fs::write(&tmp, toml::to_string(value)?)
         .with_context(|| format!("writing {}", tmp.display()))?;
+    fs::rename(&tmp, path).with_context(|| format!("writing {}", path.display()))
+}
+
+/// Like `write`, for secrets: the file (and the folder it's in) only this
+/// user can open, from the moment it exists.
+pub fn write_private<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    let dir = path.parent().context("state path has no parent")?;
+    fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let tmp = path.with_extension("toml.tmp");
+    let _ = fs::remove_file(&tmp);
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&tmp)
+        .with_context(|| format!("writing {}", tmp.display()))?;
+    std::io::Write::write_all(&mut file, toml::to_string(value)?.as_bytes())
+        .with_context(|| format!("writing {}", tmp.display()))?;
+    drop(file);
     fs::rename(&tmp, path).with_context(|| format!("writing {}", path.display()))
 }
 

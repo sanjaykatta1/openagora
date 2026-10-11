@@ -2,7 +2,8 @@
 // and the never-capture list. The engine keeps and enforces all of it; this
 // page only shows it and passes the user's changes on.
 import { useCallback, useEffect, useState } from "react";
-import { bridge, type BrokerState, type DesktopState } from "./api";
+import { bridge, type BrokerState, type DesktopState, type Grant } from "./api";
+import { clientName } from "./Confirm";
 import { PROVIDER_NOTICE } from "./Panel";
 
 const shortcutLabel = (accelerator: string, platform: string) =>
@@ -49,6 +50,17 @@ export function SeeingSettings() {
   const platform = desktop?.platform ?? bridge.platform;
   const trayName = platform === "darwin" ? "menu bar" : "tray";
   const grants = broker?.grants ?? [];
+  // Sunday seeing apps' windows; Sunday sending to coding agents or starting
+  // work in apps; coding agents seeing apps.
+  const seeing = grants.filter((g) => g.client === "sunday" && g.destination === "sunday");
+  const sending = grants.filter((g) => g.client === "sunday" && g.destination !== "sunday");
+  const agentsSee = grants.filter((g) => g.client !== "sunday");
+  const scopeText = (g: Grant) => g.scope === "once" ? "once" : "always";
+  const sendText = (g: Grant) => g.type === "tasks/*" ? `Start tasks in ${clientName(g.destination)}`
+    : g.type === "act/*" ? `Act in ${clientName(g.destination)} with its own tools`
+    : `Send from ${g.source_name} to ${clientName(g.destination)}`;
+  const revoke = (g: Grant, done: string) =>
+    void run(() => bridge!.broker.revoke(g.source, { client: g.client, destination: g.destination }), done);
   const own = broker?.never.user ?? [];
   return (
     <div className="panel" aria-labelledby="seeing-title">
@@ -88,16 +100,38 @@ export function SeeingSettings() {
       </>}
 
       <h4>Apps Sunday may see</h4>
-      {grants.length === 0
+      {seeing.length === 0
         ? <p className="muted">None yet. Press Sunday’s shortcut over an app to allow it.</p>
         : <ul className="rows compact">
-          {grants.map((g) => (
+          {seeing.map((g) => (
             <li key={`${g.source}:${g.scope}:${g.destination}`} className="row">
               <span><strong>{g.source_name}</strong> <span className="muted small">{g.scope === "once" ? "next capture only" : "always"}</span></span>
-              <button className="btn ghost" onClick={() => void run(() => bridge!.broker.revoke(g.source), `Sunday may no longer see ${g.source_name}.`)}>Remove</button>
+              <button className="btn ghost" onClick={() => revoke(g, `Sunday may no longer see ${g.source_name}.`)}>Remove</button>
             </li>
           ))}
         </ul>}
+      {sending.length > 0 && <>
+        <h4>What Sunday may hand over without asking</h4>
+        <ul className="rows compact">
+          {sending.map((g) => (
+            <li key={`${g.source}:${g.type}:${g.destination}:${g.scope}`} className="row">
+              <span><strong>{sendText(g)}</strong> <span className="muted small">{scopeText(g)}</span></span>
+              <button className="btn ghost" onClick={() => revoke(g, `Sunday asks again before: ${sendText(g).toLowerCase()}.`)}>Remove</button>
+            </li>
+          ))}
+        </ul>
+      </>}
+      {agentsSee.length > 0 && <>
+        <h4>Apps coding agents may see</h4>
+        <ul className="rows compact">
+          {agentsSee.map((g) => (
+            <li key={`${g.client}:${g.source}:${g.type}`} className="row">
+              <span><strong>{clientName(g.client)} may see {g.source_name}</strong> <span className="muted small">{scopeText(g)}</span></span>
+              <button className="btn ghost" onClick={() => revoke(g, `${clientName(g.client)} may no longer see ${g.source_name}.`)}>Remove</button>
+            </li>
+          ))}
+        </ul>
+      </>}
 
       <h4>Never captured</h4>
       <p className="muted small">Built in, whatever else you allow: {(broker?.never.built_in ?? []).map((r) => r.name).join(", ")}.</p>

@@ -43,6 +43,49 @@ export interface App {
   url: string | null;
   /** The app's plain address while it runs. */
   home_url: string | null;
+  /** What Sunday may hand to the app, and how (`[destination]`). */
+  destination?: { accepts: string[]; deliver: string; adapter: string | null } | null;
+  /** How agents sign in to the app's MCP server. */
+  mcp_auth?: "oauth" | "none" | null;
+}
+
+/** A coding agent on this computer; mirrors `openagora agents list --json`. */
+export interface CodingAgent {
+  id: string;
+  name: string;
+  homepage?: string;
+  /** Added by the user (`openagora agents add`), set up by hand. */
+  custom: boolean;
+  installed: boolean;
+  version?: string | null;
+  /** Its config has OpenAgora's MCP server. */
+  set_up: boolean;
+  /** The agent's own command OpenAgora runs to set it up. */
+  setup_command?: string;
+  /** Claude Code: its own commands that add OpenAgora's prompt-hook plugin. */
+  hook_commands?: string[];
+  remove_command?: string | null;
+  hook_remove_commands?: string[];
+  /** How to remove it where the agent has no command for that. */
+  remove_by_hand?: string | null;
+  /** For an agent set up by hand: what its MCP config runs. */
+  mcp_command?: string;
+}
+
+/** OpenAgora's sign-in to an app; mirrors `openagora connections --json`. */
+export interface AppConnection {
+  app: string;
+  connected_at: number;
+  expires_at: number;
+  usable: boolean;
+  /** More than reading (T3 Code: Supervised or more). */
+  can_act: boolean;
+  scope: string | null;
+}
+
+export interface CodingAgentsState {
+  agents: CodingAgent[];
+  connections: AppConnection[];
 }
 
 /** Where Sunday stands; mirrors `openagora sunday status --json`. */
@@ -197,9 +240,17 @@ export interface Bridge {
   desktopSettings(): Promise<DesktopState>;
   saveDesktopSettings(value: DesktopSettings): Promise<DesktopState>;
   openScreenSettings(): Promise<void>;
+  codingAgents: {
+    state(): Promise<CodingAgentsState>;
+    setUp(id: string): Promise<EngineResult>;
+    remove(id: string): Promise<EngineResult>;
+    /** Opens the app's approval page; resolves when the user answered there. */
+    connect(app: string): Promise<{ app: string; connected: boolean; can_act: boolean }>;
+    disconnect(app: string): Promise<EngineResult>;
+  };
   broker: {
     state(): Promise<BrokerState>;
-    revoke(app: string): Promise<EngineResult>;
+    revoke(app: string, scope?: { client?: string; destination?: string }): Promise<EngineResult>;
     neverAdd(rule: { name: string; app?: string; title?: string }): Promise<EngineResult>;
     neverRemove(name: string): Promise<EngineResult>;
   };

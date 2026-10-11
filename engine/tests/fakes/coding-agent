@@ -1,0 +1,69 @@
+#!/bin/sh
+# Stands in for Claude Code (`claude`), Codex (`codex`) and OpenCode
+# (`opencode`) in tests. Copied under each name, it acts as that tool's
+# `--version` and `mcp add|get|list|remove`, records every call in
+# $AGENT_CALLS, and keeps its MCP servers in $HOME/.fake-<tool>-mcp/.
+tool=$(basename "$0")
+echo "$tool $*" >> "${AGENT_CALLS:-/dev/null}"
+dir="$HOME/.fake-$tool-mcp"
+case "$1" in
+  --version)
+    case "$tool" in
+      claude) echo "2.1.300 (Claude Code)" ;;
+      codex) echo "codex-cli 0.130.0" ;;
+      opencode) cat "$HOME/.fake-opencode-version" 2>/dev/null || echo "1.19.3" ;;
+    esac
+    exit 0 ;;
+  mcp) ;;
+  plugin)
+    # Claude Code's plugin commands: marketplace add|remove, install|uninstall.
+    plugins="$HOME/.fake-$tool-plugins"
+    mkdir -p "$plugins"
+    case "$2 $3" in
+      "marketplace add")
+        [ -f "$4/.claude-plugin/marketplace.json" ] || { echo "no marketplace at $4" >&2; exit 1; }
+        cp -R "$4" "$plugins/marketplace"; echo "Successfully added marketplace" ;;
+      "marketplace remove") rm -rf "$plugins/marketplace"; echo "Removed marketplace" ;;
+      install*)
+        [ -d "$plugins/marketplace" ] || { echo "no such marketplace" >&2; exit 1; }
+        echo "$3" > "$plugins/installed"; echo "Installed $3" ;;
+      uninstall*) rm -f "$plugins/installed"; echo "Uninstalled $3" ;;
+      *) echo "unknown plugin command: $*" >&2; exit 2 ;;
+    esac
+    exit 0 ;;
+  *) echo "unknown command: $*" >&2; exit 2 ;;
+esac
+shift
+action=$1
+shift
+case "$action" in
+  add)
+    # Options may come before or after the name, until `--`.
+    name=""
+    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+      case "$1" in
+        --scope|--transport|--env|-e|-s|-t) shift 2 ;;
+        --*) shift ;;
+        *) [ -z "$name" ] && name=$1; shift ;;
+      esac
+    done
+    [ "$1" = "--" ] && shift
+    if [ -z "$name" ] || [ "$#" -eq 0 ]; then echo "usage: mcp add <name> -- <command>" >&2; exit 2; fi
+    mkdir -p "$dir"
+    printf '%s\n' "$*" > "$dir/$name"
+    echo "Added MCP server $name"
+    ;;
+  get)
+    name=$1
+    if [ -f "$dir/$name" ]; then cat "$dir/$name"; else echo "No MCP server named '$name' found." >&2; exit 1; fi
+    ;;
+  list)
+    for f in "$dir"/*; do [ -f "$f" ] && echo "$(basename "$f"): $(cat "$f")"; done
+    exit 0
+    ;;
+  remove)
+    name=$1
+    if [ -f "$dir/$name" ]; then rm "$dir/$name"; echo "Removed $name"; else echo "No MCP server named '$name' found." >&2; exit 1; fi
+    ;;
+  *) echo "unknown mcp command: $action" >&2; exit 2 ;;
+esac

@@ -16,7 +16,10 @@ use serde_json::{Value, json};
 
 use openagora::github::sha256_hex;
 
+pub mod fake_t3;
+
 pub const FAKE_HERMES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fakes/hermes");
+pub const FAKE_AGENT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fakes/coding-agent");
 
 pub struct Env {
     _dir: tempfile::TempDir,
@@ -90,6 +93,22 @@ impl Env {
     pub fn set_hermes_version(&self, version: &str) {
         fs::create_dir_all(self.hermes_root()).unwrap();
         fs::write(self.hermes_root().join(".fake-version"), version).unwrap();
+    }
+
+    /// Puts stand-in coding agents (`claude`, `codex`, `opencode`) where
+    /// their installers would, in `~/.local/bin`. Returns the file that
+    /// records every call they get.
+    pub fn add_fake_agents(&mut self, names: &[&str]) -> PathBuf {
+        let bin = self.home.join(".local/bin");
+        fs::create_dir_all(&bin).unwrap();
+        for name in names {
+            let target = bin.join(name);
+            fs::copy(FAKE_AGENT, &target).unwrap();
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let calls = self.data.with_file_name("agent-calls.log");
+        self.env("AGENT_CALLS", calls.to_str().unwrap());
+        calls
     }
 
     pub fn env(&mut self, key: &str, value: &str) {
@@ -194,6 +213,71 @@ url = "http://127.0.0.1:{{port}}/"
 "#
             ),
         );
+    }
+
+    /// T3 Code, installed and running on `port` (a stand-in server): its
+    /// listing as in the store, with the engine's run record pointing at the
+    /// test's own process, which serves it.
+    pub fn add_running_t3code(&self, port: u16) {
+        let os = this_os();
+        write_listing(
+            &self.catalog,
+            "t3code",
+            &format!(
+                r#"
+schema = "openagora/v1"
+id = "t3code"
+name = "T3 Code"
+summary = "Stands in for T3 Code"
+category = "coding"
+homepage = "https://example.com"
+source = "https://github.com/example/t3code"
+license = "MIT"
+platforms = ["{os}"]
+
+[install]
+provides = "{{app_dir}}/t3"
+
+[[install.steps]]
+os = ["{os}"]
+shell = "sh"
+run = "touch '{{app_dir}}/t3'"
+
+[run]
+command = "{{app_dir}}/t3"
+args = ["serve", "--port", "{{port}}"]
+port = "auto"
+
+[run.health]
+tcp = true
+
+[ui]
+kind = "web"
+url = "http://127.0.0.1:{{port}}/"
+
+[agent.mcp]
+url = "http://127.0.0.1:{{port}}/mcp"
+auth = "oauth"
+
+[destination]
+accepts = ["image/png", "image/jpeg", "image/gif", "image/webp", "text/*"]
+provides = ["text/*"]
+deliver = "mcp"
+adapter = "t3code"
+"#
+            ),
+        );
+        self.ok(&["install", "t3code", "--yes"]);
+        let run = self.data.join("run");
+        fs::create_dir_all(&run).unwrap();
+        fs::write(
+            run.join("t3code.toml"),
+            format!(
+                "pid = {}\nport = {port}\nurl = \"http://127.0.0.1:{port}/\"\nstarted_at = 0\n",
+                std::process::id()
+            ),
+        )
+        .unwrap();
     }
 
     /// The engine service's socket, as the running service recorded it.

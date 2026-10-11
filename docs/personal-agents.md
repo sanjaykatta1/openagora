@@ -159,25 +159,41 @@ stays on top.
   and incognito browser windows, and Tor Browser. They can't be allowed. Add your
   own apps, or words in window titles, in **Settings → What Sunday can see**.
   Browsers mark private windows in their titles, except Safari, so OpenAgora
-  can't tell Safari's private windows apart.
+  can't tell Safari's private windows apart. Whether Chrome marks them on macOS
+  is still to be checked. Each capture checks the window's title again, as
+  OpenAgora's window saw it while capturing, so a private window opened in an
+  allowed browser after you pressed the shortcut is still refused.
 - **Apps in OpenAgora's tabs** are captured by OpenAgora itself, without any
-  system permission. They need allowing too.
+  system permission. They need allowing too. Apps in tabs (and Sunday's chat)
+  can't use your camera, microphone or screen themselves.
+
+Sunday is told the names of apps it may see, with their window titles for apps
+you always allowed. Other apps stay unnamed unless you press the shortcut over
+them (or Sunday names one itself), and never-capture rules are never named to
+Sunday; the panel and Settings show them to you.
 
 Anything Sunday looks at is sent to the model provider you chose for Sunday.
 OpenAgora says so in the panel and in Settings.
 
 **The desk** is where what you share with Sunday waits: screenshots, and the
 clipboard or files you put there from the panel (**Add clipboard**, or drop files
-on the panel). Items are kept on this computer, in a folder only you can open,
-for 24 hours. `openagora desk` lists and clears them.
+on the panel; the panel reads them and sends their contents, so no page can have
+OpenAgora read a file by its path). Items are kept on this computer, in a folder
+only you can open, for 24 hours. `openagora desk` lists and clears them.
 
 **Sunday can look again** with its `capture_window` tool, but only at apps you
 allowed, and **asks to see an app** with `allow_app`, which puts OpenAgora's own
-question in front of you. OpenAgora looks up which windows are in front only
+question in front of you (for the app Sunday names, or the one you're in). OpenAgora looks up which windows are in front only
 when it needs to (when you press the shortcut, when Sunday asks, and before each
 of Sunday's replies, to tell it which app you're in); it keeps no record of the
 apps you use. Every capture, allowed or refused, every permission you give or
 take back, and every time Sunday reads the desk goes to the audit log.
+
+**Programs on your computer.** OpenAgora's engine takes any program running as
+you at its word about who it is, as it does Sunday. So a program running as you
+could ask for what Sunday may see; on macOS that includes pictures of apps you
+always allowed, through OpenAgora's Screen Recording permission. Allow apps
+**once** when you only need it once; the audit log shows every capture.
 
 **OpenAgora keeps running in the menu bar (or tray) after you close its window**,
 so the shortcut keeps working. **Quit OpenAgora** is in its menu. Turn this off,
@@ -192,7 +208,9 @@ or change the shortcut, in **Settings → What Sunday can see**.
 - **Linux on X11** needs no permission.
 - **Linux on Wayland** doesn't let apps see which window is in front. Pressing
   the shortcut opens the panel with **Pick a window**, and the system's own dialog
-  lets you choose the window; your choice is the permission for that one capture.
+  lets you choose the window; your choice is the permission for that one capture
+  (the never-capture list still applies). Only you can open that dialog, from the
+  panel: Sunday asking can't. Elsewhere there is no **Pick a window**.
   The shortcut itself goes through the desktop's global shortcuts portal. On GNOME
   without the AppIndicator extension there is no tray icon: open OpenAgora again
   from your apps to bring its window back.
@@ -234,17 +252,25 @@ window and a stand-in window list. They cover: the shortcut over an app
 OpenAgora didn't install (it knows the app's name and captures nothing until it
 is allowed; allowing it once or always; Sunday's hook naming the app and the
 desk item, and `desk_get` returning the picture); `capture_window` and
-`allow_app` (asked in OpenAgora's window only; once means once; no means no);
-password managers, private browser windows and the user's own additions never
-captured and never allowable, with no capture request ever reaching the window;
-app tabs and the panel; Wayland's pick; the desk shared with Sunday only, in a
-private folder; the hook staying quiet about the screen on messaging channels;
-and the audit log's entries. A test against a real X server checks the X11
+`allow_app` (asked in OpenAgora's window only; once means once, even for two
+captures at the same moment; no means no); password managers, private browser
+windows and the user's own additions never captured and never allowable, with no
+capture request ever reaching the window, and their rules never named to Sunday;
+a window checked again as it is captured (a title that changed, a closed window,
+a private window only OpenAgora's window could see, a title nobody could read);
+a choice in the panel never applied to another window; app tabs and the panel;
+Wayland's pick, from the panel only; the desk shared with Sunday only, in a
+private folder; the hook staying quiet about the screen on messaging channels
+and on turns that don't say where they come from, and telling about every desk
+item in time; and the audit log's entries. A test against a real X server checks the X11
 window query. UI tests cover the panel, its buttons, captures of an app tab and
 of a real window by its X11 id, the clipboard, Settings → What Sunday can see,
-and keeping OpenAgora running after its window closes. One end-to-end test runs
-the real engine with the real window, capturing another process's real window
-through the OS and reading it back through Sunday's MCP tools.
+keeping OpenAgora running after its window closes, dropped files sent as their
+contents, the window picker offered only when the engine says so, and pages in
+OpenAgora refused the screen. One end-to-end test runs the real engine with the
+real window, capturing another process's real window through the OS, reading it
+back through Sunday's MCP tools, and refusing it once it becomes a private
+window that only OpenAgora's window can see the title of.
 
 Not tested automatically, and to be checked by hand: the shortcut and capture on
 a real Mac (Screen Recording permission, the macOS window list and titles, the

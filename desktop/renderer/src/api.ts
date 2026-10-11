@@ -92,10 +92,18 @@ export interface ShortcutState {
   rule?: string | null;
   /** Why OpenAgora couldn't tell which window was in front. */
   unknown?: string | null;
+  /** Whether the system lets the user pick the window instead (Wayland). */
+  pick?: boolean;
   item?: { id: string; description: string } | null;
   error?: string | null;
   /** A small copy of what Sunday got. */
   picture?: string | null;
+}
+
+/** A file the user dropped on the panel, read by the panel itself. */
+export interface DeskFile {
+  name: string;
+  data: Uint8Array;
 }
 
 export type ScreenAccess = "granted" | "denied" | "not-determined" | "restricted" | "unknown" | "not-needed";
@@ -178,14 +186,13 @@ export interface Bridge {
   showMain(): Promise<void>;
   panel: {
     state(): Promise<ShortcutState | null>;
-    capture(options: { allow?: "once" | "always"; pick?: boolean }): Promise<ShortcutState>;
+    capture(options: { allow?: "once" | "always"; key?: string; pick?: boolean }): Promise<ShortcutState>;
     hide(): Promise<void>;
     onState(callback: (state: ShortcutState) => void): () => void;
   };
   desk: {
     addClipboard(): Promise<{ id: string }>;
-    addFiles(paths: string[]): Promise<{ id: string }[]>;
-    pathForFile(file: File): string;
+    addFiles(files: DeskFile[]): Promise<{ id: string }[]>;
   };
   desktopSettings(): Promise<DesktopState>;
   saveDesktopSettings(value: DesktopSettings): Promise<DesktopState>;

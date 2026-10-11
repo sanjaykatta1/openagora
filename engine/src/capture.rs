@@ -18,6 +18,7 @@ use crate::broker::{self, IMAGES, Scope};
 use crate::desk::{self, Item, Kind};
 use crate::focus;
 use crate::gateway::{Choice, Gateway};
+use crate::jsonrpc::Peer;
 use crate::manifest::{Role, UiKind};
 use crate::mcp::{Client, ToolResult};
 use crate::state;
@@ -32,6 +33,27 @@ const MAX_EDGE: u32 = 1920;
 const MAX_TEXT: usize = 100_000;
 /// The client captures are for: Sunday reads the desk.
 pub const SUNDAY: &str = "sunday";
+/// What the panel says when the shortcut was pressed over another window
+/// after it showed the user a choice.
+const PRESSED_AGAIN: &str =
+    "Sunday's shortcut was pressed over another window since. Press it again.";
+
+/// What a capture is for. OpenAgora's window shows the shortcut's captures in
+/// Sunday's panel, and not Sunday's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Purpose {
+    Shortcut,
+    Tool,
+}
+
+impl Purpose {
+    fn as_str(self) -> &'static str {
+        match self {
+            Purpose::Shortcut => "shortcut",
+            Purpose::Tool => "tool",
+        }
+    }
+}
 
 /// What OpenAgora's window says about itself.
 #[derive(Debug, Clone, Default)]
@@ -77,7 +99,9 @@ impl Target {
         }
     }
 
-    fn source(&self) -> broker::Source<'_> {
+    /// The target for the never-capture list, with the window title as last
+    /// seen.
+    fn source<'a>(&'a self, title: Option<&'a str>) -> broker::Source<'a> {
         let (key, exe) = match self {
             Target::Window(w) => (w.key.as_str(), w.exe.as_deref()),
             Target::Tab { id, .. } => (id.as_str(), None),
@@ -85,7 +109,7 @@ impl Target {
         broker::Source {
             app: self.app(),
             key,
-            title: self.title(),
+            title,
             exe,
         }
     }
@@ -131,12 +155,17 @@ impl Verdict {
 /// The user's last press of Sunday's shortcut.
 #[derive(Debug, Clone)]
 pub struct Called {
+    /// Counts the presses, so that a slow capture for one press doesn't
+    /// overwrite the next.
+    pub seq: u64,
     pub at: u64,
     /// None when OpenAgora couldn't tell which window was in front.
     pub target: Option<Target>,
     pub verdict: Option<Verdict>,
     /// Why OpenAgora couldn't tell.
     pub unknown: Option<String>,
+    /// Whether the system can let the user pick the window instead.
+    pub pick: bool,
     pub item: Option<Item>,
     pub error: Option<String>,
 }
@@ -146,6 +175,9 @@ pub struct Called {
 pub enum Refusal {
     NotAllowed,
     Never(String),
+    /// The window's title couldn't be read, so the never-capture list
+    /// couldn't be checked.
+    NoTitle,
     /// OpenAgora's window isn't connected.
     NoWindow,
     Failed(String),
@@ -167,8 +199,8 @@ pub fn tools() -> Vec<Value> {
         "allow_app",
         "Ask to see an app",
         "Ask the user to let you see an app's windows. OpenAgora asks the user itself, in its own window, and the user can allow it once or always. Apps on OpenAgora's never-capture list can't be allowed.",
-        json!({"app": {"type": "string", "description": "The app's name, as OpenAgora told you, e.g. \"Firefox\"."}}),
-        &["app"],
+        json!({"app": {"type": "string", "description": "The app's name, as OpenAgora told you, e.g. \"Firefox\". Leave out for the app the user is working in."}}),
+        &[],
     );
     allow["annotations"]["readOnlyHint"] = json!(false);
     vec![
@@ -282,22 +314,6 @@ impl Gateway {
     /// The front-most window of the named app, or an app in an OpenAgora tab.
     fn find_app(&self, name: &str) -> Result<Option<Target>, String> {
         let windows = focus::windows();
-        let called = self
-            .called
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|c| c.target.clone())
-            .filter(|t| same_app(name, t.app(), &t.key()));
-        // Prefer the very window the user called Sunday over, while it's open.
-        let still_open = |target: &Target| match (target, &windows) {
-            (Target::Window(w), Ok(open)) => open.iter().any(|x| x.id == w.id),
-            (Target::Window(_), Err(_)) => false,
-            (Target::Tab { .. }, _) => true,
-        };
-        if let Some(target) = called.filter(still_open) {
-            return Ok(Some(target));
-        }
         let me = self.window_state();
         let other_app = windows.as_ref().ok().and_then(|open| {
             open.iter()
@@ -329,7 +345,7 @@ impl Gateway {
 
     /// What the broker says about capturing `target` for `client`.
     pub fn verdict(&self, client: &str, target: &Target) -> Result<Verdict> {
-        if let Some(rule) = broker::never(&self.paths, &target.source())? {
+        if let Some(rule) = broker::never(&self.paths, &target.source(target.title()))? {
             return Ok(Verdict::Never(rule));
         }
         Ok(
@@ -343,9 +359,15 @@ impl Gateway {
     /// Captures `target` for `client`, asked by `asker` (`user` for the
     /// shortcut), and puts the picture on the desk. The broker is checked
     /// first, every time, and the attempt goes to the audit log.
-    pub fn capture(&self, asker: &str, client: &str, target: &Target) -> Result<Item, Refusal> {
+    pub fn capture(
+        &self,
+        asker: &str,
+        client: &str,
+        target: &Target,
+        purpose: Purpose,
+    ) -> Result<Item, Refusal> {
         let mut entry = Entry::new(asker, "capture", &target.key());
-        let result = self.capture_checked(client, target);
+        let result = self.capture_checked(client, target, purpose);
         match &result {
             Ok(item) => entry.outcome = item.id.clone(),
             Err(refusal) => {
@@ -357,6 +379,9 @@ impl Gateway {
                 entry.outcome = match refusal {
                     Refusal::NotAllowed => format!("{} isn't allowed", target.app()),
                     Refusal::Never(rule) => format!("never-capture list: {rule}"),
+                    Refusal::NoTitle => {
+                        "the window's title couldn't be read to check the never-capture list".into()
+                    }
                     Refusal::NoWindow => "OpenAgora's window isn't open".into(),
                     Refusal::Failed(why) => format!("failed: {why}"),
                 };
@@ -366,30 +391,88 @@ impl Gateway {
         result
     }
 
-    fn capture_checked(&self, client: &str, target: &Target) -> Result<Item, Refusal> {
-        let verdict = self
-            .verdict(client, target)
-            .map_err(|e| Refusal::Failed(format!("{e:#}")))?;
-        let once = match verdict {
+    fn capture_checked(
+        &self,
+        client: &str,
+        target: &Target,
+        purpose: Purpose,
+    ) -> Result<Item, Refusal> {
+        let target = self.refresh(target)?;
+        let once = match self.verdict(client, &target).map_err(failed)? {
             Verdict::Never(rule) => return Err(Refusal::Never(rule)),
             Verdict::NotAllowed => return Err(Refusal::NotAllowed),
             Verdict::Allowed(scope) => scope == Scope::Once,
         };
         let desktop = self.desktop().ok_or(Refusal::NoWindow)?;
+        // A "once" grant is used up before capturing, so two captures can't
+        // both use it, and given back if nothing comes of it.
+        if once
+            && !broker::use_once(&self.paths, client, &target.key(), client, IMAGES)
+                .map_err(failed)?
+        {
+            return Err(Refusal::NotAllowed);
+        }
+        let result = self.capture_and_keep(&desktop, client, &target, purpose);
+        if once && result.is_err() {
+            let _ = broker::grant(&self.paths, grant_for(client, &target, Scope::Once));
+        }
+        result
+    }
+
+    /// `target` as it is on screen now: a window's title can change, and the
+    /// window can close, between finding it and capturing it. Where the OS
+    /// can't say now, its title is unknown until OpenAgora's window reports
+    /// it.
+    fn refresh(&self, target: &Target) -> Result<Target, Refusal> {
+        let Target::Window(w) = target else {
+            return Ok(target.clone());
+        };
+        match focus::windows() {
+            Ok(open) => open
+                .into_iter()
+                .find(|x| x.id == w.id && x.pid == w.pid && x.key == w.key)
+                .map(Target::Window)
+                .ok_or_else(|| Refusal::Failed(format!("{}'s window has closed", w.app))),
+            Err(_) => Ok(Target::Window(focus::Window {
+                title: None,
+                ..w.clone()
+            })),
+        }
+    }
+
+    fn capture_and_keep(
+        &self,
+        desktop: &Peer,
+        client: &str,
+        target: &Target,
+        purpose: Purpose,
+    ) -> Result<Item, Refusal> {
         let reply = desktop
             .request(
                 "capture/window",
-                json!({"target": target.wire(), "max": MAX_EDGE}),
+                json!({"target": target.wire(), "max": MAX_EDGE, "purpose": purpose.as_str()}),
                 CAPTURE_WITHIN,
             )
             .map_err(|e| Refusal::Failed(e.to_string()))?;
-        if once {
-            let _ = broker::use_once(&self.paths, client, &target.key(), client, IMAGES);
+        // The never-capture list again, with the title OpenAgora's window saw
+        // while capturing: titles change (a private window in an allowed
+        // browser), and the engine may not see them at all (macOS, when it
+        // lacks Screen Recording permission). Until a window's title is
+        // known, its picture isn't kept.
+        let title = reply["title"]
+            .as_str()
+            .or(target.title())
+            .map(str::to_string);
+        if title.is_none() && matches!(target, Target::Window(_)) {
+            return Err(Refusal::NoTitle);
         }
-        // Allowed apps' window titles are kept with the picture.
-        let title = target.title().map(str::to_string);
+        if let Some(rule) =
+            broker::never(&self.paths, &target.source(title.as_deref())).map_err(failed)?
+        {
+            return Err(Refusal::Never(rule));
+        }
         self.keep_picture(&reply, target.app(), Some(target.key()), title, client)
-            .map_err(|e| Refusal::Failed(format!("{e:#}")))
+            .map_err(failed)
     }
 
     /// Puts a picture OpenAgora's window sent on the desk.
@@ -426,32 +509,32 @@ impl Gateway {
         )
     }
 
-    /// The window has the user pick a window in the system's dialog (where
-    /// OpenAgora can't see which window is in front, as on Wayland). Picking
-    /// it is the user's permission for that one capture.
+    /// Where OpenAgora can't see which window is in front (Wayland), the
+    /// system's own dialog lets the user pick one, from Sunday's panel:
+    /// picking it is the user's permission for that one capture. Nowhere
+    /// else, where a "pick" could only guess.
     fn capture_picked(&self, asker: &str, client: &str) -> Result<Item, Refusal> {
         let mut entry = Entry::new(asker, "capture", "picked window");
-        let result = (|| {
-            let desktop = self.desktop().ok_or(Refusal::NoWindow)?;
-            let reply = desktop
-                .request(
-                    "capture/window",
-                    json!({"target": {"kind": "pick"}, "max": MAX_EDGE}),
-                    PICK_WITHIN,
-                )
-                .map_err(|e| Refusal::Failed(e.to_string()))?;
-            let app = reply["app"].as_str().unwrap_or("a window the user picked");
-            self.keep_picture(&reply, app, None, None, client)
-                .map_err(|e| Refusal::Failed(format!("{e:#}")))
-        })();
         entry.via = Some("system dialog".into());
+        let pickable = focus::can_pick();
+        let result = if pickable {
+            self.pick_and_keep(client)
+        } else {
+            Err(Refusal::Failed(
+                "this system doesn't let the user pick a window".into(),
+            ))
+        };
         match &result {
             Ok(item) => {
                 entry.decision = "confirmed".into();
                 entry.outcome = item.id.clone();
             }
+            Err(Refusal::Never(rule)) => {
+                entry.decision = "refused".into();
+                entry.outcome = format!("never-capture list: {rule}");
+            }
             Err(refusal) => {
-                entry.decision = "declined".into();
+                entry.decision = if pickable { "declined" } else { "refused" }.into();
                 entry.outcome = format!("{refusal:?}");
             }
         }
@@ -459,14 +542,45 @@ impl Gateway {
         result
     }
 
+    fn pick_and_keep(&self, client: &str) -> Result<Item, Refusal> {
+        let desktop = self.desktop().ok_or(Refusal::NoWindow)?;
+        let reply = desktop
+            .request(
+                "capture/window",
+                json!({"target": {"kind": "pick"}, "max": MAX_EDGE, "purpose": Purpose::Shortcut.as_str()}),
+                PICK_WITHIN,
+            )
+            .map_err(|e| Refusal::Failed(e.to_string()))?;
+        let title = reply["title"].as_str();
+        let name = reply["app"]
+            .as_str()
+            .or(title)
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or("a window the user picked");
+        // The user picked it, but the never-capture list still holds.
+        let source = broker::Source {
+            app: name,
+            key: name,
+            title,
+            exe: None,
+        };
+        if let Some(rule) = broker::never(&self.paths, &source).map_err(failed)? {
+            return Err(Refusal::Never(rule));
+        }
+        self.keep_picture(&reply, name, None, title.map(str::to_string), client)
+            .map_err(failed)
+    }
+
     /// The user pressed Sunday's shortcut: find the window they're in and
     /// say what the broker thinks, before the panel opens over it.
     pub fn shortcut_pressed(&self) -> Value {
         let mut called = Called {
+            seq: 0,
             at: state::now(),
             target: None,
             verdict: None,
             unknown: None,
+            pick: false,
             item: None,
             error: None,
         };
@@ -490,45 +604,91 @@ impl Gateway {
                 called.target = Some(target);
             }
             Ok(None) => called.unknown = Some("only OpenAgora is on screen".into()),
-            Err(why) => called.unknown = Some(why),
+            Err(why) => {
+                called.unknown = Some(why);
+                called.pick = focus::can_pick();
+            }
         }
+        let mut current = self.called.lock().unwrap();
+        called.seq = current.as_ref().map_or(1, |c| c.seq + 1);
         let reply = called_json(&called);
-        *self.called.lock().unwrap() = Some(called);
+        *current = Some(called);
         reply
     }
 
     /// Captures the window the shortcut was pressed over, allowing its app
-    /// first when the user just chose to in OpenAgora's panel.
+    /// first when the user just chose to in OpenAgora's panel. The panel
+    /// says which app it showed the user (`key`), so a choice never applies
+    /// to a window the shortcut was pressed over later.
     pub fn shortcut_capture(&self, params: &Value) -> Result<Value, String> {
         let Some(mut called) = self.called.lock().unwrap().clone() else {
             return Err("press Sunday's shortcut first".into());
         };
+        let allow = params["allow"].as_str().and_then(Scope::parse);
         let result = match called.target.clone() {
             Some(target) => {
-                if let Some(scope) = params["allow"].as_str().and_then(Scope::parse) {
-                    self.allow("user", SUNDAY, &target, scope, Some("window"), "confirmed")
-                        .map_err(|e| format!("{e:#}"))?;
+                match params["key"].as_str() {
+                    Some(key) if key != target.key() => return Err(PRESSED_AGAIN.into()),
+                    None if allow.is_some() => {
+                        return Err("the panel didn't say which app to allow".into());
+                    }
+                    _ => {}
                 }
-                self.capture("user", SUNDAY, &target)
+                if let Some(scope) = allow {
+                    self.allow_pressed(&target, scope)?;
+                }
+                self.capture("user", SUNDAY, &target, Purpose::Shortcut)
             }
-            None if params["pick"] == true => self.capture_picked("user", SUNDAY),
+            None if params["pick"] == true && called.pick => self.capture_picked("user", SUNDAY),
             None => return Err(called.unknown.clone().unwrap_or_default()),
         };
-        if let Some(target) = &called.target {
-            called.verdict = self.verdict(SUNDAY, target).ok();
-        }
+        // The panel shows how this capture went.
+        called.item = None;
+        called.error = None;
         match result {
             Ok(item) => {
                 called.item = Some(item);
-                called.error = None;
+                called.verdict = called
+                    .target
+                    .as_ref()
+                    .and_then(|t| self.verdict(SUNDAY, t).ok());
+            }
+            Err(Refusal::NotAllowed) => called.verdict = Some(Verdict::NotAllowed),
+            Err(Refusal::Never(rule)) => called.verdict = Some(Verdict::Never(rule)),
+            Err(Refusal::NoTitle) => {
+                called.error = Some(
+                    "OpenAgora couldn't read the window's title, so it couldn't check it against the never-capture list, and kept nothing.".into(),
+                );
             }
             Err(Refusal::Failed(why)) => called.error = Some(why),
             Err(Refusal::NoWindow) => called.error = Some("OpenAgora's window isn't open".into()),
-            Err(_) => {}
         }
         let reply = called_json(&called);
-        *self.called.lock().unwrap() = Some(called);
+        let mut current = self.called.lock().unwrap();
+        // A newer press isn't overwritten.
+        if current.as_ref().is_some_and(|c| c.seq == called.seq) {
+            *current = Some(called);
+        }
         Ok(reply)
+    }
+
+    /// The user allowed the app in Sunday's panel. An app on the
+    /// never-capture list isn't allowed (the capture after says why).
+    fn allow_pressed(&self, target: &Target, scope: Scope) -> Result<(), String> {
+        match self.verdict(SUNDAY, target) {
+            Ok(Verdict::Never(rule)) => {
+                let mut entry = Entry::new("user", "allow_app", &target.key());
+                entry.decision = "refused".into();
+                entry.via = Some("window".into());
+                entry.outcome = format!("never-capture list: {rule}");
+                self.audit(&entry);
+                Ok(())
+            }
+            Ok(_) => self
+                .allow("user", SUNDAY, target, scope, Some("window"), "confirmed")
+                .map_err(|e| format!("{e:#}")),
+            Err(e) => Err(format!("{e:#}")),
+        }
     }
 
     /// Records the user's grant for `client` to see `target`'s app.
@@ -548,18 +708,7 @@ impl Gateway {
             Scope::Once => "once".into(),
             Scope::Always => "always".into(),
         };
-        let result = broker::grant(
-            &self.paths,
-            broker::Grant {
-                client: client.into(),
-                source: target.key(),
-                source_name: target.app().into(),
-                destination: client.into(),
-                family: IMAGES.into(),
-                scope,
-                granted_at: state::now(),
-            },
-        );
+        let result = broker::grant(&self.paths, grant_for(client, target, scope));
         if let Err(e) = &result {
             entry.outcome = format!("failed: {e:#}");
         }
@@ -598,53 +747,62 @@ impl Gateway {
             "capture_window" => self.capture_tool(client, arguments["app"].as_str()),
             "desk_list" => self.desk_list(client),
             "desk_get" => self.desk_get(client, arguments["id"].as_str().unwrap_or_default()),
-            "allow_app" => self.allow_tool(client, arguments["app"].as_str().unwrap_or_default()),
+            "allow_app" => self.allow_tool(client, arguments["app"].as_str()),
             _ => return None,
         })
     }
 
+    /// Sunday's `capture_window`. Only apps Sunday may see are named back to
+    /// it, unless it named the app itself.
     fn capture_tool(&self, client: &Client, app: Option<&str>) -> ToolResult {
         if self.desktop().is_none() {
             return ToolResult::error(
                 "OpenAgora's window isn't open, so OpenAgora can't capture windows. Ask the user to open OpenAgora.",
             );
         }
-        let found = match app.filter(|a| !a.trim().is_empty()) {
+        let named = app.map(str::trim).filter(|a| !a.is_empty());
+        let found = match named {
             Some(name) => self.find_app(name),
             None => self.current_target(),
         };
         let target = match found {
             Ok(Some(target)) => target,
-            Ok(None) if app.is_some() => {
+            Ok(None) => {
+                return ToolResult::error(match named {
+                    Some(name) => format!(
+                        "{name} has no window open that OpenAgora can see. Ask the user to open it."
+                    ),
+                    None => "There's no window to capture: only OpenAgora is on screen.".into(),
+                });
+            }
+            // The system's window picker is only for the user, from Sunday's
+            // panel: an agent's request never opens it.
+            Err(why) => {
+                let pick = if focus::can_pick() {
+                    " and pick the window there"
+                } else {
+                    ""
+                };
                 return ToolResult::error(format!(
-                    "{} has no window open that OpenAgora can see. Ask the user to open it.",
-                    app.unwrap_or_default()
+                    "OpenAgora can't see which window is in front here ({why}), so it can't capture one for you. Ask the user to press Sunday's shortcut over the window{pick}."
                 ));
             }
-            Ok(None) => {
-                return ToolResult::error(
-                    "There's no window to capture: only OpenAgora is on screen.",
-                );
-            }
-            Err(why) => {
-                // OpenAgora can't see windows here (Wayland): the system asks
-                // the user to pick one.
-                return match self.capture_picked(&client.id, &client.id) {
-                    Ok(item) => self.image_result(&item, "Captured the window the user picked"),
-                    Err(refusal) => ToolResult::error(format!(
-                        "OpenAgora can't see which window is in front ({why}), and nothing was picked: {}",
-                        refusal_text(&refusal, "the window")
-                    )),
-                };
-            }
         };
-        match self.capture(&client.id, &client.id, &target) {
+        let what = match named {
+            Some(_) => target.app().to_string(),
+            None => "the window the user is in".to_string(),
+        };
+        match self.capture(&client.id, &client.id, &target, Purpose::Tool) {
             Ok(item) => self.image_result(&item, &format!("Captured {}", target.app())),
-            Err(Refusal::NotAllowed) => ToolResult::text(format!(
-                "OpenAgora isn't allowed to show you {app}, so nothing was captured. Tell the user, and offer to allow it: allow_app with app \"{app}\" asks them in OpenAgora's window.",
-                app = target.app()
-            )),
-            Err(refusal) => ToolResult::error(refusal_text(&refusal, target.app())),
+            Err(Refusal::NotAllowed) => ToolResult::text(match named {
+                Some(_) => format!(
+                    "OpenAgora isn't allowed to show you {what}, so nothing was captured. Tell the user, and offer to allow it: allow_app with app \"{what}\" asks them in OpenAgora's window."
+                ),
+                None => format!(
+                    "OpenAgora isn't allowed to show you {what}, so nothing was captured. Tell the user, and offer to allow it: allow_app without an app asks them, in OpenAgora's window, about the app they're in."
+                ),
+            }),
+            Err(refusal) => ToolResult::error(refusal_text(&refusal, &what)),
         }
     }
 
@@ -755,16 +913,33 @@ impl Gateway {
         }
     }
 
-    fn allow_tool(&self, client: &Client, name: &str) -> ToolResult {
-        let target = match self.find_app(name) {
-            Ok(Some(target)) => target,
-            Ok(None) | Err(_) => {
+    /// Sunday's `allow_app`: OpenAgora asks the user in its own window. As
+    /// with `capture_window`, an app Sunday didn't name is named back to it
+    /// only once the user allowed it.
+    fn allow_tool(&self, client: &Client, app: Option<&str>) -> ToolResult {
+        let named = app.map(str::trim).filter(|a| !a.is_empty());
+        let found = match named {
+            Some(name) => self.find_app(name),
+            None => self.current_target(),
+        };
+        let target = match (found, named) {
+            (Ok(Some(target)), _) => target,
+            (_, Some(name)) => {
                 return ToolResult::error(format!(
                     "OpenAgora can only allow an app that has a window open. Ask the user to open {name}, then try again."
                 ));
             }
+            (_, None) => {
+                return ToolResult::error(
+                    "OpenAgora can't tell which app the user is working in. Ask them which app, then call allow_app with its name.",
+                );
+            }
         };
         let app = target.app().to_string();
+        let what = match named {
+            Some(_) => app.clone(),
+            None => "the app the user is in".to_string(),
+        };
         let mut entry = Entry::new(&client.id, "allow_app", &target.key());
         match self.verdict(&client.id, &target) {
             Ok(Verdict::Never(rule)) => {
@@ -772,7 +947,7 @@ impl Gateway {
                 entry.outcome = format!("never-capture list: {rule}");
                 self.audit(&entry);
                 return ToolResult::error(format!(
-                    "{app} is covered by OpenAgora's never-capture list ({rule}), so it can't be allowed. Don't ask again."
+                    "OpenAgora never captures {what}: it's on OpenAgora's never-capture list, so it can't be allowed. Don't ask again."
                 ));
             }
             Ok(Verdict::Allowed(Scope::Always)) => {
@@ -821,7 +996,7 @@ impl Gateway {
                 entry.outcome = "not allowed".into();
                 self.audit(&entry);
                 ToolResult::text(format!(
-                    "The user didn't allow {app}. Don't ask again unless they bring it up."
+                    "The user didn't allow {what}. Don't ask again unless they bring it up."
                 ))
             }
             Choice::NoOneToAsk => {
@@ -829,7 +1004,7 @@ impl Gateway {
                 entry.outcome = "no way to ask the user".into();
                 self.audit(&entry);
                 ToolResult::error(format!(
-                    "OpenAgora's window isn't open, so it can't ask the user. Ask them to open OpenAgora, or to allow {app} in OpenAgora's Settings."
+                    "OpenAgora's window isn't open, so it can't ask the user. Ask them to open OpenAgora, or to allow {what} in OpenAgora's Settings."
                 ))
             }
         }
@@ -885,73 +1060,111 @@ impl Gateway {
     }
 }
 
-fn refusal_text(refusal: &Refusal, app: &str) -> String {
+fn failed(e: anyhow::Error) -> Refusal {
+    Refusal::Failed(format!("{e:#}"))
+}
+
+fn grant_for(client: &str, target: &Target, scope: Scope) -> broker::Grant {
+    broker::Grant {
+        client: client.into(),
+        source: target.key(),
+        source_name: target.app().into(),
+        destination: client.into(),
+        family: IMAGES.into(),
+        scope,
+        granted_at: state::now(),
+    }
+}
+
+/// Why nothing was captured, for Sunday. Never-capture rules aren't named:
+/// the user's own rules can say more than they'd want a model to know.
+fn refusal_text(refusal: &Refusal, what: &str) -> String {
     match refusal {
-        Refusal::NotAllowed => format!("OpenAgora isn't allowed to show you {app}."),
-        Refusal::Never(rule) => format!(
-            "{app} is covered by OpenAgora's never-capture list ({rule}), so OpenAgora never captures it, and it can't be allowed."
+        Refusal::NotAllowed => format!("OpenAgora isn't allowed to show you {what}."),
+        Refusal::Never(_) => format!(
+            "OpenAgora never captures {what}: it's on OpenAgora's never-capture list, so it can't be allowed. Don't ask again."
+        ),
+        Refusal::NoTitle => format!(
+            "OpenAgora couldn't read the title of {what}, so it couldn't check it against the never-capture list, and kept nothing."
         ),
         Refusal::NoWindow => {
             "OpenAgora's window isn't open, so OpenAgora can't capture windows. Ask the user to open OpenAgora.".into()
         }
-        Refusal::Failed(why) => format!("Capturing {app} failed: {why}"),
+        Refusal::Failed(why) => format!("Capturing {what} failed: {why}"),
     }
 }
 
+/// The app the user is in, for Sunday's per-reply hook. Only apps Sunday may
+/// see are named, and only always-allowed apps' window titles are given.
+/// Installed apps in OpenAgora's tabs are no secret from Sunday.
 fn describe_target(target: &Target, verdict: Option<&Verdict>) -> String {
-    match (target, verdict) {
-        (Target::Tab { name, .. }, _) => format!("{name}, in an OpenAgora tab"),
-        (Target::Window(w), Some(Verdict::Never(rule))) => {
-            format!("{} (OpenAgora never captures it: {rule})", w.app)
+    match (verdict, target) {
+        (Some(Verdict::Never(_)), _) => {
+            "an app on OpenAgora's never-capture list (you can't see it, and it can't be allowed)"
+                .into()
         }
-        (Target::Window(w), Some(Verdict::Allowed(Scope::Always))) => match &w.title {
+        (Some(Verdict::Allowed(Scope::Always)), Target::Window(w)) => match &w.title {
             Some(title) if !title.is_empty() => {
                 format!("{}, window \u{201c}{title}\u{201d}", w.app)
             }
             _ => w.app.clone(),
         },
-        (Target::Window(w), Some(Verdict::Allowed(Scope::Once))) => {
-            format!("{} (allowed for one capture)", w.app)
+        (Some(Verdict::Allowed(Scope::Always)), Target::Tab { name, .. }) => {
+            format!("{name}, in an OpenAgora tab")
         }
-        (Target::Window(w), _) => format!("{} (not allowed: you can't see it)", w.app),
+        (Some(Verdict::Allowed(Scope::Once)), _) => {
+            format!("{} (allowed for one capture)", target.app())
+        }
+        (_, Target::Tab { name, .. }) => {
+            format!("{name}, in an OpenAgora tab (not allowed: you can't see it)")
+        }
+        (_, Target::Window(_)) => "an app you aren't allowed to see".into(),
     }
 }
 
+/// The user's last press of the shortcut, for Sunday's per-reply hook. The
+/// user called Sunday over that window, so its app is named, unless it is on
+/// the never-capture list.
 fn describe_called(called: &Called) -> String {
-    let over = called
-        .target
-        .as_ref()
-        .map(|t| format!(" over {}", t.app()))
-        .unwrap_or_default();
+    let app = called.target.as_ref().map(Target::app);
     let what = match (&called.item, &called.verdict, &called.error) {
         (Some(item), _, _) => format!(
-            "OpenAgora put a {} on the desk as {}. Look at it with desk_get.",
+            "{}: OpenAgora put a {} on the desk as {}. Look at it with desk_get.",
+            over(app),
             item.describe(),
             item.id
         ),
-        (None, Some(Verdict::Never(rule)), _) => format!(
-            "it is on OpenAgora's never-capture list ({rule}), so nothing was captured, and it can't be allowed."
-        ),
+        (None, Some(Verdict::Never(_)), _) => match app {
+            Some(_) => " over an app on OpenAgora's never-capture list: nothing was captured, and it can't be allowed.".to_string(),
+            None => ": the window the user picked is on OpenAgora's never-capture list, so nothing was captured.".to_string(),
+        },
         (None, Some(Verdict::NotAllowed), _) => format!(
-            "{} isn't allowed, so nothing was captured. If the user wants you to see it, offer to allow it (allow_app).",
-            called.target.as_ref().map(|t| t.app()).unwrap_or("it")
+            "{}: {} isn't allowed, so nothing was captured. If the user wants you to see it, offer to allow it (allow_app).",
+            over(app),
+            app.unwrap_or("it")
         ),
-        (None, _, Some(error)) => format!("capturing it failed: {error}"),
+        (None, _, Some(error)) => format!("{}: capturing it failed: {error}", over(app)),
         (None, _, None) => match &called.unknown {
-            Some(why) => format!("OpenAgora couldn't tell which window was in front ({why})."),
-            None => "nothing was captured.".into(),
+            Some(why) => format!(": OpenAgora couldn't tell which window was in front ({why})."),
+            None => format!("{}: nothing was captured.", over(app)),
         },
     };
-    format!("The user pressed Sunday's shortcut{over}: {what}")
+    format!("The user pressed Sunday's shortcut{what}")
 }
 
-/// The shortcut's state, for OpenAgora's panel.
+fn over(app: Option<&str>) -> String {
+    app.map(|a| format!(" over {a}")).unwrap_or_default()
+}
+
+/// The shortcut's state, for OpenAgora's panel: the user's own screen, so it
+/// names everything, never-capture rules included.
 fn called_json(called: &Called) -> Value {
     json!({
         "target": called.target.as_ref().map(Target::json),
         "verdict": called.verdict.as_ref().map(Verdict::as_str).unwrap_or("unknown"),
         "rule": match &called.verdict { Some(Verdict::Never(rule)) => Some(rule.clone()), _ => None },
         "unknown": called.unknown,
+        "pick": called.pick,
         "item": called.item.as_ref().map(|i| json!({
             "id": i.id, "kind": i.kind.as_str(), "type": i.mime,
             "width": i.width, "height": i.height, "description": i.describe(),

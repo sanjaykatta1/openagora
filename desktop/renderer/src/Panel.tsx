@@ -8,11 +8,19 @@ import { AgentConfirm } from "./Confirm";
 import { dashboardUrl, HermesCredit } from "./Sunday";
 
 export const PROVIDER_NOTICE = "Anything Sunday looks at is sent to the model provider you chose for Sunday.";
+/** The most the desk takes in one file, and in one drop (the engine checks too). */
+const DESK_MAX_BYTES = 20 * 1024 * 1024;
+const DESK_MAX_FILES = 10;
 
-function SeeingLine(props: { state: ShortcutState | null; busy: boolean; onCapture: (options: { allow?: "once" | "always"; pick?: boolean }) => void }) {
+type CaptureOptions = { allow?: "once" | "always"; key?: string; pick?: boolean };
+
+function SeeingLine(props: { state: ShortcutState | null; busy: boolean; onCapture: (options: CaptureOptions) => void }) {
   const { state } = props;
   if (!state) return null;
   const app = state.target?.app ?? "this window";
+  // The panel says which app the user chose for, so a choice never applies
+  // to a window the shortcut was pressed over later.
+  const key = state.target?.key;
   if (state.phase === "looking") return <div className="seeing" role="status">Looking at the window you’re in…</div>;
   if (state.phase === "offline") return <div className="seeing warn" role="status">OpenAgora’s engine isn’t running, so Sunday can’t see your windows right now.</div>;
   if (state.phase === "capturing") return <div className="seeing" role="status">Capturing {app}…</div>;
@@ -34,8 +42,8 @@ function SeeingLine(props: { state: ShortcutState | null; busy: boolean; onCaptu
       return <div className="seeing" role="status">
         <span><strong>Sunday can’t see {app} yet.</strong> <span className="muted small block">Allow it to let Sunday look at its window when you press the shortcut. {PROVIDER_NOTICE}</span></span>
         <span className="actions">
-          <button className="btn" disabled={props.busy} onClick={() => props.onCapture({ allow: "once" })}>Allow once</button>
-          <button className="btn primary" disabled={props.busy} onClick={() => props.onCapture({ allow: "always" })}>Always allow</button>
+          <button className="btn" disabled={props.busy} onClick={() => props.onCapture({ allow: "once", key })}>Allow once</button>
+          <button className="btn primary" disabled={props.busy} onClick={() => props.onCapture({ allow: "always", key })}>Always allow</button>
         </span>
       </div>;
     case "never":
@@ -45,8 +53,9 @@ function SeeingLine(props: { state: ShortcutState | null; busy: boolean; onCaptu
         return <div className="seeing" role="status">Only OpenAgora is on screen, so there’s no other window for Sunday to see.</div>;
       }
       return <div className="seeing" role="status">
-        <span>OpenAgora can’t see which window you’re in here{state.unknown ? ` (${state.unknown})` : ""}. <span className="muted small block">{PROVIDER_NOTICE}</span></span>
-        <button className="btn" disabled={props.busy} onClick={() => props.onCapture({ pick: true })}>Pick a window</button>
+        <span>OpenAgora can’t see which window you’re in here{state.unknown ? ` (${state.unknown})` : ""}.
+          {state.pick && <span className="muted small block">Pick the window for Sunday in your system’s dialog. {PROVIDER_NOTICE}</span>}</span>
+        {state.pick && <button className="btn" disabled={props.busy} onClick={() => props.onCapture({ pick: true })}>Pick a window</button>}
       </div>;
     default:
       return null;
@@ -89,7 +98,7 @@ export function Panel() {
     return () => window.clearTimeout(t);
   }, [note]);
 
-  const captureNow = async (options: { allow?: "once" | "always"; pick?: boolean }) => {
+  const captureNow = async (options: CaptureOptions) => {
     if (!bridge) return;
     setBusy(true);
     try { setState(await bridge.panel.capture(options)); } finally { setBusy(false); }
@@ -104,13 +113,20 @@ export function Panel() {
     }
   };
 
+  // Dropped files are read here and sent as their contents.
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragging(false);
     if (!bridge) return;
-    const paths = [...e.dataTransfer.files].map((f) => bridge!.desk.pathForFile(f)).filter(Boolean);
-    if (paths.length === 0) return;
-    void share(() => bridge!.desk.addFiles(paths), paths.length === 1 ? "Put the file on the desk for Sunday." : `Put ${paths.length} files on the desk for Sunday.`);
+    const files = [...e.dataTransfer.files];
+    if (files.length === 0) return;
+    void share(async () => {
+      if (files.length > DESK_MAX_FILES) throw new Error(`Drop up to ${DESK_MAX_FILES} files at a time.`);
+      const big = files.find((f) => f.size > DESK_MAX_BYTES);
+      if (big) throw new Error(`${big.name} is too big for the desk (at most 20 MB).`);
+      const read = await Promise.all(files.map(async (f) => ({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) })));
+      await bridge!.desk.addFiles(read);
+    }, files.length === 1 ? "Put the file on the desk for Sunday." : `Put ${files.length} files on the desk for Sunday.`);
   };
 
   const running = status?.dashboard === "running" && !!status.url;

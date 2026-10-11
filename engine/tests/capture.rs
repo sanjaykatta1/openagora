@@ -10,6 +10,7 @@ mod common;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -75,23 +76,69 @@ fn on_screen(focus: &PathBuf, windows: Value) {
     fs::write(focus, windows.to_string()).unwrap();
 }
 
+/// What OpenAgora's window was asked to capture.
+type Captures = Arc<Mutex<Vec<Value>>>;
+
+/// How the stand-in for OpenAgora's window captures.
+#[derive(Default)]
+struct Behaviour {
+    /// The window title it reports seeing while capturing: by default the
+    /// one in the window list, as the real window would.
+    title: Option<Option<String>>,
+    /// What it names a window the user picked in the system's dialog.
+    picked: Option<String>,
+    /// Fails every capture with this.
+    fail: Option<String>,
+    /// Takes this long to capture.
+    slow: Option<Duration>,
+}
+
 /// OpenAgora's window: answers capture requests with `picture` and keeps
 /// them; leaves every other request (confirmations) to the test.
-fn connect_window(
+fn connect_window(env: &Env, tab: Option<&str>, picture: Vec<u8>) -> (Desktop, Captures) {
+    let (window, captures, _) = connect_window_with(env, tab, picture);
+    (window, captures)
+}
+
+fn connect_window_with(
     env: &Env,
     tab: Option<&str>,
     picture: Vec<u8>,
-) -> (Desktop, Arc<Mutex<Vec<Value>>>) {
+) -> (Desktop, Captures, Arc<Mutex<Behaviour>>) {
     let captures = Arc::new(Mutex::new(Vec::new()));
+    let behaviour = Arc::new(Mutex::new(Behaviour::default()));
     let seen = Arc::clone(&captures);
+    let how = Arc::clone(&behaviour);
+    let focus = env.data.with_file_name("focus.json");
     let responder: Responder = Box::new(move |request: &Value| {
         if request["method"] != "capture/window" {
             return None;
         }
-        seen.lock().unwrap().push(request["params"].clone());
-        Some(
-            json!({"type": "image/png", "data": BASE64.encode(&picture), "width": 64, "height": 48}),
-        )
+        let params = request["params"].clone();
+        seen.lock().unwrap().push(params.clone());
+        let how = how.lock().unwrap();
+        if let Some(delay) = how.slow {
+            std::thread::sleep(delay);
+        }
+        if let Some(error) = &how.fail {
+            return Some(json!({"__error": error}));
+        }
+        let mut reply = json!({"type": "image/png", "data": BASE64.encode(&picture), "width": 64, "height": 48});
+        let target = &params["target"];
+        let title = match &how.title {
+            Some(title) => title.clone(),
+            None if target["kind"] == "window" => listed_title(&focus, target["id"].as_u64()),
+            None => None,
+        };
+        if let Some(title) = title {
+            reply["title"] = json!(title);
+        }
+        if target["kind"] == "pick" {
+            let picked = how.picked.clone().unwrap_or_else(|| "Text Editor".into());
+            reply["app"] = json!(picked);
+            reply["title"] = json!(picked);
+        }
+        Some(reply)
     });
     let desktop = Desktop::connect_with(
         env,
@@ -103,7 +150,27 @@ fn connect_window(
         }),
         Some(responder),
     );
-    (desktop, captures)
+    (desktop, captures, behaviour)
+}
+
+/// A window's title in the window list.
+fn listed_title(focus: &PathBuf, id: Option<u64>) -> Option<String> {
+    let windows: Value = serde_json::from_str(&fs::read_to_string(focus).ok()?).ok()?;
+    windows
+        .as_array()?
+        .iter()
+        .find(|w| w["id"].as_u64() == id)?["title"]
+        .as_str()
+        .map(str::to_string)
+}
+
+fn desk_ids(env: &Env) -> Vec<String> {
+    env.json(&["desk", "list", "--json"])
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["id"].as_str().unwrap().to_string())
+        .collect()
 }
 
 fn image_of(result: &Value) -> Option<Vec<u8>> {
@@ -153,8 +220,10 @@ fn the_shortcut_over_an_app_openagora_did_not_install_shows_sunday_that_window()
     assert_eq!(state["target"]["app"], "Firefox", "{pressed}");
     assert_eq!(state["target"]["key"], "firefox");
     assert_eq!(state["verdict"], "not-allowed");
+    assert_eq!(state["pick"], false);
     assert!(captures.lock().unwrap().is_empty());
-    // Sunday hears which app it is, that it can't see it, and what to offer.
+    // The user called Sunday over Firefox, so Sunday hears which app it is,
+    // that it can't see it, and what to offer.
     let told = env.hook("s1", true, "tui");
     assert!(
         told.contains("pressed Sunday's shortcut over Firefox")
@@ -162,11 +231,42 @@ fn the_shortcut_over_an_app_openagora_did_not_install_shows_sunday_that_window()
             && told.contains("allow_app"),
         "{told}"
     );
-    // The title of an app Sunday may not see is never passed on.
+    // Otherwise apps Sunday may not see aren't named, and their titles are
+    // never passed on.
+    assert!(
+        told.contains("working in (the window behind Sunday): an app you aren't allowed to see"),
+        "{told}"
+    );
     assert!(!told.contains("Pull request #12"), "{told}");
 
+    // A choice the panel showed for another window doesn't count, nor one
+    // that doesn't say which window it was for.
+    let stale = window.request(
+        "shortcut/capture",
+        json!({"allow": "always", "key": "chrome"}),
+    );
+    assert!(
+        stale["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("pressed over another window"),
+        "{stale}"
+    );
+    let unsaid = window.request("shortcut/capture", json!({"allow": "always"}));
+    assert!(unsaid.get("error").is_some(), "{unsaid}");
+    assert!(
+        env.json(&["grants", "list", "--json"])
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(captures.lock().unwrap().is_empty());
+
     // The user allows Firefox in the panel: OpenAgora captures that window.
-    let captured = window.request("shortcut/capture", json!({"allow": "always"}));
+    let captured = window.request(
+        "shortcut/capture",
+        json!({"allow": "always", "key": "firefox"}),
+    );
     let item = captured["result"]["item"].clone();
     let id = item["id"].as_str().expect("an item").to_string();
     assert_eq!(item["width"], 64);
@@ -175,6 +275,7 @@ fn the_shortcut_over_an_app_openagora_did_not_install_shows_sunday_that_window()
         assert_eq!(captures.len(), 1);
         assert_eq!(captures[0]["target"]["kind"], "window");
         assert_eq!(captures[0]["target"]["id"], 31);
+        assert_eq!(captures[0]["purpose"], "shortcut");
     }
     // Sunday's next reply says what's on the desk; desk_get shows the picture.
     let told = env.hook("s1", false, "tui");
@@ -196,15 +297,22 @@ fn the_shortcut_over_an_app_openagora_did_not_install_shows_sunday_that_window()
     // Sunday can capture it itself too.
     let pressed = window.request("shortcut/pressed", json!({}));
     assert_eq!(pressed["result"]["verdict"], "allowed");
-    let again = window.request("shortcut/capture", json!({}));
+    let again = window.request("shortcut/capture", json!({"key": "firefox"}));
     assert!(again["result"]["item"]["id"].is_string(), "{again}");
     let shot = sunday.call_raw("capture_window", json!({}), &mut no_questions);
     assert_eq!(image_of(&shot), Some(png(64, 48)), "{shot}");
     assert_eq!(captures.lock().unwrap().len(), 3);
+    assert_eq!(captures.lock().unwrap()[2]["purpose"], "tool");
 
-    // On a messaging channel, Sunday isn't told what's on this screen.
-    let remote = env.hook("telegram-1", true, "telegram");
-    assert!(!remote.contains("Firefox"), "{remote}");
+    // On a messaging channel, or a turn that doesn't say where it comes
+    // from, Sunday isn't told what's on this screen or the desk.
+    for platform in ["telegram", ""] {
+        let remote = env.hook(&format!("remote-{platform}"), true, platform);
+        assert!(
+            !remote.contains("Firefox") && !remote.contains(&id),
+            "{platform}: {remote}"
+        );
+    }
 
     // Every capture, permission and read is in the audit log (test 10).
     let audit = env.audit();
@@ -234,15 +342,28 @@ fn apps_that_are_not_allowed_or_never_captured_stay_unseen() {
     let mut sunday = McpClient::start(&env, "sunday", true);
     let (mut window, captures) = connect_window(&env, None, png(10, 10));
 
-    // Not allowed: Sunday is told so and how to ask; nothing is captured.
+    // Not allowed: Sunday is told so and how to ask, but not which app the
+    // user is in; nothing is captured.
     let refused = sunday.call_raw("capture_window", json!({}), &mut no_questions);
     let text = text_of(&refused);
     assert!(
-        text.contains("isn't allowed to show you Firefox") && text.contains("allow_app"),
+        text.contains("isn't allowed to show you the window the user is in")
+            && text.contains("allow_app"),
         "{text}"
     );
+    assert!(!text.contains("Firefox"), "{text}");
     assert!(image_of(&refused).is_none());
     assert!(captures.lock().unwrap().is_empty());
+    // Naming the app itself, Sunday hears it back.
+    let named = sunday.call_raw(
+        "capture_window",
+        json!({"app": "firefox"}),
+        &mut no_questions,
+    );
+    assert!(
+        text_of(&named).contains("allow_app with app \"Firefox\""),
+        "{named}"
+    );
 
     // Sunday offers to allow it: OpenAgora asks in its own window, never in
     // the chat. The user allows it once.
@@ -272,34 +393,56 @@ fn apps_that_are_not_allowed_or_never_captured_stay_unseen() {
     assert!(image_of(&again).is_none(), "{again}");
     assert_eq!(captures.lock().unwrap().len(), 1);
 
-    // Saying no allows nothing.
+    // Saying no allows nothing. Asked about the app the user is in, the
+    // user sees its name in OpenAgora's window, and Sunday doesn't.
     let declined = std::thread::scope(|scope| {
-        let call =
-            scope.spawn(|| sunday.call("allow_app", json!({"app": "Firefox"}), &mut no_questions));
+        let call = scope.spawn(|| sunday.call("allow_app", json!({}), &mut no_questions));
         let ask = window.next();
+        assert_eq!(ask["params"]["title"], "Let Sunday see Firefox?");
         window.reply(&ask["id"], json!({"allowed": false}));
         call.join().unwrap()
     });
-    assert!(declined.0.contains("didn't allow"), "{declined:?}");
+    assert!(
+        declined.0.contains("didn't allow the app the user is in")
+            && !declined.0.contains("Firefox"),
+        "{declined:?}"
+    );
 
     // A password manager is never captured, and can't be allowed: OpenAgora
-    // doesn't even ask.
+    // doesn't even ask. Sunday isn't told which app it is, or which rule.
     on_screen(&focus, json!([one_password(), openagora_main()]));
     let never = sunday.call_raw("capture_window", json!({}), &mut no_questions);
     assert_eq!(never["isError"], true);
-    assert!(
-        text_of(&never).contains("never-capture list (1Password)"),
-        "{never}"
-    );
+    let text = text_of(&never);
+    assert!(text.contains("never-capture list"), "{text}");
+    assert!(!text.contains("1Password"), "{text}");
     let (refused, error) = sunday.call("allow_app", json!({"app": "1Password"}), &mut no_questions);
     assert!(error && refused.contains("can't be allowed"), "{refused}");
+    let (refused, error) = sunday.call("allow_app", json!({}), &mut no_questions);
+    assert!(
+        error && refused.contains("can't be allowed") && !refused.contains("1Password"),
+        "{refused}"
+    );
+    // The panel, on the user's own screen, says which rule.
     let pressed = window.request("shortcut/pressed", json!({}));
     assert_eq!(pressed["result"]["verdict"], "never");
     assert_eq!(pressed["result"]["rule"], "1Password");
-    let pressed = window.request("shortcut/capture", json!({"allow": "always"}));
+    // Allowing it from the panel anyway records nothing.
+    let pressed = window.request(
+        "shortcut/capture",
+        json!({"allow": "always", "key": "1password"}),
+    );
     assert!(pressed["result"]["item"].is_null(), "{pressed}");
+    assert!(
+        !env.ok(&["grants", "list"]).contains("1password"),
+        "a never-listed app was allowed"
+    );
     let told = env.hook("s2", true, "cli");
-    assert!(told.contains("never-capture list (1Password)"), "{told}");
+    assert!(
+        told.contains("pressed Sunday's shortcut over an app on OpenAgora's never-capture list"),
+        "{told}"
+    );
+    assert!(!told.contains("1Password"), "{told}");
 
     // A private browser window is never captured, even from an allowed app.
     env.ok(&["grants", "allow", "firefox", "--name", "Firefox"]);
@@ -311,21 +454,27 @@ fn apps_that_are_not_allowed_or_never_captured_stay_unseen() {
         ]),
     );
     let private = sunday.call_raw("capture_window", json!({}), &mut no_questions);
+    let text = text_of(&private);
+    assert!(text.contains("never-capture list"), "{text}");
     assert!(
-        text_of(&private).contains("Private browser windows"),
-        "{private}"
+        !text.contains("Private browser windows") && !text.contains("Bank"),
+        "{text}"
     );
     let told = env.hook("s2", false, "cli");
     assert!(!told.contains("Bank"), "{told}");
 
-    // The user's own additions count too.
+    // The user's own additions count too, and their names stay with the user.
     on_screen(
         &focus,
         json!([firefox("My Bank — Mozilla Firefox"), openagora_main()]),
     );
     env.ok(&["never", "add", "Banking", "--title", "my bank"]);
     let mine = sunday.call_raw("capture_window", json!({}), &mut no_questions);
-    assert!(text_of(&mine).contains("(Banking)"), "{mine}");
+    let text = text_of(&mine);
+    assert!(
+        text.contains("never-capture list") && !text.contains("Banking"),
+        "{text}"
+    );
 
     assert_eq!(
         captures.lock().unwrap().len(),
@@ -339,12 +488,22 @@ fn apps_that_are_not_allowed_or_never_captured_stay_unseen() {
         .filter(|e| e["action"] == "capture" && e["decision"] == "refused")
         .collect();
     assert!(refusals.len() >= 5, "{audit:?}");
+    // The audit log, the user's own, names the rules.
+    assert!(
+        refusals
+            .iter()
+            .any(|e| e["outcome"] == "never-capture list: Banking")
+    );
     assert!(audit.iter().any(|e| e["action"] == "allow_app"
         && e["decision"] == "declined"
         && e["via"] == "window"));
-    assert!(audit.iter().any(|e| e["action"] == "allow_app"
-        && e["decision"] == "refused"
-        && e["target"] == "1password"));
+    let refused_allows = audit
+        .iter()
+        .filter(|e| {
+            e["action"] == "allow_app" && e["decision"] == "refused" && e["target"] == "1password"
+        })
+        .count();
+    assert_eq!(refused_allows, 3, "{audit:?}");
 }
 
 #[test]
@@ -363,7 +522,11 @@ fn an_app_in_an_openagora_tab_is_captured_by_the_window_itself() {
     assert_eq!(pressed["result"]["target"]["app"], "Web notes", "{pressed}");
     assert_eq!(pressed["result"]["target"]["kind"], "tab");
     assert_eq!(pressed["result"]["target"]["key"], "openagora:notes");
-    window.request("shortcut/capture", json!({"allow": "once"}));
+    let captured = window.request(
+        "shortcut/capture",
+        json!({"allow": "once", "key": "openagora:notes"}),
+    );
+    assert!(captured["result"]["item"]["id"].is_string(), "{captured}");
     assert_eq!(
         captures.lock().unwrap()[0]["target"],
         json!({"kind": "tab", "app": "notes"})
@@ -378,40 +541,76 @@ fn an_app_in_an_openagora_tab_is_captured_by_the_window_itself() {
     on_screen(&focus, json!([openagora_panel(), openagora_main()]));
     let pressed = window.request("shortcut/pressed", json!({}));
     assert!(pressed["result"]["target"].is_null(), "{pressed}");
+    assert_eq!(pressed["result"]["pick"], false);
 }
 
 #[test]
-fn where_the_os_hides_windows_the_user_picks_one() {
+fn where_the_os_hides_windows_only_the_user_picks_one() {
     let (env, focus) = setup();
     fs::write(
         &focus,
-        json!({"unavailable": "Wayland doesn't let apps see which window is in front"}).to_string(),
+        json!({"unavailable": "Wayland doesn't let apps see which window is in front", "pick": true})
+            .to_string(),
     )
     .unwrap();
     let mut sunday = McpClient::start(&env, "sunday", true);
-    let (mut window, captures) = connect_window(&env, None, png(5, 5));
+    let (mut window, captures, behaviour) = connect_window_with(&env, None, png(5, 5));
     let pressed = window.request("shortcut/pressed", json!({}));
     assert_eq!(pressed["result"]["verdict"], "unknown");
+    assert_eq!(pressed["result"]["pick"], true);
     assert!(
         pressed["result"]["unknown"]
             .as_str()
             .unwrap()
             .contains("Wayland")
     );
+    // Sunday can't open the system's picker: only the user, from the panel.
+    let (text, error) = sunday.call("capture_window", json!({}), &mut no_questions);
+    assert!(
+        error && text.contains("press Sunday's shortcut") && text.contains("pick the window"),
+        "{text}"
+    );
+    assert!(captures.lock().unwrap().is_empty());
     // The panel's "pick a window" button: the system dialog is the permission.
     let picked = window.request("shortcut/capture", json!({"pick": true}));
     assert!(picked["result"]["item"]["id"].is_string(), "{picked}");
-    assert_eq!(captures.lock().unwrap()[0]["target"]["kind"], "pick");
-    // Sunday asking does the same.
-    let shot = sunday.call_raw("capture_window", json!({}), &mut no_questions);
-    assert_eq!(image_of(&shot), Some(png(5, 5)), "{shot}");
-    let audit = env.audit();
     assert!(
-        audit
-            .iter()
-            .any(|e| e["action"] == "capture" && e["via"] == "system dialog"),
-        "{audit:?}"
+        picked["result"]["item"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("Text Editor"),
+        "{picked}"
     );
+    assert_eq!(captures.lock().unwrap()[0]["target"]["kind"], "pick");
+    // A picked window on the never-capture list isn't kept.
+    behaviour.lock().unwrap().picked = Some("1Password".into());
+    let never = window.request("shortcut/capture", json!({"pick": true}));
+    assert!(never["result"]["item"].is_null(), "{never}");
+    assert_eq!(never["result"]["verdict"], "never");
+    assert_eq!(desk_ids(&env).len(), 1);
+    let audit = env.audit();
+    let picks: Vec<&Value> = audit
+        .iter()
+        .filter(|e| e["action"] == "capture" && e["via"] == "system dialog")
+        .collect();
+    assert_eq!(picks.len(), 2, "{audit:?}");
+    assert_eq!(picks[0]["decision"], "confirmed");
+    assert_eq!(picks[1]["decision"], "refused");
+
+    // Where the window list fails for another reason, no picker is offered:
+    // a "pick" there would only be a guess.
+    fs::write(
+        &focus,
+        json!({"unavailable": "the window list failed", "pick": false}).to_string(),
+    )
+    .unwrap();
+    let pressed = window.request("shortcut/pressed", json!({}));
+    assert_eq!(pressed["result"]["pick"], false);
+    let refused = window.request("shortcut/capture", json!({"pick": true}));
+    assert!(refused.get("error").is_some(), "{refused}");
+    let (text, error) = sunday.call("capture_window", json!({}), &mut no_questions);
+    assert!(error && !text.contains("pick"), "{text}");
+    assert_eq!(captures.lock().unwrap().len(), 2);
 }
 
 #[test]
@@ -516,4 +715,207 @@ fn the_command_line_shows_focus_grants_and_the_never_list() {
             "{action}: {audit:?}"
         );
     }
+}
+
+#[test]
+fn a_window_is_checked_again_as_it_is_captured() {
+    let (env, focus) = setup();
+    env.ok(&["grants", "allow", "firefox", "--name", "Firefox"]);
+    // The engine can't read window titles (macOS, when only OpenAgora's
+    // window has Screen Recording permission).
+    on_screen(
+        &focus,
+        json!([{"id": 31, "pid": 77, "app": "Firefox", "key": "firefox"}, openagora_main()]),
+    );
+    let mut sunday = McpClient::start(&env, "sunday", true);
+    let (mut window, captures, behaviour) = connect_window_with(&env, None, png(6, 6));
+
+    // OpenAgora's window sees a private window as it captures: the picture
+    // isn't kept.
+    behaviour.lock().unwrap().title = Some(Some("Bank — Mozilla Firefox Private Browsing".into()));
+    let private = sunday.call_raw("capture_window", json!({}), &mut no_questions);
+    assert!(
+        image_of(&private).is_none() && text_of(&private).contains("never-capture list"),
+        "{private}"
+    );
+    let pressed = window.request("shortcut/pressed", json!({}));
+    assert_eq!(pressed["result"]["verdict"], "allowed", "{pressed}");
+    let captured = window.request("shortcut/capture", json!({"key": "firefox"}));
+    assert!(captured["result"]["item"].is_null(), "{captured}");
+    assert_eq!(captured["result"]["verdict"], "never");
+    assert_eq!(captured["result"]["rule"], "Private browser windows");
+    assert_eq!(captures.lock().unwrap().len(), 2);
+    assert!(desk_ids(&env).is_empty());
+
+    // Neither the engine nor the window could read the title: nothing kept.
+    behaviour.lock().unwrap().title = Some(None);
+    let (text, error) = sunday.call("capture_window", json!({}), &mut no_questions);
+    assert!(error && text.contains("couldn't read the title"), "{text}");
+    assert!(desk_ids(&env).is_empty());
+
+    // An ordinary window: kept, with the title the window saw.
+    behaviour.lock().unwrap().title = Some(Some("Docs — Mozilla Firefox".into()));
+    let docs = sunday.call_raw("capture_window", json!({}), &mut no_questions);
+    assert_eq!(image_of(&docs), Some(png(6, 6)), "{docs}");
+    assert!(text_of(&docs).contains("Docs — Mozilla Firefox"), "{docs}");
+
+    // The window's title changes between the press and the capture: the
+    // capture goes by the title it has now.
+    behaviour.lock().unwrap().title = None;
+    on_screen(&focus, json!([firefox("Docs"), openagora_main()]));
+    env.ok(&["never", "add", "Banking", "--title", "my bank"]);
+    let pressed = window.request("shortcut/pressed", json!({}));
+    assert_eq!(pressed["result"]["verdict"], "allowed");
+    on_screen(&focus, json!([firefox("My Bank"), openagora_main()]));
+    let captured = window.request("shortcut/capture", json!({"key": "firefox"}));
+    assert_eq!(captured["result"]["verdict"], "never", "{captured}");
+    assert_eq!(desk_ids(&env).len(), 1);
+
+    // The window closed since the press.
+    on_screen(&focus, json!([firefox("Docs"), openagora_main()]));
+    window.request("shortcut/pressed", json!({}));
+    on_screen(&focus, json!([openagora_main()]));
+    let gone = window.request("shortcut/capture", json!({"key": "firefox"}));
+    assert!(
+        gone["result"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("window has closed"),
+        "{gone}"
+    );
+}
+
+#[test]
+fn a_once_grant_is_used_once_even_by_captures_at_the_same_time() {
+    let (env, focus) = setup();
+    on_screen(&focus, json!([firefox("Docs"), openagora_main()]));
+    env.ok(&["grants", "allow", "firefox", "--name", "Firefox", "--once"]);
+    let mut first = McpClient::start(&env, "sunday", true);
+    let mut second = McpClient::start(&env, "sunday", true);
+    let (_window, captures, behaviour) = connect_window_with(&env, None, png(7, 7));
+    behaviour.lock().unwrap().slow = Some(Duration::from_millis(400));
+    let (a, b) = std::thread::scope(|scope| {
+        let a = scope.spawn(|| first.call_raw("capture_window", json!({}), &mut no_questions));
+        let b = scope.spawn(|| second.call_raw("capture_window", json!({}), &mut no_questions));
+        (a.join().unwrap(), b.join().unwrap())
+    });
+    let images = [&a, &b].iter().filter(|r| image_of(r).is_some()).count();
+    assert_eq!(images, 1, "{a}\n{b}");
+    assert_eq!(captures.lock().unwrap().len(), 1);
+
+    // A capture that fails gives the grant back.
+    env.ok(&["grants", "allow", "firefox", "--name", "Firefox", "--once"]);
+    {
+        let mut how = behaviour.lock().unwrap();
+        how.slow = None;
+        how.fail = Some("the window went away".into());
+    }
+    let (text, error) = first.call("capture_window", json!({}), &mut no_questions);
+    assert!(error && text.contains("the window went away"), "{text}");
+    assert!(env.ok(&["grants", "list"]).contains("Firefox"));
+    behaviour.lock().unwrap().fail = None;
+    let shot = first.call_raw("capture_window", json!({}), &mut no_questions);
+    assert_eq!(image_of(&shot), Some(png(7, 7)), "{shot}");
+    assert!(
+        env.json(&["grants", "list", "--json"])
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_slow_capture_does_not_overwrite_a_newer_press() {
+    let (env, focus) = setup();
+    on_screen(&focus, json!([firefox("Docs"), openagora_main()]));
+    env.ok(&["grants", "allow", "firefox", "--name", "Firefox"]);
+    // Sunday connecting starts the engine service.
+    let _sunday = McpClient::start(&env, "sunday", true);
+    let (mut window, captures, behaviour) = connect_window_with(&env, None, png(3, 3));
+    window.request("shortcut/pressed", json!({}));
+    behaviour.lock().unwrap().slow = Some(Duration::from_millis(500));
+    let capture = window.start_request("shortcut/capture", json!({"key": "firefox"}));
+    while captures.lock().unwrap().is_empty() {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // The user presses the shortcut again, over 1Password, meanwhile.
+    on_screen(&focus, json!([one_password(), openagora_main()]));
+    let pressed = window.request("shortcut/pressed", json!({}));
+    assert_eq!(pressed["result"]["verdict"], "never");
+    let captured = window.answer_to(&capture);
+    assert!(captured["result"]["item"]["id"].is_string(), "{captured}");
+    // What Sunday hears is the newer press.
+    let told = env.hook("s1", true, "cli");
+    assert!(
+        told.contains("pressed Sunday's shortcut over an app on OpenAgora's never-capture list"),
+        "{told}"
+    );
+    // A choice for the first press's window doesn't apply to the second's.
+    let stale = window.request(
+        "shortcut/capture",
+        json!({"allow": "always", "key": "firefox"}),
+    );
+    assert!(stale.get("error").is_some(), "{stale}");
+}
+
+#[test]
+fn capture_window_takes_the_front_window_of_the_named_app() {
+    let (env, focus) = setup();
+    env.ok(&["grants", "allow", "firefox", "--name", "Firefox"]);
+    on_screen(
+        &focus,
+        json!([
+            firefox("Docs"),
+            window(32, 77, "Firefox", "firefox", "Mail"),
+            openagora_main()
+        ]),
+    );
+    let mut sunday = McpClient::start(&env, "sunday", true);
+    let (mut openagora, captures) = connect_window(&env, None, png(2, 2));
+    openagora.request("shortcut/pressed", json!({}));
+    // The other Firefox window comes to the front after the press.
+    on_screen(
+        &focus,
+        json!([
+            window(32, 77, "Firefox", "firefox", "Mail"),
+            firefox("Docs"),
+            openagora_main()
+        ]),
+    );
+    let shot = sunday.call_raw(
+        "capture_window",
+        json!({"app": "Firefox"}),
+        &mut no_questions,
+    );
+    assert!(image_of(&shot).is_some(), "{shot}");
+    assert_eq!(captures.lock().unwrap()[0]["target"]["id"], 32);
+}
+
+#[test]
+fn the_hook_mentions_every_new_desk_item_in_time() {
+    let (env, focus) = setup();
+    on_screen(&focus, json!([openagora_main()]));
+    let _sunday = McpClient::start(&env, "sunday", true);
+    let (mut window, _) = connect_window(&env, None, png(1, 1));
+    let mut added = Vec::new();
+    for n in 0..7 {
+        let item = window.request(
+            "desk/add",
+            json!({"kind": "text", "text": format!("note {n}"), "source": {"app": "Clipboard"}}),
+        );
+        added.push(item["result"]["id"].as_str().unwrap().to_string());
+    }
+    let first = env.hook("s1", true, "cli");
+    let mentioned = |text: &str| added.iter().filter(|id| text.contains(id.as_str())).count();
+    assert_eq!(mentioned(&first), 5, "{first}");
+    assert!(first.contains("2 more are listed by desk_list"), "{first}");
+    // The two left out come next, then nothing.
+    let second = env.hook("s1", false, "cli");
+    assert_eq!(mentioned(&second), 2, "{second}");
+    assert!(
+        added
+            .iter()
+            .all(|id| first.contains(id.as_str()) || second.contains(id.as_str()))
+    );
+    assert_eq!(env.hook("s1", false, "cli"), "");
 }

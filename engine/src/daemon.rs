@@ -101,8 +101,13 @@ fn handle(stream: Stream, gateway: Arc<Gateway>) -> Result<()> {
                 return Ok(());
             };
             if let Incoming::Request { id, params, .. } = peer.classify(message) {
+                // The hook remembers what Sunday was told once its answer
+                // reached Hermes in time, not here.
                 match hook_context(&gateway, client, &params["payload"]) {
-                    Ok(text) => peer.respond(&id, json!({ "context": text }))?,
+                    Ok(turn) => peer.respond(
+                        &id,
+                        json!({ "context": turn.text, "snapshot": turn.snapshot }),
+                    )?,
                     Err(e) => peer.respond_error(&id, INTERNAL_ERROR, &format!("{e:#}"))?,
                 }
             }
@@ -118,7 +123,7 @@ fn hook_context(
     gateway: &Gateway,
     client: &str,
     payload: &serde_json::Value,
-) -> Result<Option<String>> {
+) -> Result<context::Turn> {
     let engine = Engine::new()?;
     let catalog = gateway.catalog()?;
     let live = if context::is_local(payload) {

@@ -166,12 +166,16 @@ Details as built:
 - It listens on a local socket: `<data>/run/engine.sock`, in a folder only this
   user can open (a private folder under `/tmp` when that path is too long for a
   Unix socket), or a named pipe on Windows. Every connection opens with a hello
-  naming its role: `mcp` (an MCP client, with its client id), or `desktop`
-  (OpenAgora's window).
+  naming its role: `mcp` (an MCP client, with its client id), `desktop`
+  (OpenAgora's window), or `hook` (Sunday's per-reply hook).
 - `openagora mcp --client <id>` is the stdio MCP entry point every MCP client
   uses. It is a plain relay to the daemon, so there is no network port or token
   to manage. Clients are trusted to name themselves; anything that can reach the
-  socket already runs as this user.
+  socket already runs as this user. So any program running as this user could
+  claim to be Sunday and use what Sunday may: on macOS, where each app needs its
+  own Screen Recording permission, that includes pictures of the apps you always
+  allowed, taken through OpenAgora's permission. The never-capture list, the
+  questions in OpenAgora's window and the audit log still apply.
 - The gateway speaks MCP 2025-06-18 (also 2025-03-26 and 2024-11-05). It offers
   tools, sends `notifications/tools/list_changed`, and asks the user through
   `elicitation/create`. Tool results carry text content only (no
@@ -232,8 +236,10 @@ engine decides what may be captured, keeps the result, and logs it.
   z-order (Windows API), with each executable's own description as its name. X11:
   the window manager's `_NET_ACTIVE_WINDOW` and `_NET_CLIENT_LIST_STACKING`, with
   names from desktop entries. Wayland lets no app see other apps' windows, so
-  there the user picks the window in the system's own dialog, and that choice is
-  the permission for that one capture. Each window carries an app key (bundle id,
+  there the user picks the window in the system's own dialog, from Sunday's panel
+  only (never at an agent's request), and that choice is the permission for that
+  one capture; the never-capture list still applies to the picked window's name.
+  Nowhere else is a pick offered: it would be a guess. Each window carries an app key (bundle id,
   executable file name, or window class), which grants and the never-capture list
   use. `OPENAGORA_FOCUS_FILE` replaces the OS with a file in tests.
 - **The window the user is in** is the front-most window that isn't OpenAgora's
@@ -248,6 +254,13 @@ engine decides what may be captured, keeps the result, and logs it.
   executable or window class; private browser windows and Tor Browser by window
   title) plus the user's additions in `<data>/broker/never.toml`. The never list
   wins over every grant. Every capture asks the broker first.
+- **Checked again at capture.** A capture looks the window up again (it may have
+  closed, or its title changed, since the shortcut), uses up a "once" grant
+  before capturing (two captures can't share it; it is given back if nothing is
+  kept), and checks the never-capture list again with the title OpenAgora's
+  window saw while capturing, which it sends with the picture. The engine may not
+  see titles at all (macOS, when only OpenAgora's window has Screen Recording
+  permission), so a window whose title neither could read isn't kept.
 - **Desk** (`engine/src/desk.rs`): items with an id, kind (screenshot, image,
   text, link, file), MIME type and type family, source (app, key, title), created
   and expiry times (24 hours), `shared_with` (the clients that may read it) and
@@ -255,19 +268,38 @@ engine decides what may be captured, keeps the result, and logs it.
   folder only this user can open. Pictures must be PNG, JPEG, GIF or WebP; 20 MB
   at most.
 - **Shortcut** (window → engine): `shortcut/pressed` finds the window the user is
-  in and returns the broker's verdict before the panel opens over it;
-  `shortcut/capture` (optionally with `allow: once|always` from the panel's
-  buttons, or `pick: true` where windows are hidden) captures it. The engine
-  asks the window with `capture/window` (a window by its OS id, an app tab, or
-  a pick) and puts the picture on the desk for Sunday.
+  in and returns the broker's verdict, and whether a pick is offered, before the
+  panel opens over it; `shortcut/capture` captures it, optionally with
+  `allow: once|always` from the panel's buttons and the `key` of the app the
+  panel showed (a choice made for another window, after a newer press, is
+  refused; a never-listed app is never granted), or `pick: true` where the
+  engine offered a pick. The engine asks the window with `capture/window` (a
+  window by its OS id, an app tab, or a pick, and the `purpose`: the panel shows
+  the shortcut's captures, not Sunday's) and puts the picture on the desk for
+  Sunday. The window gives up on a capture that takes too long and makes its
+  capture page anew.
 - **Desk from the window:** `desk/add` for the clipboard and for files dropped on
-  the panel.
+  the panel, which the panel reads and sends as their contents: OpenAgora's
+  window never reads a file by a path a page gives it.
 - **Tools for Sunday:** `capture_window` (the window the user is in, or a named
   app; returns the image), `desk_list`, `desk_get` (images as image content,
-  text marked as data), and `allow_app`, which asks the user in OpenAgora's window
-  only, with "Allow once" and "Always allow" (`confirm/ask` with `choices`), never
-  in a chat. A never-listed app can't be allowed. Coding agents get no desk tools
-  until phase 4.
+  text marked as data), and `allow_app` (a named app, or the one the user is in),
+  which asks the user in OpenAgora's window only, with "Allow once" and "Always
+  allow" (`confirm/ask` with `choices`), never in a chat. A never-listed app can't
+  be allowed. Coding agents get no desk tools until phase 4.
+- **What Sunday is told** (tool results and the per-reply hook): apps it may see
+  are named, always-allowed ones with their window titles. Other apps aren't
+  named, unless Sunday named the app itself or the user pressed the shortcut over
+  it (then the app is named, unless it is never-listed). Never-capture rules are
+  not named to Sunday, since the user's own rules can say more than they'd want
+  a model to know; OpenAgora's own window and the audit log name them. The hook
+  speaks of the screen and the desk only to turns from this computer (a Hermes
+  platform it knows to be local; a turn that doesn't say is treated as remote),
+  lists at most five new desk items per turn and counts only those as told, and
+  remembers what it told only once its answer reached Hermes in time.
+- **Web pages in OpenAgora** (its own, apps' tabs, Sunday's chat) never get the
+  camera, the microphone or the screen; only OpenAgora's hidden capture page
+  does, while it captures what the engine asked for.
 - **Audit:** every capture (allowed or refused, by the user's shortcut or by
   Sunday), every grant and revocation, desk reads and additions, and changes to
   the never-capture list.

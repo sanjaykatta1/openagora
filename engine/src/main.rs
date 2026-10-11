@@ -533,12 +533,14 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)?;
                 serde_json::from_str(&input).unwrap_or(serde_json::Value::Null)
             } else {
-                serde_json::json!({"extra": {"is_first_turn": true}})
+                // Someone at this computer's command line.
+                serde_json::json!({"extra": {"is_first_turn": true, "platform": "cli"}})
             };
             // The running engine also knows the user's screen; without it,
             // the hook says the rest.
-            let text = match context_from_service(&Paths::from_env()?, &client, &payload) {
-                Some(text) => text,
+            let paths = Paths::from_env()?;
+            let turn = match context_from_service(&paths, &client, &payload) {
+                Some(turn) => turn,
                 None => {
                     let catalog = load_catalog(&cli.catalog)?;
                     let engine = Engine::new()?;
@@ -546,10 +548,18 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     context::for_turn(&engine, &catalog, &client, &payload, &live)?
                 }
             };
-            match (hook, text) {
+            match (hook, &turn.text) {
                 (true, Some(text)) => println!("{}", serde_json::json!({ "context": text })),
                 (true, None) => {}
-                (false, text) => println!("{}", text.unwrap_or_default()),
+                (false, text) => println!("{}", text.as_deref().unwrap_or_default()),
+            }
+            // What this answer tells Sunday counts as told only now that it
+            // is on its way to Hermes. If that can't be noted, Sunday is
+            // told again next turn.
+            if let Some(snapshot) = &turn.snapshot {
+                if let Err(e) = context::remember(&paths, &client, &payload, snapshot) {
+                    eprintln!("openagora: noting what Sunday was told: {e:#}");
+                }
             }
         }
         Cmd::Focus { json } => {
@@ -893,13 +903,13 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Asks the running engine for the hook's text. None when it isn't running
+/// Asks the running engine for the hook's answer. None when it isn't running
 /// or doesn't answer in time.
 fn context_from_service(
     paths: &Paths,
     client: &str,
     payload: &serde_json::Value,
-) -> Option<Option<String>> {
+) -> Option<context::Turn> {
     let mut stream = ipc::connect(paths).ok()?;
     ipc::hello(&mut stream, "hook", client).ok()?;
     let request = serde_json::json!({
@@ -908,7 +918,7 @@ fn context_from_service(
     });
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let answer = (|| -> anyhow::Result<Option<String>> {
+        let answer = (|| -> anyhow::Result<context::Turn> {
             writeln!(stream, "{request}")?;
             stream.flush()?;
             let mut reader = std::io::BufReader::new(stream);
@@ -917,7 +927,10 @@ fn context_from_service(
             if let Some(error) = reply.get("error") {
                 anyhow::bail!("{}", error["message"]);
             }
-            Ok(reply["result"]["context"].as_str().map(str::to_string))
+            Ok(context::Turn {
+                text: reply["result"]["context"].as_str().map(str::to_string),
+                snapshot: serde_json::from_value(reply["result"]["snapshot"].clone()).ok(),
+            })
         })();
         let _ = tx.send(answer);
     });

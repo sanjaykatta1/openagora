@@ -12,6 +12,7 @@ const path = require('node:path');
 const readline = require('node:readline');
 const { _electron: electron } = require('playwright-core');
 const { waitFor } = require('./ui-helpers.cjs');
+const { markNormal } = require('./fixtures/x11-wm-state.cjs');
 
 const EXE = process.platform === 'win32' ? 'openagora.exe' : 'openagora';
 const engine = [
@@ -57,10 +58,17 @@ async function run() {
   }
   fs.mkdirSync(env.HOME);
   // Another app's window, in front.
-  standin = spawn(require('electron'), [path.join(__dirname, 'fixtures', 'standin-app.cjs'), '--no-sandbox'], { stdio: ['ignore', 'pipe', 'ignore'] });
-  const sourceId = await new Promise((resolve) => readline.createInterface({ input: standin.stdout }).once('line', resolve));
+  standin = spawn(require('electron'), [path.join(__dirname, 'fixtures', 'standin-app.cjs'), '--no-sandbox'], { stdio: ['pipe', 'pipe', 'ignore'] });
+  const lines = readline.createInterface({ input: standin.stdout });
+  const nextLine = () => new Promise((resolve) => lines.once('line', resolve));
+  const sourceId = await nextLine();
   const id = Number(sourceId.split(':')[1]);
-  fs.writeFileSync(env.OPENAGORA_FOCUS_FILE, JSON.stringify([{ id, pid: standin.pid, app: 'Firefox', key: 'firefox', title: 'Docs — Mozilla Firefox' }]));
+  // Xvfb runs no window manager: mark the window as one would, so the OS's
+  // window list (and OpenAgora's window) sees it with its title.
+  if (process.platform === 'linux') await markNormal(id);
+  // The engine sees the window but not its title, as on macOS when only
+  // OpenAgora's window has Screen Recording permission.
+  fs.writeFileSync(env.OPENAGORA_FOCUS_FILE, JSON.stringify([{ id, pid: standin.pid, app: 'Firefox', key: 'firefox' }]));
 
   app = await electron.launch({
     args: ['.', `--user-data-dir=${path.join(root, 'profile')}`, '--no-sandbox'],
@@ -86,6 +94,8 @@ async function run() {
   const [item] = JSON.parse(oa('desk', 'list', '--json'));
   assert.equal(item.kind, 'screenshot');
   assert.equal(item.source.app, 'Firefox');
+  // The window's title as OpenAgora's window saw it while capturing.
+  assert.equal(item.source.title, 'Docs — Mozilla Firefox');
   assert.deepEqual(item.shared_with, ['sunday']);
   const picture = path.join(root, 'picture.png');
   oa('desk', 'show', item.id, '--out', picture);
@@ -121,6 +131,18 @@ async function run() {
     const shot = await sunday.request('tools/call', { name: 'capture_window', arguments: {} });
     assert.equal(shot.result.isError, false, JSON.stringify(shot.result.content[0]));
     assert.ok(shot.result.content.some((c) => c.type === 'image'));
+    // The user opens a private window in the allowed app. The engine can't
+    // see titles, but the title the window was captured with is checked
+    // against the never-capture list, and the picture isn't kept.
+    standin.stdin.write('title Bank — Mozilla Firefox Private Browsing\n');
+    await nextLine();
+    await new Promise((r) => setTimeout(r, 300));
+    const before = JSON.parse(oa('desk', 'list', '--json')).length;
+    const privately = await sunday.request('tools/call', { name: 'capture_window', arguments: {} });
+    assert.equal(privately.result.isError, true, JSON.stringify(privately.result));
+    assert.match(privately.result.content[0].text, /never-capture list/);
+    assert.ok(!privately.result.content.some((c) => c.type === 'image'));
+    assert.equal(JSON.parse(oa('desk', 'list', '--json')).length, before);
   } finally {
     sunday.child.kill();
   }
@@ -128,10 +150,10 @@ async function run() {
   // Every step is in the audit log.
   const audit = JSON.parse(oa('audit', '--json'));
   const actions = audit.map((e) => `${e.client}:${e.action}:${e.decision}`);
-  for (const expected of ['user:capture:refused', 'user:allow_app:confirmed', 'user:capture:allowed', 'sunday:desk_get:allowed', 'sunday:capture:allowed']) {
+  for (const expected of ['user:capture:refused', 'user:allow_app:confirmed', 'user:capture:allowed', 'sunday:desk_get:allowed', 'sunday:capture:allowed', 'sunday:capture:refused']) {
     assert.ok(actions.includes(expected), `${expected} missing from ${actions}`);
   }
-  console.log('Real engine passed: shortcut, broker, OS window capture, desk, hook, MCP desk_get and capture_window, audit.');
+  console.log('Real engine passed: shortcut, broker, OS window capture, the title as captured, desk, hook, MCP desk_get and capture_window, a private window refused, audit.');
 }
 
 run().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => {

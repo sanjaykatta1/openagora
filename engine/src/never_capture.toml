@@ -74,6 +74,12 @@ apps = ["KWalletManager", "kwalletmanager5", "kwalletmanager"]
 name = "Authy"
 apps = ["Authy", "Authy Desktop", "com.authy.authy-mac", "authy desktop.exe", "authy desktop"]
 
+# A Windows Store app OpenAgora couldn't tell apart from the others: its
+# window belongs to the frame every Store app shares.
+[[rule]]
+name = "Unidentified Store apps"
+apps = ["applicationframehost.exe"]
+
 [[rule]]
 name = "Tor Browser"
 apps = ["Tor Browser", "org.torproject.torbrowser"]

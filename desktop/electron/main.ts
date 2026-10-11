@@ -3,7 +3,7 @@
 // Sunday's shortcut and panel, and the menu bar or tray icon that keeps
 // OpenAgora running after its window closes.
 
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, Menu, nativeImage, screen, shell, Tray } from "electron";
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, Menu, nativeImage, screen, session, shell, Tray } from "electron";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -11,7 +11,7 @@ import { readAgentPreferences, saveAgentPreferences } from "./preferences";
 import { registerUpdater } from "./updater";
 import { agentAvailability, commandDirectories, launchAgent } from "./agent-launcher";
 import { EngineLink, type ConfirmAnswer, type ConfirmRequest, type Picture } from "./engine-link";
-import { capture, screenAccess } from "./capture";
+import { capture, mayCapture, screenAccess } from "./capture";
 import { readDesktopSettings, saveDesktopSettings, type DesktopSettings } from "./desktop-settings";
 import { TRAY_ICON } from "./tray-icon";
 
@@ -137,6 +137,7 @@ interface ShortcutState {
   verdict?: string;
   rule?: string | null;
   unknown?: string | null;
+  pick?: boolean;
   item?: { id: string; description: string } | null;
   error?: string | null;
   /** A small copy of the picture Sunday got. */
@@ -226,13 +227,14 @@ async function onShortcut(): Promise<void> {
     }
   }
   showPanel(state);
-  if (state.phase === "pressed" && state.verdict === "allowed") await capturePressed({});
+  if (state.phase === "pressed" && state.verdict === "allowed" && state.target) await capturePressed({ key: state.target.key });
 }
 
 /** Captures the window the shortcut was pressed over; `allow` records the
- *  user's choice from the panel first, `pick` asks the system to let the
- *  user pick a window where OpenAgora can't see which one is in front. */
-async function capturePressed(params: { allow?: "once" | "always"; pick?: boolean }): Promise<ShortcutState> {
+ *  user's choice from the panel first, for the app it showed (`key`), and
+ *  `pick` asks the system to let the user pick a window where OpenAgora
+ *  can't see which one is in front. */
+async function capturePressed(params: { allow?: "once" | "always"; key?: string; pick?: boolean }): Promise<ShortcutState> {
   const before = shortcutState ?? { phase: "pressed" as const };
   sendPanel({ ...before, phase: "capturing", error: null });
   let state: ShortcutState;
@@ -240,7 +242,7 @@ async function capturePressed(params: { allow?: "once" | "always"; pick?: boolea
     if (!link?.connected) throw new Error("OpenAgora's engine isn't running");
     lastPicture = null;
     const result = await link.request<Omit<ShortcutState, "phase">>("shortcut/capture", params, 150_000);
-    state = { phase: "pressed", ...result, picture: result.item ? lastPicture : null };
+    state = { phase: result.error ? "error" : "pressed", ...result, picture: result.item ? lastPicture : null };
   } catch (e) {
     state = { ...before, phase: "error", error: message(e) };
   }
@@ -319,9 +321,10 @@ function startEngineLink(): EngineLink {
       if (!VALID_ID.test(id)) return;
       void mainWindow().then((window) => { window.show(); window.webContents.send("open-app", id); });
     },
-    capture: async (target, maxEdge) => {
+    capture: async (target, maxEdge, purpose) => {
       const picture = await capture(target, maxEdge);
-      lastPicture = thumbnail(picture);
+      // The panel shows what the shortcut captured, not what Sunday did.
+      if (purpose === "shortcut") lastPicture = thumbnail(picture);
       return picture;
     },
     hello: windowReport,
@@ -345,9 +348,19 @@ async function addToDesk(params: Record<string, unknown>): Promise<unknown> {
   return link.request("desk/add", params, 30_000);
 }
 
-function fromPanelOrMain(event: Electron.IpcMainInvokeEvent): boolean {
-  const window = BrowserWindow.fromWebContents(event.sender);
-  return !!window && (window === mainWin || window === panelWin) && event.senderFrame === event.sender.mainFrame;
+/** Whether a message comes from OpenAgora's own pages: the main window or
+ *  the Sunday panel, never an app's tab or a frame inside them. */
+function fromPanelOrMain(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): boolean {
+  const ours = [mainWin, panelWin].some((window) => !!window && !window.isDestroyed() && event.sender === window.webContents);
+  return ours && event.senderFrame === event.sender.mainFrame;
+}
+
+/** Answers OpenAgora's own pages only. */
+function handle(channel: string, listener: (event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => unknown): void {
+  ipcMain.handle(channel, (event, ...args: unknown[]) => {
+    if (!fromPanelOrMain(event)) throw new Error("only OpenAgora's own windows can do this");
+    return listener(event, ...args);
+  });
 }
 
 /** Plain text for the engine's command line: one line, not an option. */
@@ -361,46 +374,41 @@ function registerIpc(): void {
     if (typeof id !== "string" || !VALID_ID.test(id)) throw new Error("invalid app id");
     return id;
   };
-  ipcMain.handle("catalog", async () => {
+  handle("catalog", async () => {
     const r = await runEngine(["catalog", "--json"]);
     if (!r.ok) throw new Error(r.stderr || "could not read the catalog");
     return JSON.parse(r.stdout);
   });
-  ipcMain.handle("agent-preferences", () => readAgentPreferences(app.getPath("userData")));
-  ipcMain.handle("save-agent-preferences", (_e, value: unknown) => saveAgentPreferences(app.getPath("userData"), value));
-  ipcMain.handle("agent-availability", (_e, id: unknown) => agentAvailability(id));
-  ipcMain.handle("launch-agent", (event, id: unknown, action: unknown) => {
-    if (!BrowserWindow.fromWebContents(event.sender) || event.senderFrame !== event.sender.mainFrame) {
-      throw new Error("Agent actions are only available in the OpenAgora window");
-    }
-    return launchAgent(id, action, app.getPath("userData"));
-  });
-  ipcMain.handle("install", (event, id: unknown) => {
+  handle("agent-preferences", () => readAgentPreferences(app.getPath("userData")));
+  handle("save-agent-preferences", (_e, value: unknown) => saveAgentPreferences(app.getPath("userData"), value));
+  handle("agent-availability", (_e, id: unknown) => agentAvailability(id));
+  handle("launch-agent", (_e, id: unknown, action: unknown) => launchAgent(id, action, app.getPath("userData")));
+  handle("install", (event, id: unknown) => {
     const appId = checkId(id);
     return runEngine(["install", appId, "--yes"], (line) =>
       !event.sender.isDestroyed() && event.sender.send("progress", { id: appId, line }),
     );
   });
   for (const action of ["uninstall", "start", "stop"] as const) {
-    ipcMain.handle(action, (_e, id: unknown) => {
+    handle(action, (_e, id: unknown) => {
       const args = [action, checkId(id)];
       if (action === "uninstall") args.push("--yes");
       return runEngine(args);
     });
   }
   // An app's own update command; the window asks first.
-  ipcMain.handle("update-app", (event, id: unknown) => {
+  handle("update-app", (event, id: unknown) => {
     const appId = checkId(id);
     return runEngine(["update", appId, "--yes"], (line) =>
       !event.sender.isDestroyed() && event.sender.send("progress", { id: appId, line }),
     );
   });
-  ipcMain.handle("sunday-status", async () => {
+  handle("sunday-status", async () => {
     const r = await runEngine(["sunday", "status", "--json"]);
     if (!r.ok) throw new Error(r.stderr || "could not read Sunday's status");
     return JSON.parse(r.stdout);
   });
-  ipcMain.handle("confirm-answer", (event, id: unknown, allowed: unknown, choice: unknown) => {
+  handle("confirm-answer", (event, id: unknown, allowed: unknown, choice: unknown) => {
     if (typeof id !== "string") return;
     const pending = pendingConfirms.get(id);
     // Only the window that showed the question can answer it.
@@ -412,9 +420,9 @@ function registerIpc(): void {
     else pending.finish({ allowed: false });
   });
   // The window's own consent card is the confirmation for these.
-  ipcMain.handle("sunday-connect", () => runEngine(["sunday", "connect", "--yes"]));
-  ipcMain.handle("sunday-disconnect", () => runEngine(["sunday", "disconnect", "--yes"]));
-  ipcMain.handle("sunday-setup", (_e, choice: unknown) => {
+  handle("sunday-connect", () => runEngine(["sunday", "connect", "--yes"]));
+  handle("sunday-disconnect", () => runEngine(["sunday", "disconnect", "--yes"]));
+  handle("sunday-setup", (_e, choice: unknown) => {
     // Only these fixed choices cross into the engine.
     const flags: Record<string, string[]> = {
       default: [],
@@ -426,8 +434,8 @@ function registerIpc(): void {
     if (typeof choice !== "string" || !Object.hasOwn(flags, choice)) throw new Error("invalid setup choice");
     return runEngine(["sunday", "setup", ...flags[choice]]);
   });
-  ipcMain.handle("logs", (_e, id: unknown) => runEngine(["logs", checkId(id), "-n", "200"]));
-  ipcMain.handle("open-external", (_e, url: unknown) => {
+  handle("logs", (_e, id: unknown) => runEngine(["logs", checkId(id), "-n", "200"]));
+  handle("open-external", (_e, url: unknown) => {
     // Websites, and the user's own apps on this machine ("Open in browser").
     if (typeof url === "string" && (url.startsWith("https://") || LOCAL_URL.test(url))) {
       return shell.openExternal(url);
@@ -443,17 +451,16 @@ function registerIpc(): void {
   });
 
   // Sunday's panel.
-  ipcMain.handle("panel-state", () => shortcutState);
-  ipcMain.handle("panel-capture", (event, options: unknown) => {
-    if (!fromPanelOrMain(event)) throw new Error("only OpenAgora's windows can capture");
+  handle("panel-state", () => shortcutState);
+  handle("panel-capture", (_e, options: unknown) => {
     const o = options && typeof options === "object" ? options as Record<string, unknown> : {};
     const allow = o.allow === "once" || o.allow === "always" ? o.allow : undefined;
-    return capturePressed({ ...(allow ? { allow } : {}), ...(o.pick === true ? { pick: true } : {}) });
+    const key = typeof o.key === "string" && o.key.length <= 512 ? o.key : undefined;
+    return capturePressed({ ...(allow ? { allow } : {}), ...(key ? { key } : {}), ...(o.pick === true ? { pick: true } : {}) });
   });
-  ipcMain.handle("panel-hide", () => hidePanel());
-  ipcMain.handle("show-main", () => showMain());
-  ipcMain.handle("desk-add-clipboard", async (event) => {
-    if (!fromPanelOrMain(event)) throw new Error("only OpenAgora's windows can share");
+  handle("panel-hide", () => hidePanel());
+  handle("show-main", () => showMain());
+  handle("desk-add-clipboard", async () => {
     for (const item of await clipboard.read()) {
       const type = item.types.find((t) => Object.values(PICTURE_TYPES).includes(t));
       if (!type) continue;
@@ -466,22 +473,23 @@ function registerIpc(): void {
     const link = /^https?:\/\/\S+$/.test(text.trim());
     return addToDesk({ kind: link ? "link" : "text", text: link ? text.trim() : text, source: { app: "Clipboard" } });
   });
-  ipcMain.handle("desk-add-files", async (event, paths: unknown) => {
-    if (!fromPanelOrMain(event)) throw new Error("only OpenAgora's windows can share");
-    if (!Array.isArray(paths) || paths.length === 0 || paths.length > 10) throw new Error("drop up to 10 files");
+  // Dropped files come as their contents, read by the panel: a page never
+  // has OpenAgora read a file by its path.
+  handle("desk-add-files", async (_e, files: unknown) => {
+    if (!Array.isArray(files) || files.length === 0 || files.length > 10) throw new Error("drop up to 10 files");
     const added = [];
-    for (const file of paths) {
-      if (typeof file !== "string" || !path.isAbsolute(file)) throw new Error("invalid file");
-      const stat = fs.statSync(file);
-      if (!stat.isFile()) throw new Error(`${path.basename(file)} isn't a file`);
-      if (stat.size > DESK_MAX_BYTES) throw new Error(`${path.basename(file)} is too big for the desk (at most 20 MB)`);
-      const extension = path.extname(file).toLowerCase();
+    for (const file of files) {
+      const f = file && typeof file === "object" ? file as Record<string, unknown> : {};
+      if (typeof f.name !== "string" || !(f.data instanceof Uint8Array)) throw new Error("invalid file");
+      const name = path.basename(f.name.replace(/[\0-\x1f\\]/g, "/")).slice(0, 200) || "file";
+      if (f.data.byteLength > DESK_MAX_BYTES) throw new Error(`${name} is too big for the desk (at most 20 MB)`);
+      const extension = path.extname(name).toLowerCase();
       const picture = PICTURE_TYPES[extension];
       added.push(await addToDesk({
         kind: picture ? "image" : "file",
         type: picture ?? TEXT_TYPES[extension] ?? "application/octet-stream",
-        data: fs.readFileSync(file).toString("base64"),
-        name: path.basename(file),
+        data: Buffer.from(f.data).toString("base64"),
+        name,
         source: { app: "Files" },
       }));
     }
@@ -490,23 +498,23 @@ function registerIpc(): void {
 
   // What Sunday can see: OpenAgora's own settings and the engine's broker.
   const desktopState = () => ({ settings, shortcutError, screen: screenAccess(), platform: process.platform });
-  ipcMain.handle("desktop-settings", desktopState);
-  ipcMain.handle("save-desktop-settings", (_e, value: unknown) => {
+  handle("desktop-settings", desktopState);
+  handle("save-desktop-settings", (_e, value: unknown) => {
     settings = saveDesktopSettings(app.getPath("userData"), value);
     registerShortcut(settings.shortcut);
     updateTray();
     return desktopState();
   });
-  ipcMain.handle("open-screen-settings", () => {
+  handle("open-screen-settings", () => {
     if (process.platform === "darwin") return shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture");
   });
-  ipcMain.handle("broker-state", async () => {
+  handle("broker-state", async () => {
     const [grants, never] = await Promise.all([runEngine(["grants", "list", "--json"]), runEngine(["never", "list", "--json"])]);
     if (!grants.ok || !never.ok) throw new Error(grants.stderr || never.stderr || "could not read what Sunday may see");
     return { grants: JSON.parse(grants.stdout), never: JSON.parse(never.stdout) };
   });
-  ipcMain.handle("broker-revoke", (_e, key: unknown) => runEngine(["grants", "revoke", "--", argument(key, "app")]));
-  ipcMain.handle("never-add", (_e, rule: unknown) => {
+  handle("broker-revoke", (_e, key: unknown) => runEngine(["grants", "revoke", "--", argument(key, "app")]));
+  handle("never-add", (_e, rule: unknown) => {
     const r = rule && typeof rule === "object" ? rule as Record<string, unknown> : {};
     const name = argument(r.name, "name");
     const args = ["never", "add"];
@@ -515,7 +523,7 @@ function registerIpc(): void {
     if (args.length === 2) throw new Error("give an app or words in a window title");
     return runEngine([...args, "--", name]);
   });
-  ipcMain.handle("never-remove", (_e, name: unknown) => runEngine(["never", "remove", "--", argument(name, "name")]));
+  handle("never-remove", (_e, name: unknown) => runEngine(["never", "remove", "--", argument(name, "name")]));
 }
 
 function createWindow(): BrowserWindow {
@@ -548,6 +556,20 @@ function createWindow(): BrowserWindow {
   window.once("ready-to-show", reportWindows);
   return window;
 }
+
+// No page in OpenAgora (its own, apps' tabs, Sunday's chat) gets the camera,
+// the microphone or the screen: OpenAgora captures windows only for the
+// engine, after the user allowed it, through its own hidden capture page.
+// Everything else stays as Electron has it.
+const MEDIA_PERMISSIONS = new Set(["media", "display-capture"]);
+
+function lockDown(ses: Electron.Session): void {
+  ses.setPermissionRequestHandler((contents, permission, callback, details) =>
+    callback(!MEDIA_PERMISSIONS.has(permission) || mayCapture(contents, details.requestingUrl)));
+  ses.setPermissionCheckHandler((contents, permission, _origin, details) =>
+    !MEDIA_PERMISSIONS.has(permission) || mayCapture(contents, details.requestingUrl));
+}
+app.on("session-created", lockDown);
 
 // Embedded app views may only show local apps, never get Node or our preload,
 // and send any link that opens a new window, or leaves this computer, to the
@@ -586,6 +608,7 @@ if (!app.requestSingleInstanceLock()) {
       authors: ["OpenAgora contributors", "Sunday: Hermes Agent by Nous Research (MIT license)"],
       website: "https://github.com/sanjaykatta1/openagora",
     });
+    lockDown(session.defaultSession);
     settings = readDesktopSettings(app.getPath("userData"));
     registerIpc();
     registerUpdater();

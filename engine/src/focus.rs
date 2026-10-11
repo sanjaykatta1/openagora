@@ -13,7 +13,7 @@
 //!   windows, so there it is unavailable.
 //!
 //! `OPENAGORA_FOCUS_FILE` replaces the OS with a JSON file, for tests: a list
-//! of windows, or `{"unavailable": "why"}`.
+//! of windows, or `{"unavailable": "why", "pick": true|false}`.
 
 use std::path::Path;
 
@@ -53,6 +53,27 @@ pub fn windows() -> Result<Vec<Window>, String> {
     let mut windows = os::windows()?;
     windows.truncate(MAX_WINDOWS);
     Ok(windows)
+}
+
+/// Whether the system lets the user pick a window in its own dialog, which is
+/// how OpenAgora captures where it can't see which window is in front:
+/// Wayland's screen-cast portal. Anywhere else a "pick" would be a guess, so
+/// it isn't offered.
+pub fn can_pick() -> bool {
+    if let Some(file) = std::env::var_os("OPENAGORA_FOCUS_FILE").filter(|v| !v.is_empty()) {
+        return std::fs::read_to_string(&file)
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .is_some_and(|value| value["pick"] == true);
+    }
+    cfg!(target_os = "linux") && wayland()
+}
+
+/// A Wayland session, where other apps' windows are out of sight.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn wayland() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
+        || std::env::var("XDG_SESSION_TYPE").is_ok_and(|v| v == "wayland")
 }
 
 fn from_file(path: &Path) -> Result<Vec<Window>, String> {
@@ -203,16 +224,14 @@ mod os {
             let mut exe = process_path(pid);
             // A Store app's window belongs to ApplicationFrameHost.exe, which
             // frames every Store app; the app is the process behind it. A
-            // frame whose app can't be found isn't counted as any app.
+            // frame whose app can't be found stays ApplicationFrameHost.exe,
+            // which the never-capture list covers: it could be any Store app.
             if exe.as_deref().and_then(super::file_name).as_deref()
                 == Some("applicationframehost.exe")
             {
-                match hosted_app(hwnd, pid) {
-                    Some(app_pid) => {
-                        pid = app_pid;
-                        exe = process_path(pid);
-                    }
-                    None => continue,
+                if let Some(app_pid) = hosted_app(hwnd, pid) {
+                    pid = app_pid;
+                    exe = process_path(pid);
                 }
             }
             let key = exe
@@ -405,9 +424,7 @@ mod os {
     use super::Window;
 
     pub fn windows() -> Result<Vec<Window>, String> {
-        let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
-            || std::env::var("XDG_SESSION_TYPE").is_ok_and(|v| v == "wayland");
-        if wayland {
+        if super::wayland() {
             return Err("Wayland doesn't let apps see which window is in front".into());
         }
         let (conn, screen) =

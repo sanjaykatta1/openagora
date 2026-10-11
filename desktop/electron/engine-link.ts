@@ -37,7 +37,12 @@ export interface Picture {
   height: number;
   /** The app's name, when the window was picked. */
   app?: string;
+  /** The window's title as captured, when OpenAgora's window could see it. */
+  title?: string;
 }
+
+/** Whom a capture is for: the shortcut's are shown in Sunday's panel. */
+export type CapturePurpose = "shortcut" | "tool";
 
 export interface EngineLinkEvents {
   /** The engine wants the user's yes or no; resolve allowed only for an explicit yes. */
@@ -45,7 +50,7 @@ export interface EngineLinkEvents {
   /** An agent asked to show an app. */
   openApp(id: string): void;
   /** The engine asks for a picture of a window. */
-  capture(target: CaptureTarget, maxEdge: number): Promise<Picture>;
+  capture(target: CaptureTarget, maxEdge: number, purpose: CapturePurpose): Promise<Picture>;
   /** What the engine should know about this window when it (re)connects. */
   hello(): Record<string, unknown>;
   connected(connected: boolean): void;
@@ -189,7 +194,8 @@ export class EngineLink {
       const target = parseTarget(params.target);
       if (!target) { fail("unknown capture target"); return; }
       const max = typeof params.max === "number" && params.max >= 64 ? Math.min(params.max, 4096) : 1920;
-      this.events.capture(target, max).then(reply, fail);
+      const purpose: CapturePurpose = params.purpose === "shortcut" ? "shortcut" : "tool";
+      this.events.capture(target, max, purpose).then(reply, fail);
     } else if (message.method === "app/open" && typeof params.id === "string") {
       this.events.openApp(params.id);
     } else if (message.id !== undefined && message.method !== undefined) {

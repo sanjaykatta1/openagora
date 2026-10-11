@@ -348,14 +348,31 @@ impl Desktop {
     /// Asks the engine something and waits for the answer (the whole reply,
     /// with `result` or `error`).
     pub fn request(&mut self, method: &str, params: Value) -> Value {
+        let id = self.start_request(method, params);
+        self.answer_to(&id)
+    }
+
+    /// Asks the engine something without waiting; `answer_to` waits.
+    pub fn start_request(&mut self, method: &str, params: Value) -> String {
         let id = format!("w{}", self.next_id);
         self.next_id += 1;
         self.write(json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}));
+        id
+    }
+
+    pub fn answer_to(&mut self, id: &str) -> Value {
+        if let Some(at) = self
+            .held
+            .iter()
+            .position(|m| m["id"] == id && m.get("method").is_none())
+        {
+            return self.held.remove(at).unwrap();
+        }
         loop {
             let message = self
                 .incoming
                 .recv_timeout(Duration::from_secs(60))
-                .unwrap_or_else(|_| panic!("no answer to {method}"));
+                .unwrap_or_else(|_| panic!("no answer to {id}"));
             if message["id"] == id && message.get("method").is_none() {
                 return message;
             }

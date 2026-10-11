@@ -66,10 +66,11 @@ async function run() {
   const pictures = [];
   let verdict = 'not-allowed';
   const target = { kind: 'tab', app: 'Web notes', key: 'openagora:notes' };
-  daemon.handle('shortcut/pressed', () => ({ target, verdict, rule: verdict === 'never' ? '1Password' : null, unknown: null, item: null, error: null }));
+  const pressed = () => ({ target, verdict, rule: verdict === 'never' ? '1Password' : null, unknown: null, pick: false, item: null, error: null });
+  daemon.handle('shortcut/pressed', pressed);
   daemon.handle('shortcut/capture', async (params) => {
     captureCalls.push(params);
-    const reply = await daemon.ask('capture/window', { target: { kind: 'tab', app: 'notes' }, max: 1920 });
+    const reply = await daemon.ask('capture/window', { target: { kind: 'tab', app: 'notes' }, max: 1920, purpose: 'shortcut' });
     assert.ok(reply.result, JSON.stringify(reply));
     pictures.push(reply.result);
     return { target, verdict: 'allowed', rule: null, unknown: null, item: { id: 'd-0123456789', description: 'screenshot of Web notes' }, error: null };
@@ -88,7 +89,8 @@ async function run() {
   // Allowing it captures the tab; the panel shows what Sunday got.
   await panel.getByRole('button', { name: 'Always allow' }).click();
   await panel.getByText('Sunday sees Web notes.').waitFor();
-  assert.deepEqual(captureCalls, [{ allow: 'always' }]);
+  // The panel says which app the user allowed.
+  assert.deepEqual(captureCalls, [{ allow: 'always', key: 'openagora:notes' }]);
   const picture = Buffer.from(pictures[0].data, 'base64');
   assert.ok(picture.subarray(0, 8).equals(PNG), 'the tab capture is a PNG');
   assert.ok(pictures[0].width > 0 && pictures[0].height > 0);
@@ -112,6 +114,19 @@ async function run() {
   await panel.getByRole('button', { name: 'Add clipboard' }).click();
   await panel.getByRole('status').filter({ hasText: 'Put the clipboard on the desk for Sunday.' }).waitFor();
   assert.deepEqual(deskAdds, [{ kind: 'text', text: 'Remember the milk', source: { app: 'Clipboard' } }]);
+  // Dropped files go on the desk as their contents, read by the panel: the
+  // window never reads a file by a path a page gives it.
+  await panel.evaluate(() => {
+    const data = new DataTransfer();
+    data.items.add(new File(['hello desk'], 'notes.txt', { type: 'text/plain' }));
+    document.querySelector('.panel-shell').dispatchEvent(new DragEvent('drop', { dataTransfer: data, bubbles: true, cancelable: true }));
+  });
+  await panel.getByRole('status').filter({ hasText: 'Put the file on the desk for Sunday.' }).waitFor();
+  assert.deepEqual(deskAdds.at(-1), { kind: 'file', type: 'text/plain', data: Buffer.from('hello desk').toString('base64'), name: 'notes.txt', source: { app: 'Files' } });
+  assert.equal(await panel.evaluate(() => typeof window.openagora.desk.pathForFile), 'undefined');
+  const byPath = await panel.evaluate(() => window.openagora.desk.addFiles(['/etc/hostname']).then(() => 'added', (e) => e.message));
+  assert.match(byPath, /invalid file/);
+  assert.equal(deskAdds.length, 2);
 
   // Escape closes the panel; the shortcut brings it back. A never-captured
   // app is said so, and nothing is captured.
@@ -121,6 +136,37 @@ async function run() {
   await press(app);
   await panel.getByText('OpenAgora never captures Web notes.').waitFor();
   assert.equal(captureCalls.length, 1);
+
+  // Where OpenAgora can't see which window is in front, the panel offers
+  // the system's window picker only where the engine says there is one.
+  let pick = false;
+  daemon.handle('shortcut/pressed', () => ({ target: null, verdict: 'unknown', rule: null, unknown: 'the window list failed', pick, item: null, error: null }));
+  for (const offered of [false, true]) {
+    pick = offered;
+    await panel.keyboard.press('Escape');
+    await waitFor(async () => !(await panelVisible(app)), 'the panel to close');
+    await press(app);
+    await panel.getByText(/can’t see which window you’re in here \(the window list failed\)/).waitFor();
+    assert.equal(await panel.getByRole('button', { name: 'Pick a window' }).count(), offered ? 1 : 0, `pick offered: ${offered}`);
+  }
+  await panel.getByRole('button', { name: 'Pick a window' }).click();
+  await waitFor(() => captureCalls.length === 2, 'the pick to reach the engine');
+  assert.deepEqual(captureCalls.at(-1), { pick: true });
+  daemon.handle('shortcut/pressed', pressed);
+
+  // No page in OpenAgora (an app's tab, Sunday's chat) gets the screen:
+  // only OpenAgora's own capture page does, for the engine.
+  for (const partition of ['persist:app-notes', 'persist:sunday']) {
+    const media = await app.evaluate(async ({ webContents, session, BrowserWindow }, partition) => {
+      const ses = session.fromPartition(partition);
+      const view = webContents.getAllWebContents().find((c) => c.getType() === 'webview' && c.session === ses);
+      if (!view) return 'no view';
+      const id = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith('index.html')).getMediaSourceId();
+      const desktop = { audio: false, video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: id } } };
+      return view.executeJavaScript(`navigator.mediaDevices.getUserMedia(${JSON.stringify(desktop)}).then((s) => { s.getTracks().forEach((t) => t.stop()); return 'granted'; }, (e) => e.name)`, true);
+    }, partition);
+    assert.equal(media, 'NotAllowedError', partition);
+  }
 
   // OpenAgora's window also captures any window by its OS id, through the
   // OS's own window capture: here, its own main window.

@@ -1,6 +1,6 @@
 // The only surface the window's web page gets: a few named calls to the engine.
 
-import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron";
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type { AgentPreferences } from "./agents";
 
 contextBridge.exposeInMainWorld("openagora", {
@@ -39,7 +39,7 @@ contextBridge.exposeInMainWorld("openagora", {
   showMain: () => ipcRenderer.invoke("show-main"),
   panel: {
     state: () => ipcRenderer.invoke("panel-state"),
-    capture: (options: { allow?: "once" | "always"; pick?: boolean }) => ipcRenderer.invoke("panel-capture", options),
+    capture: (options: { allow?: "once" | "always"; key?: string; pick?: boolean }) => ipcRenderer.invoke("panel-capture", options),
     hide: () => ipcRenderer.invoke("panel-hide"),
     onState: (callback: (state: unknown) => void) => {
       const handler = (_e: IpcRendererEvent, state: unknown) => callback(state);
@@ -49,9 +49,9 @@ contextBridge.exposeInMainWorld("openagora", {
   },
   desk: {
     addClipboard: () => ipcRenderer.invoke("desk-add-clipboard"),
-    addFiles: (paths: string[]) => ipcRenderer.invoke("desk-add-files", paths),
-    /** A dropped file's path on this computer. */
-    pathForFile: (file: File) => webUtils.getPathForFile(file),
+    /** Files the user dropped on the panel, as their contents: OpenAgora
+     *  never reads a file by a path a page gives it. */
+    addFiles: (files: { name: string; data: Uint8Array }[]) => ipcRenderer.invoke("desk-add-files", files),
   },
   desktopSettings: () => ipcRenderer.invoke("desktop-settings"),
   saveDesktopSettings: (value: unknown) => ipcRenderer.invoke("save-desktop-settings", value),

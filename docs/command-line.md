@@ -176,8 +176,10 @@ permission); Wayland doesn't let apps see other apps' windows.
 
 The engine gives Sunday these tools through its gateway: `capture_window`,
 `desk_list`, `desk_get` and `allow_app`. `allow_app` asks you in OpenAgora's
-window. Every capture, allowed or refused, every grant and revocation, and
-every desk read is in `openagora audit`.
+window. Sunday isn't told the names of your never-capture rules, nor of apps it
+may not see unless you pressed the shortcut over them. Every capture, allowed or
+refused, every grant and revocation, and every desk read is in `openagora audit`,
+rules included.
 
 ## Uninstall the command line tool
 

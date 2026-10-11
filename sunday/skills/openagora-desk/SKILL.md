@@ -1,7 +1,7 @@
 ---
 name: openagora-desk
 description: See what the user is working on in any app on their computer, through OpenAgora's shortcut, captures and desk, only for apps the user allowed.
-version: 1.0.0
+version: 1.1.0
 author: OpenAgora
 license: MIT
 metadata:
@@ -27,7 +27,7 @@ Your tools on the `openagora` MCP server (`mcp__openagora__<tool>` in Hermes):
 | `desk_get` | look at a desk item; a screenshot comes back as an image |
 | `desk_list` | see what's on the desk (kept for 24 hours) |
 | `capture_window` | take a new screenshot of the app the user is in, or of an app you name |
-| `allow_app` | ask the user to let you see an app |
+| `allow_app` | ask the user to let you see an app (leave out the app for the one they're in) |
 
 ## When the user asks about what they're doing
 
@@ -36,7 +36,8 @@ Your tools on the `openagora` MCP server (`mcp__openagora__<tool>` in Hermes):
 2. Otherwise, or to see the latest state, call `capture_window`.
 3. If OpenAgora says the app isn't allowed, tell the user you can't see that
    app yet and offer to ask. Call `allow_app` only when they agree; OpenAgora
-   then asks them itself, in its own window.
+   then asks them itself, in its own window. OpenAgora doesn't name apps you
+   may not see; `allow_app` without an app asks about the one they're in.
 4. If OpenAgora says an app or window is on its never-capture list (password
    managers, private browser windows, anything the user added), say that you
    can't see it, and don't ask to allow it.

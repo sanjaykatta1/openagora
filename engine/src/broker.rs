@@ -245,24 +245,26 @@ pub fn grant(paths: &Paths, grant: Grant) -> Result<()> {
     state::write(&grants_file(paths), &grants)
 }
 
-/// Uses up a "once" grant.
+/// Uses up a "once" grant. True when there was one to use: of two captures
+/// racing for the same grant, only one gets it.
 pub fn use_once(
     paths: &Paths,
     client: &str,
     source: &str,
     destination: &str,
     family: &str,
-) -> Result<()> {
+) -> Result<bool> {
     let _guard = WRITE.lock().unwrap();
     let mut grants = state::read::<Grants>(&grants_file(paths))?.unwrap_or_default();
     let before = grants.grants.len();
     grants
         .grants
         .retain(|g| !(same_key(g, client, source, destination, family) && g.scope == Scope::Once));
-    if grants.grants.len() != before {
-        state::write(&grants_file(paths), &grants)?;
+    if grants.grants.len() == before {
+        return Ok(false);
     }
-    Ok(())
+    state::write(&grants_file(paths), &grants)?;
+    Ok(true)
 }
 
 /// Takes back everything allowed for an app (by key or name). Returns how
@@ -452,12 +454,13 @@ mod tests {
             super::allowed(&paths, "sunday", "firefox", "sunday", "text/*").unwrap(),
             None
         );
-        use_once(&paths, "sunday", "firefox", "sunday", IMAGES).unwrap();
+        assert!(use_once(&paths, "sunday", "firefox", "sunday", IMAGES).unwrap());
+        assert!(!use_once(&paths, "sunday", "firefox", "sunday", IMAGES).unwrap());
         assert_eq!(allowed("firefox"), None);
         grant(&paths, grant_for("firefox", Scope::Always)).unwrap();
         grant(&paths, grant_for("firefox", Scope::Always)).unwrap();
         assert_eq!(grants(&paths).unwrap().len(), 1);
-        use_once(&paths, "sunday", "firefox", "sunday", IMAGES).unwrap();
+        assert!(!use_once(&paths, "sunday", "firefox", "sunday", IMAGES).unwrap());
         assert_eq!(allowed("firefox"), Some(Scope::Always));
         assert_eq!(revoke(&paths, "Firefox").unwrap(), 1);
         assert_eq!(allowed("firefox"), None);

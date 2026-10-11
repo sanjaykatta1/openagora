@@ -10,7 +10,7 @@
 //   Graphics Capture; on Wayland the system's own dialog lets the user pick
 //   the window.
 
-import { BrowserWindow, desktopCapturer, nativeImage, session, systemPreferences, webContents, type NativeImage, type WebContents } from "electron";
+import { app, BrowserWindow, desktopCapturer, nativeImage, session, systemPreferences, webContents, type NativeImage, type WebContents } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { CaptureTarget, Picture } from "./engine-link";
@@ -20,6 +20,10 @@ const CAPTURE_PAGE = path.join(__dirname, "..", "renderer", "capture.html");
 const CAPTURE_PAGE_URL = pathToFileURL(CAPTURE_PAGE).toString();
 /** Larger pictures are sent as JPEG. */
 const PNG_LIMIT = 4 * 1024 * 1024;
+/** How long a capture may take (the engine waits 30 s); picking a window in
+ *  the system's dialog takes the user longer (the engine waits 120 s). */
+const CAPTURE_TIMEOUT_MS = 25_000;
+const PICK_TIMEOUT_MS = 110_000;
 
 export type ScreenAccess = "granted" | "denied" | "not-determined" | "restricted" | "unknown" | "not-needed";
 
@@ -58,6 +62,29 @@ export function tabContents(appId: string): WebContents | undefined {
 let granting: { id: string; name: string } | null = null;
 let grabber: BrowserWindow | null = null;
 
+/** Whether a page may use the camera, the microphone or the screen: only
+ *  OpenAgora's hidden capture page, while it captures what the engine asked
+ *  for. Every other page in OpenAgora is refused (see main.ts). */
+export function mayCapture(contents: WebContents | null | undefined, requestingUrl: string | undefined): boolean {
+  return !!granting && !!contents && !!grabber && !grabber.isDestroyed()
+    && contents.id === grabber.webContents.id && requestingUrl === CAPTURE_PAGE_URL;
+}
+
+/** Closes the capture page, after a capture that hung. */
+function resetGrabber(): void {
+  granting = null;
+  const window = grabber;
+  grabber = null;
+  if (window && !window.isDestroyed()) window.destroy();
+}
+
+/** Whether OpenAgora runs on Wayland, where listing windows opens the
+ *  system's own window picker. */
+function waylandSession(): boolean {
+  if (process.platform !== "linux" || app.commandLine.getSwitchValue("ozone-platform") === "x11") return false;
+  return !!process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === "wayland";
+}
+
 async function grabberWindow(): Promise<BrowserWindow> {
   if (grabber && !grabber.isDestroyed()) return grabber;
   const ses = session.fromPartition(CAPTURE_PARTITION);
@@ -79,12 +106,13 @@ async function grabberWindow(): Promise<BrowserWindow> {
     }
     callback({ video: granting });
   });
-  // Nothing else may use the capture page's session.
-  // getDisplayMedia asks for "media" first. Only the capture page may have it.
-  ses.setPermissionRequestHandler((_contents, permission, callback, details) => {
-    const ours = (details as { requestingUrl?: string }).requestingUrl === CAPTURE_PAGE_URL;
-    callback(ours && (permission === "media" || permission === "display-capture"));
+  // getDisplayMedia asks for "media" first. Only the capture page may have
+  // it, while capturing; nothing else is allowed in its session.
+  ses.setPermissionRequestHandler((contents, permission, callback, details) => {
+    callback((permission === "media" || permission === "display-capture") && mayCapture(contents, details.requestingUrl));
   });
+  ses.setPermissionCheckHandler((contents, permission, _origin, details) =>
+    (permission === "media" || permission === "display-capture") && mayCapture(contents, details.requestingUrl));
   // A page of OpenAgora's own (getDisplayMedia needs a secure page, which
   // about:blank isn't).
   await window.loadFile(CAPTURE_PAGE);
@@ -138,13 +166,25 @@ function oneAtATime<T>(work: () => Promise<T>): Promise<T> {
 
 async function captureSource(source: { id: string; name: string }): Promise<NativeImage> {
   const window = await grabberWindow();
-  granting = source;
+  const mine = { ...source };
+  granting = mine;
   try {
     const base64: string = await window.webContents.executeJavaScript(GRAB_FRAME, true);
     return nativeImage.createFromBuffer(Buffer.from(base64, "base64"));
   } finally {
-    granting = null;
+    // A capture that hung and finishes late leaves the next one alone.
+    if (granting === mine) granting = null;
   }
+}
+
+class TookTooLong extends Error {}
+
+function within<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new TookTooLong("the capture took too long")), ms);
+  });
+  return Promise.race([work, late]).finally(() => clearTimeout(timer));
 }
 
 function permissionHint(error: unknown): Error {
@@ -156,29 +196,43 @@ function permissionHint(error: unknown): Error {
   return new Error(`couldn't capture the window: ${message}`);
 }
 
-/** Captures what the engine asked for. */
+/** Captures what the engine asked for. One capture at a time; one that
+ *  hangs is given up on, and the capture page is made anew. */
 export function capture(target: CaptureTarget, maxEdge: number): Promise<Picture> {
-  return oneAtATime(async () => {
-    if (target.kind === "tab") {
-      const contents = tabContents(target.app);
-      if (!contents) throw new Error("that app's tab isn't open in OpenAgora");
-      return encode(await contents.capturePage(), maxEdge);
+  const ms = target.kind === "pick" ? PICK_TIMEOUT_MS : CAPTURE_TIMEOUT_MS;
+  return oneAtATime(() => within(captureNow(target, maxEdge), ms).catch((error: unknown) => {
+    if (error instanceof TookTooLong) resetGrabber();
+    throw error;
+  }));
+}
+
+/** The picture, with the window's title as captured: the engine checks it
+ *  against the never-capture list again. */
+async function captureNow(target: CaptureTarget, maxEdge: number): Promise<Picture> {
+  if (target.kind === "tab") {
+    const contents = tabContents(target.app);
+    if (!contents) throw new Error("that app's tab isn't open in OpenAgora");
+    return { ...encode(await contents.capturePage(), maxEdge), title: contents.getTitle() };
+  }
+  // Only where the system's own dialog picks the window (Wayland):
+  // anywhere else a "pick" would be a guess.
+  if (target.kind === "pick" && !waylandSession()) throw new Error("this system doesn't let you pick a window");
+  try {
+    // Listing windows without thumbnails captures nothing; on macOS it
+    // asks for Screen Recording permission the first time, and on Wayland
+    // it opens the system's window picker.
+    const sources = await desktopCapturer.getSources({ types: ["window"], thumbnailSize: { width: 0, height: 0 } });
+    if (target.kind === "pick") {
+      if (sources.length !== 1) throw new Error(sources.length === 0 ? "no window was picked" : "the system didn't ask which window to capture");
+      const [picked] = sources;
+      const name = picked.name || undefined;
+      return { ...encode(await captureSource({ id: picked.id, name: picked.name }), maxEdge), app: name, title: name };
     }
-    try {
-      // Listing windows without thumbnails captures nothing; on macOS it
-      // asks for Screen Recording permission the first time, and on Wayland
-      // it opens the system's window picker.
-      const sources = await desktopCapturer.getSources({ types: ["window"], thumbnailSize: { width: 0, height: 0 } });
-      if (target.kind === "pick") {
-        const picked = sources[0];
-        if (!picked) throw new Error("no window was picked");
-        return { ...encode(await captureSource({ id: picked.id, name: picked.name }), maxEdge), app: picked.name || undefined };
-      }
-      const prefix = `window:${target.id}:`;
-      const found = sources.find((s) => s.id.startsWith(prefix));
-      return encode(await captureSource({ id: found?.id ?? `${prefix}0`, name: found?.name ?? target.app ?? "window" }), maxEdge);
-    } catch (error) {
-      throw permissionHint(error);
-    }
-  });
+    const prefix = `window:${target.id}:`;
+    const found = sources.find((s) => s.id.startsWith(prefix));
+    const picture = encode(await captureSource({ id: found?.id ?? `${prefix}0`, name: found?.name ?? target.app ?? "window" }), maxEdge);
+    return found ? { ...picture, title: found.name } : picture;
+  } catch (error) {
+    throw permissionHint(error);
+  }
 }

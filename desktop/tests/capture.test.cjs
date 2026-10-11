@@ -50,3 +50,17 @@ test('the window captures only a window by its id, an app tab, or a window the u
     assert.equal(parseTarget(bad), null, JSON.stringify(bad));
   }
 });
+
+test('opening at login on Linux is an autostart entry of OpenAgora\'s own, started in the tray', () => {
+  const { autostartFile, desktopEntry, execLine, startedAtLogin } = require('../dist/electron/login-item');
+  assert.equal(autostartFile({ XDG_CONFIG_HOME: '/tmp/config' }), path.join('/tmp/config', 'autostart', 'openagora.desktop'));
+  assert.equal(autostartFile({ XDG_CONFIG_HOME: 'relative' }), path.join(os.homedir(), '.config', 'autostart', 'openagora.desktop'));
+  assert.equal(execLine('/opt/OpenAgora/openagora'), '"/opt/OpenAgora/openagora" --hidden');
+  // The Desktop Entry specification's escapes, inside quotes.
+  assert.equal(execLine('/home/me/My $Apps/Open"Agora.AppImage'), '"/home/me/My \\\\$Apps/Open\\\\"Agora.AppImage" --hidden');
+  const entry = desktopEntry('/opt/OpenAgora/openagora');
+  assert.match(entry, /^\[Desktop Entry\]\nType=Application\nName=OpenAgora\n/);
+  assert.match(entry, /\nExec="\/opt\/OpenAgora\/openagora" --hidden\n/);
+  assert.equal(startedAtLogin(['/opt/OpenAgora/openagora', '--hidden']), true);
+  assert.equal(startedAtLogin(['/opt/OpenAgora/openagora']), false);
+});

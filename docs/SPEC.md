@@ -26,8 +26,8 @@ Principles that hold everywhere:
    publish: their CLI, their web UI, and their MCP server.
 3. **Generic, not built for one app or agent.** Every app is a *source*, every
    coding agent a *destination*, each reached through an adapter behind one
-   interface. T3 Code is the first adapter, not the design target. (Planned:
-   phases 2–4.)
+   interface. T3 Code is the first adapter, not the design target; OpenCode is
+   the second. (Built: phases 2–4 and 6.)
 4. **The engine is the go-between.** Sunday never connects to apps directly. Its
    only MCP server is the engine's gateway, which enforces permissions and logs
    every action. (Built: phase 2.)
@@ -603,10 +603,18 @@ Claude Code hears about it with the next prompt). Sunday starts T3 Code threads
 with the items attached and reports the result. Each agent is set up once, from
 Settings → Coding agents, with its own command (§4).
 
-**Planned.**
+**Built (phase 5).** Sunday answers "what did I do in my coding sessions
+today?" from the agents' own records, remembers decisions in Hermes's memory
+(Holographic, the user's choice, for long-term memory), and an opt-in digest
+keeps that memory up to date (§4).
 
-- *Phase 6:* grants and audit UI, background mode, on-screen text, OpenCode
-  push, pop-out windows.
+**Built (phase 6).** Sunday reads a window's text (`read_window`), and, if the
+user turns on background mode, searches what their always-allowed apps showed
+over the last days (`history_search`, `history_get`). It starts OpenCode
+sessions as it starts T3 Code threads, and OpenAgora puts OpenCode's requests
+to edit files or run commands to the user. Apps pop out into windows of their
+own, and Sunday still knows which app the user is in. Settings → Activity shows
+the audit log (§4, §7).
 
 **Safety.**
 
@@ -641,12 +649,21 @@ who asked and by words (built: phase 6).
   OpenAgora's own dialogs hide the app's view while they are open, so it never
   covers them.
 - **Settings** (built): Sunday's Hermes pages; What Sunday can see (the
-  shortcut, keeping OpenAgora in the menu bar or tray, macOS Screen Recording
-  permission, allowed apps and handoffs, the never-capture list); Coding agents
-  (each agent found on this computer, set up or removed with its own command,
-  shown first; apps that take work, connected on their own approval page);
-  Memory (phase 5); Activity, the audit log (phase 6); the personal-agent
-  choice; removing Sunday.
+  shortcut, keeping OpenAgora in the menu bar or tray, opening it at login,
+  macOS Screen Recording and Accessibility permission, allowed apps and
+  handoffs, the never-capture list); Coding agents (each agent found on this
+  computer, set up or removed with its own command, shown first; apps that take
+  work, connected on their own approval page); Memory (phase 5); Background
+  mode and Activity, the audit log (phase 6); the personal-agent choice;
+  removing Sunday.
+- **Opening at login** (built: phase 6; the issue's default: off, with a
+  setting): macOS and Windows through Electron's login items, Linux through
+  OpenAgora's own XDG autostart entry (`~/.config/autostart/openagora.desktop`,
+  pointing at the AppImage itself when it is one). The system's list is the
+  truth: Settings shows it, and an item the user removed there stays removed.
+  Started at login (`--hidden`; macOS doesn't pass it, so there the window
+  opens), OpenAgora opens in the menu bar or tray without its window, unless
+  there is no tray.
 - **Approval pages** (built: phase 4): an app's own OAuth page (T3 Code's), in
   a window of OpenAgora's with the app's tab session, local addresses only,
   closed once the app sends the user back to the engine.
@@ -686,7 +703,7 @@ real accounts are checked by hand.
 | 3. Capture | desk, capture, focus tracker, shortcut and panel, broker basics | Tests 6, 8, 10 | Built |
 | 4. Coding agents | registry, destinations, pull path, T3 Code push adapter | Test 7 | Built |
 | 5. Memory | live lookup, memory provider, refresh job | Tests 11, 12 | Built |
-| 6. Polish | grants and audit UI, background mode, on-screen text, OpenCode push, pop-out windows | Tests 9, 13 | Planned |
+| 6. Polish | grants and audit UI, background mode, on-screen text, OpenCode push, pop-out windows | Tests 9, 13 | Built |
 
 ## 9. Prior art
 

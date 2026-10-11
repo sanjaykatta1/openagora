@@ -14,6 +14,7 @@ import { EngineLink, parseBackground, type BackgroundState, type ConfirmAnswer, 
 import { capture, mayCapture, screenAccess } from "./capture";
 import { readDesktopSettings, saveDesktopSettings, type DesktopSettings } from "./desktop-settings";
 import { TRAY_ICON } from "./tray-icon";
+import { launchAtLogin, refreshLaunchAtLogin, setLaunchAtLogin, startedAtLogin } from "./login-item";
 import { bringBack, closeTab, configureTabs, coverTabs, describeTabs, focusedPopout, mainClosed, openTab, placeTab, poppedTabs, popouts, popOut, reloadTab, showPopout, shownInMain, tabText, tabUrl } from "./tabs";
 
 const EXE = process.platform === "win32" ? "openagora.exe" : "openagora";
@@ -736,12 +737,25 @@ function registerIpc(): void {
   // macOS: reading other apps' text needs Accessibility permission (null
   // elsewhere, where nothing asks).
   const accessibility = () => (process.platform === "darwin" ? systemPreferences.isTrustedAccessibilityClient(false) : null);
-  const desktopState = () => ({ settings, shortcutError, screen: screenAccess(), accessibility: accessibility(), platform: process.platform });
+  const atLogin = () => {
+    try {
+      return launchAtLogin();
+    } catch {
+      return false;
+    }
+  };
+  const desktopState = () => ({ settings, shortcutError, screen: screenAccess(), accessibility: accessibility(), launchAtLogin: atLogin(), platform: process.platform });
   handle("desktop-settings", desktopState);
   handle("save-desktop-settings", (_e, value: unknown) => {
     settings = saveDesktopSettings(app.getPath("userData"), value);
     registerShortcut(settings.shortcut);
     updateTray();
+    return desktopState();
+  });
+  // Opening OpenAgora at login: off unless the user turns it on here.
+  handle("set-launch-at-login", (_e, on: unknown) => {
+    if (typeof on !== "boolean") throw new Error("invalid choice");
+    setLaunchAtLogin(on);
     return desktopState();
   });
   handle("open-screen-settings", () => {
@@ -880,10 +894,12 @@ if (!app.requestSingleInstanceLock()) {
     });
     registerIpc();
     registerUpdater();
-    createWindow();
     link = startEngineLink();
     registerShortcut(settings.shortcut);
     updateTray();
+    refreshLaunchAtLogin();
+    // Opened at login: in the menu bar or tray only, where there is one.
+    if (!(startedAtLogin() && settings.keepRunning && tray)) createWindow();
     if (process.env.OPENAGORA_TEST === "1") {
       // UI tests drive what the OS would: the shortcut, and a look at the windows.
       Object.assign(globalThis, {

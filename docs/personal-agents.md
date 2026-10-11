@@ -225,7 +225,12 @@ can't be seen.
 
 **OpenAgora keeps running in the menu bar (or tray) after you close its window**,
 so the shortcut keeps working. **Quit OpenAgora** is in its menu. Turn this off,
-or change the shortcut, in **Settings → What Sunday can see**.
+or change the shortcut, in **Settings → What Sunday can see**. There you can also
+have OpenAgora **open when you log in** (off unless you turn it on): it then
+starts in the tray, without its window, so the shortcut works right away
+(macOS opens it with its window; close it and OpenAgora stays in the menu bar).
+On Linux that's an entry in `~/.config/autostart`, which turning it off
+removes.
 
 **Per system:**
 
@@ -385,6 +390,40 @@ deletes only the `sunday` profile with Hermes's own `hermes profile delete sunda
 profile named `sunday` that OpenAgora didn't set up is never deleted.
 
 ## Verification and limits
+
+Phase 6 (polish): Rust tests check test 9 against the real engine service,
+with OpenAgora's window, the OS's window list and windows' text as stand-ins:
+background mode is off by default; when on it keeps only apps Sunday may always
+see (never a "once" permission, which stays unused, and never the never-capture
+list), on a switch and not again while nothing changed; Sunday searches and
+reads it, and loses what came from an app whose permission was taken back;
+pause, resume, how long it keeps (an older capture goes with its picture),
+clear-all and off work; OpenAgora's window hears when it's on; every capture,
+change and read is in the audit log. Test 13: a popped-out app's window counts
+as that app (the hook says "in its own OpenAgora window"), is captured as a tab
+is, and is named even where the OS can't say which window is in front
+(Wayland), from OpenAgora's own focus. `read_window`: the same permission and
+never-capture checks as a screenshot (again with the title as read), once
+grants used up, an app tab read by the window. A test reads a real GTK window's
+text through the real AT-SPI bus under Xvfb (skipped where AT-SPI isn't
+installed; CI installs it). OpenCode: both versions against a stand-in server
+(a session in a known folder only, after the user's yes, created with ask-first
+rules, the picture sent, OpenCode's request put to the user in OpenAgora's
+window and answered, the result read; OpenCode 1's own `opencode serve` with a
+password, OpenCode 2's service started with its own command). UI tests cover
+popping an app out (the same page without reloading, focus reported, captured
+and read in its own window, dialogs never hidden under an app, back to its tab,
+outliving the main window), Settings → Background mode with its indicator in
+the sidebar and the tray, Settings → Activity, opening at login (OpenAgora's own
+autostart entry, written and removed; a start at login in the tray only), and
+background mode once with the real engine and a real window.
+
+Not tested automatically, and to be checked by hand: reading other apps' text
+on macOS (Accessibility permission, Chrome and Electron apps) and Windows (UI
+Automation); background mode over a working day on each OS (macOS's screen
+recording indicator, disk use, Wayland); a real OpenCode 1 and 2 running a task
+and asking before an edit; popping apps out on macOS and Windows (window
+focus, HiDPI); opening at login on each OS.
 
 Phase 5 (memory): Rust tests write sessions the way Claude Code,
 Codex (both of its formats), OpenCode (1 and 2, in one SQLite file) and T3 Code

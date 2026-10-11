@@ -216,6 +216,8 @@ export interface DesktopState {
   /** macOS: whether OpenAgora may read other apps' text (Accessibility);
    *  null where the system doesn't ask. */
   accessibility: boolean | null;
+  /** Whether OpenAgora opens when the user logs in, as the system has it. */
+  launchAtLogin: boolean;
   platform: string;
 }
 
@@ -322,6 +324,7 @@ export interface Bridge {
   };
   desktopSettings(): Promise<DesktopState>;
   saveDesktopSettings(value: DesktopSettings): Promise<DesktopState>;
+  setLaunchAtLogin(on: boolean): Promise<DesktopState>;
   openScreenSettings(): Promise<void>;
   openAccessibilitySettings(): Promise<void>;
   codingAgents: {

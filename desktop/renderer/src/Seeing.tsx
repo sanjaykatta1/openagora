@@ -93,6 +93,22 @@ export function SeeingSettings() {
             <span className="muted block small">Sunday’s shortcut works only while OpenAgora runs.</span>
           </span>
         </label>
+        <label className="choice-detail">
+          <input type="checkbox" checked={desktop.launchAtLogin}
+            onChange={(e) => {
+              const on = e.target.checked;
+              setDesktop({ ...desktop, launchAtLogin: on });
+              void run(() => bridge!.setLaunchAtLogin(on),
+                on ? "OpenAgora opens when you log in." : "OpenAgora no longer opens when you log in.");
+            }} />
+          <span>Open OpenAgora when you log in
+            <span className="muted block small">{platform === "darwin"
+              ? "macOS opens it with its window; close the window and OpenAgora stays in the menu bar."
+              : desktop.settings.keepRunning
+                ? `It opens in the ${trayName}, without its window, so Sunday’s shortcut works right away.`
+                : "It opens its window."}</span>
+          </span>
+        </label>
         {platform === "darwin" && desktop.screen !== "granted" && (
           <p className="notice">macOS needs Screen Recording permission before OpenAgora can capture other apps’ windows{desktop.screen === "not-determined" ? "; it asks the first time" : ""}.{" "}
             <button className="link" onClick={() => void bridge!.openScreenSettings()}>Open System Settings</button>

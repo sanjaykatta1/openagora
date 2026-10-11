@@ -63,6 +63,7 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .sidebar-foot { margin-top: auto; font-size: 11px; color: var(--muted); padding: 8px 10px; }
 
 .content { overflow: auto; position: relative; }
+.titlebar-drag { position: fixed; top: 0; left: 220px; right: 0; height: 32px; -webkit-app-region: drag; z-index: 5; }
 .page { padding: 36px 40px 60px; max-width: 1100px; }
 .page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; margin-bottom: 18px; }
 .page-head p { margin: 4px 0 0; }
@@ -138,7 +139,8 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .toast.error { background: var(--red); color: #fff; }
 
 .webview-wrap { position: absolute; inset: 0; flex-direction: column; background: var(--bg); }
-.webview-bar { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600; }
+.webview-bar { display: flex; gap: 12px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600; -webkit-app-region: drag; }
+.webview-bar button { -webkit-app-region: no-drag; }
 .webview { flex: 1; width: 100%; border: 0; }
 .bar-actions { margin-left: auto; display: flex; gap: 14px; }
 .tab-notice { margin: 10px 14px 0; }

@@ -151,6 +151,9 @@ export function App() {
       onSave={(id) => void saveAgent(id)} onCancel={() => {}} />
   </main>;
 
+  const tabApp = view.kind === "tab" ? byId.get(view.id) : undefined;
+  const showingAppTab = tabApp?.status === "running" && tabApp.pid !== null;
+
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -265,6 +268,11 @@ export function App() {
           return <AppTab key={`${id}:${app.pid}`} app={app} visible={visible} />;
         })}
       </main>
+
+      {/* The macOS title bar is hidden, so give the top of the content area a
+          handle for moving the window. A running app tab's address bar is its
+          own handle, so the strip would only sit over its buttons there. */}
+      {!showingAppTab && <div className="titlebar-drag" aria-hidden />}
 
       {confirming && (
         <ConfirmInstall

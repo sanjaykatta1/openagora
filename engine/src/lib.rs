@@ -2,6 +2,7 @@
 
 pub mod apps;
 pub mod catalog;
+pub mod container;
 pub mod github;
 pub mod manifest;
 pub mod paths;

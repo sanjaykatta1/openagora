@@ -28,6 +28,10 @@ export interface App {
   available: boolean;
   /** The kind of computer it can't be installed on, e.g. "Intel Macs". */
   unavailable_on: string | null;
+  /** Runs in a Linux container on this computer (its steps run inside it). */
+  container: boolean;
+  /** The container sees the home folder at the same path. */
+  share_home: boolean;
   role: "app" | "agent";
   ui: "web" | "terminal" | "window" | "background";
   steps: Step[];

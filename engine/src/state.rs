@@ -15,6 +15,9 @@ pub struct Installed {
     /// Release assets downloaded during the install.
     #[serde(default)]
     pub assets: Vec<String>,
+    /// Installed in a Linux container rather than on this computer.
+    #[serde(default)]
+    pub container: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

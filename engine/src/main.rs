@@ -220,8 +220,18 @@ fn describe(m: &Manifest) {
     match Os::current() {
         Some(os) => match m.unavailable_on(os, arch) {
             None => {
-                println!("install on {os}:");
-                for step in m.steps_for(os, arch) {
+                let target = m.target_os(os, arch);
+                if !m.in_container(os, arch) {
+                    println!("install on {os}:");
+                } else {
+                    println!(
+                        "install on {os}: in a Linux container (needs Docker Desktop, OrbStack, Colima or Podman running)"
+                    );
+                    if m.container.as_ref().is_some_and(|c| c.share_home) {
+                        println!("  your home folder is shared with the container");
+                    }
+                }
+                for step in m.steps_for(target, arch) {
                     if let Some(d) = &step.download {
                         let asset = arch.and_then(|a| d.asset.for_arch(a));
                         println!(
@@ -263,8 +273,9 @@ fn confirm(question: &str, yes: bool) -> anyhow::Result<bool> {
 fn listing_json(engine: &Engine, m: &Manifest) -> anyhow::Result<serde_json::Value> {
     let os = engine.os;
     let unavailable_on = m.unavailable_on(os, engine.arch);
+    let in_container = m.in_container(os, engine.arch);
     let steps: Vec<serde_json::Value> = m
-        .steps_for(os, engine.arch)
+        .steps_for(m.target_os(os, engine.arch), engine.arch)
         .map(|step| {
             let download = step.download.as_ref().map(|d| {
                 serde_json::json!({
@@ -310,6 +321,8 @@ fn listing_json(engine: &Engine, m: &Manifest) -> anyhow::Result<serde_json::Val
         "platforms": m.platforms.iter().map(|o| o.to_string()).collect::<Vec<_>>(),
         "available": unavailable_on.is_none(),
         "unavailable_on": unavailable_on,
+        "container": in_container,
+        "share_home": in_container && m.container.as_ref().is_some_and(|c| c.share_home),
         "role": format!("{:?}", m.role).to_lowercase(),
         "ui": format!("{:?}", m.ui.kind).to_lowercase(),
         "steps": steps,

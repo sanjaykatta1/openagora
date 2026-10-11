@@ -9,8 +9,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
+use crate::container::{self, Runtime};
 use crate::github;
-use crate::manifest::{Arch, Health, Manifest, Os, Port, Role, Shell};
+use crate::manifest::{Arch, Health, Manifest, Os, Port, Role, Shell, computer_name};
 use crate::paths::{self, Paths};
 use crate::process;
 use crate::state::{self, Installed, Running};
@@ -48,11 +49,32 @@ impl Engine {
         state::read(&self.paths.state_file(id))
     }
 
-    /// Fails, naming the kind of computer, if `m` can't be installed on this one.
+    /// Fails, naming the kind of computer, if `m` can't be installed on this
+    /// one, or if it runs in a container and no container runtime is running.
     pub fn check_available(&self, m: &Manifest) -> Result<()> {
-        match m.unavailable_on(self.os, self.arch) {
-            Some(computer) => bail!("{} is not available on {computer}", m.name),
-            None => Ok(()),
+        if let Some(computer) = m.unavailable_on(self.os, self.arch) {
+            bail!("{} is not available on {computer}", m.name);
+        }
+        if m.in_container(self.os, self.arch) {
+            self.runtime(m)?;
+        }
+        Ok(())
+    }
+
+    /// The container runtime, for an app that runs in a container here.
+    fn runtime(&self, m: &Manifest) -> Result<Runtime> {
+        Runtime::find(&format!(
+            "{} runs in a Linux container on {}",
+            m.name,
+            computer_name(self.os, self.arch)
+        ))
+    }
+
+    fn container_app<'a>(&self, m: &'a Manifest, app_dir: &'a Path) -> container::App<'a> {
+        container::App {
+            id: &m.id,
+            app_dir,
+            share_home: m.container.as_ref().is_some_and(|c| c.share_home),
         }
     }
 
@@ -69,7 +91,12 @@ impl Engine {
         }
         fs::create_dir_all(&app_dir).with_context(|| format!("creating {}", app_dir.display()))?;
         let tmp = self.paths.tmp().join(&m.id);
-        let result = self.run_install_steps(m, &app_dir, &tmp);
+        let in_container = m.in_container(self.os, self.arch);
+        let result = if in_container {
+            self.install_in_container(m, &app_dir).map(|()| Vec::new())
+        } else {
+            self.run_install_steps(m, &app_dir, &tmp)
+        };
         let _ = fs::remove_dir_all(&tmp);
         match result {
             Ok(assets) => {
@@ -77,15 +104,46 @@ impl Engine {
                     id: m.id.clone(),
                     installed_at: state::now(),
                     assets,
+                    container: in_container,
                 };
                 state::write(&self.paths.state_file(&m.id), &installed)?;
                 Ok(installed)
             }
             Err(e) => {
+                if in_container {
+                    if let Ok(runtime) = self.runtime(m) {
+                        let _ = runtime.remove_volume(&self.container_app(m, &app_dir));
+                    }
+                }
                 let _ = fs::remove_dir_all(&app_dir);
                 Err(e.context(format!("installing {} failed; nothing was kept", m.name)))
             }
         }
+    }
+
+    /// Runs the listing's Linux steps in the app's container and checks
+    /// that they left `provides` behind there.
+    fn install_in_container(&self, m: &Manifest, app_dir: &Path) -> Result<()> {
+        let runtime = self.runtime(m)?;
+        runtime.ensure_image(&self.paths.tmp().join("container-build"))?;
+        let app = self.container_app(m, app_dir);
+        // Like the app's folder, a volume left by an interrupted install goes.
+        runtime.remove_container(&app);
+        runtime.remove_volume(&app)?;
+        let inside = vars(&[("app_dir", Path::new(container::APP_DIR))]);
+        for step in m.steps_for(Os::Linux, self.arch) {
+            runtime.run_step(&app, &fill(&step.run, &inside))?;
+        }
+        let provides = m
+            .install
+            .provides
+            .for_os(Os::Linux)
+            .context("listing has no provides for linux")?;
+        let provides = fill(provides, &inside);
+        if !runtime.provides(&app, &provides)? {
+            bail!("the install finished but {provides} was not found in the container");
+        }
+        Ok(())
     }
 
     fn run_install_steps(&self, m: &Manifest, app_dir: &Path, tmp: &Path) -> Result<Vec<String>> {
@@ -129,14 +187,20 @@ impl Engine {
                 m.name
             );
         }
-        if self.installed(&m.id)?.is_none() {
+        let Some(installed) = self.installed(&m.id)? else {
             bail!("{} is not installed", m.name);
-        }
+        };
         if let Status::Running(_) = self.status(&m.id)? {
             self.stop(m)?;
         }
         let app_dir = self.paths.app_dir(&m.id);
-        if let Some(cmd) = &m.uninstall {
+        if installed.container {
+            // Everything the app installed lives in its volume.
+            let runtime = self.runtime(m)?;
+            let app = self.container_app(m, &app_dir);
+            runtime.remove_container(&app);
+            runtime.remove_volume(&app)?;
+        } else if let Some(cmd) = &m.uninstall {
             let shell = if self.os == Os::Windows {
                 Shell::Powershell
             } else {
@@ -171,9 +235,9 @@ impl Engine {
     }
 
     pub fn start(&self, m: &Manifest) -> Result<Running> {
-        if self.installed(&m.id)?.is_none() {
+        let Some(installed) = self.installed(&m.id)? else {
             bail!("{} is not installed (openagora install {})", m.name, m.id);
-        }
+        };
         if let Status::Running(running) = self.status(&m.id)? {
             return Ok(running);
         }
@@ -183,18 +247,40 @@ impl Engine {
             Some(Port::Named(_)) => Some(process::free_port()?),
             None => None,
         };
-        let mut vars = vars(&[("app_dir", &app_dir)]);
+        // A container app runs its Linux command, with `{app_dir}` as seen inside.
+        let (target, dir_inside) = if installed.container {
+            (Os::Linux, Path::new(container::APP_DIR))
+        } else {
+            (self.os, app_dir.as_path())
+        };
+        let mut vars = vars(&[("app_dir", dir_inside)]);
         if let Some(port) = port {
             vars.insert("port", port.to_string());
         }
         let command = m
             .run
             .command
-            .for_os(self.os)
+            .for_os(target)
             .context("listing has no run command for this OS")?;
         let command = fill(command, &vars);
-        let program = resolve(&command).with_context(|| format!("{command} was not found"))?;
         let args: Vec<String> = m.run.args.iter().map(|a| fill(a, &vars)).collect();
+        let runtime = if installed.container {
+            Some(self.runtime(m)?)
+        } else {
+            None
+        };
+        let app = self.container_app(m, &app_dir);
+        let (program, args) = match (&runtime, port) {
+            (Some(runtime), Some(port)) => {
+                runtime.remove_container(&app);
+                runtime.run_command(&app, port, &command, &args)
+            }
+            (Some(_), None) => bail!("{} runs in a container but has no port", m.name),
+            (None, _) => (
+                resolve(&command).with_context(|| format!("{command} was not found"))?,
+                args,
+            ),
+        };
         let log = self.paths.log_file(&m.id);
         // Only output from this start counts when looking for the app's address.
         let log_start = fs::metadata(&log).map(|meta| meta.len()).unwrap_or(0);
@@ -209,6 +295,9 @@ impl Engine {
         state::write(&self.paths.run_file(&m.id), &running)?;
 
         let ready = match (&m.run.health, port) {
+            (Health { tcp: true, .. }, Some(port)) if runtime.is_some() => {
+                process::wait_healthy(&mut child, START_TIMEOUT, || process::http_responds(port))
+            }
             (Health { tcp: true, .. }, Some(port)) => {
                 process::wait_healthy(&mut child, START_TIMEOUT, || process::port_open(port))
             }
@@ -224,6 +313,9 @@ impl Engine {
         if let Err(e) = ready {
             let _ = process::stop(pid, STOP_GRACE);
             let _ = child.wait();
+            if let Some(runtime) = &runtime {
+                runtime.remove_container(&app);
+            }
             state::remove(&self.paths.run_file(&m.id))?;
             let tail = tail(&log, 15).unwrap_or_default();
             bail!(
@@ -251,6 +343,13 @@ impl Engine {
         match self.status(&m.id)? {
             Status::Running(running) => {
                 process::stop(running.pid, STOP_GRACE)?;
+                // Stopping `docker run` normally ends its container too; make sure.
+                if self.installed(&m.id)?.is_some_and(|i| i.container) {
+                    if let Ok(runtime) = self.runtime(m) {
+                        let app_dir = self.paths.app_dir(&m.id);
+                        runtime.remove_container(&self.container_app(m, &app_dir));
+                    }
+                }
                 state::remove(&self.paths.run_file(&m.id))?;
                 Ok(true)
             }

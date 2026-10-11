@@ -489,3 +489,99 @@ kind = "background"
         "{listed}"
     );
 }
+
+/// Real containers: runs when a Docker daemon is reachable (CI's Linux
+/// runners), otherwise skips.
+#[test]
+fn container_app_installs_serves_and_uninstalls() {
+    let docker_up = Command::new("docker")
+        .args(["info"])
+        .output()
+        .is_ok_and(|o| o.status.success());
+    if !docker_up {
+        eprintln!("docker is not running; skipping");
+        return;
+    }
+    let docker = |args: &[&str]| Command::new("docker").args(args).output().unwrap();
+    docker(&["rm", "-f", "openagora-boxed"]);
+    docker(&["volume", "rm", "-f", "openagora-boxed"]);
+
+    let env = setup(None);
+    // socat (in the base image) stands in for a web app; it listens on
+    // 127.0.0.1 inside the container, like the apps in the store.
+    write_app(
+        &env.catalog,
+        "boxed",
+        r#"
+schema = "openagora/v1"
+id = "boxed"
+name = "Boxed"
+summary = "Runs in a container"
+category = "test"
+homepage = "https://example.com"
+source = "https://github.com/example/boxed"
+license = "MIT"
+platforms = ["linux"]
+
+[install]
+provides = "{app_dir}/index.html"
+
+[[install.steps]]
+os = ["linux"]
+shell = "sh"
+run = "echo hello-from-the-container > '{app_dir}/index.html' && touch ~/kept"
+
+[container]
+os = ["linux"]
+
+[run]
+command = "socat"
+args = ["TCP4-LISTEN:{port},bind=127.0.0.1,fork,reuseaddr", "SYSTEM:echo HTTP/1.0 200 OK; echo; cat {app_dir}/index.html; ls ~/kept"]
+port = "auto"
+
+[run.health]
+tcp = true
+
+[ui]
+kind = "web"
+url = "http://127.0.0.1:{port}/"
+"#,
+    );
+    let out = run(&env, &["install", "boxed", "--yes"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let state = fs::read_to_string(env.home.join("state/boxed.toml")).unwrap();
+    assert!(state.contains("container = true"), "{state}");
+
+    let started = run(&env, &["start", "boxed"]);
+    assert!(started.status.success(), "{}", stderr(&started));
+    let text = stdout(&started);
+    let url = text
+        .split_whitespace()
+        .find(|w| w.starts_with("http://127.0.0.1:"))
+        .expect("start prints the URL")
+        .to_string();
+    let page = stdout(&Command::new("curl").args(["-sS", &url]).output().unwrap());
+    // The step's file is in the app's folder; `~` is the app's volume.
+    assert!(page.contains("hello-from-the-container"), "{page}");
+    assert!(page.contains("/openagora/home/kept"), "{page}");
+
+    assert!(stdout(&run(&env, &["stop", "boxed"])).contains("Stopped"));
+    let left = stdout(&docker(&[
+        "ps",
+        "-aq",
+        "--filter",
+        "name=^openagora-boxed$",
+    ]));
+    assert!(left.trim().is_empty(), "container left behind: {left}");
+
+    assert!(run(&env, &["uninstall", "boxed", "--yes"]).status.success());
+    let volumes = stdout(&docker(&[
+        "volume",
+        "ls",
+        "-q",
+        "--filter",
+        "name=^openagora-boxed$",
+    ]));
+    assert!(volumes.trim().is_empty(), "volume left behind: {volumes}");
+    assert!(!env.home.join("apps/boxed").exists());
+}

@@ -26,7 +26,7 @@ async function launch() {
     globalThis.fixtureListing = {
       id: 'hermes', name: 'Hermes', summary: 'An agent with memory', category: 'agents',
       homepage: 'https://hermes-agent.nousresearch.com', source: 'https://github.com/NousResearch/hermes-agent',
-      license: 'MIT', platforms: ['macos', 'linux', 'windows'], available: true, unavailable_on: null, role: 'agent',
+      license: 'MIT', platforms: ['macos', 'linux', 'windows'], available: true, unavailable_on: null, container: false, share_home: false, role: 'agent',
       ui: 'web', steps: [], permissions: [], installed: false, status: 'not-installed',
       pid: null, url: null, home_url: null,
     };

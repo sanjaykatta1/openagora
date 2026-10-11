@@ -5,6 +5,7 @@
 //! helper processes it started.
 
 use std::fs::{self, OpenOptions};
+use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -150,6 +151,23 @@ pub fn free_port() -> Result<u16> {
 pub fn port_open(port: u16) -> bool {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
+}
+
+/// True once something answers HTTP on the port. Container runtimes accept
+/// connections on a published port before the app inside listens, so there a
+/// TCP connect alone proves nothing.
+pub fn http_responds(port: u16) -> bool {
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(300)) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+    let request = format!("GET / HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\n\r\n");
+    let mut head = [0u8; 5];
+    stream.write_all(request.as_bytes()).is_ok()
+        && stream.read_exact(&mut head).is_ok()
+        && &head == b"HTTP/"
 }
 
 /// True while the child we started is still running (and reaps it if not).

@@ -123,7 +123,7 @@ impl fmt::Display for Arch {
 }
 
 /// A kind of computer as people name it, for messages: "Intel Macs".
-fn computer_name(os: Os, arch: Option<Arch>) -> String {
+pub fn computer_name(os: Os, arch: Option<Arch>) -> String {
     match (os, arch) {
         (Os::Macos, Some(Arch::X64)) => "Intel Macs".into(),
         (Os::Macos, Some(Arch::Arm64)) => "Apple Silicon Macs".into(),
@@ -212,6 +212,33 @@ pub struct Install {
     /// PATH, or a path under `{app_dir}`.
     pub provides: PerOs<String>,
     pub steps: Vec<Step>,
+}
+
+/// Runs the app's Linux build in a Linux container on computers that have no
+/// native build. Inside it, the listing's Linux install steps, `provides` and
+/// run command apply; the app's port is published on 127.0.0.1 only.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Container {
+    /// The OSes to use the container on.
+    pub os: Vec<Os>,
+    /// Only these CPUs of those OSes; absent means every CPU.
+    pub arch: Option<Vec<Arch>>,
+    /// Share your home folder into the container at the same path, so the app
+    /// opens your files and projects by their usual paths.
+    #[serde(default)]
+    pub share_home: bool,
+}
+
+impl Container {
+    pub fn covers(&self, os: Os, arch: Option<Arch>) -> bool {
+        self.os.contains(&os) && cpu_listed(self.arch.as_deref(), arch)
+    }
+}
+
+/// Whether `arch` is among `cpus`; no list means every CPU.
+fn cpu_listed(cpus: Option<&[Arch]>, arch: Option<Arch>) -> bool {
+    cpus.is_none_or(|cpus| arch.is_some_and(|a| cpus.contains(&a)))
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -327,6 +354,8 @@ pub struct Manifest {
     #[serde(default = "default_role")]
     pub role: Role,
     pub install: Install,
+    /// Where the app runs in a Linux container instead of natively.
+    pub container: Option<Container>,
     pub update: Option<Command>,
     pub uninstall: Option<Command>,
     pub run: Run,
@@ -352,12 +381,25 @@ impl Manifest {
 
     /// Install steps that apply on `os` with `arch`, in order.
     pub fn steps_for(&self, os: Os, arch: Option<Arch>) -> impl Iterator<Item = &Step> {
-        self.install.steps.iter().filter(move |s| {
-            s.os.contains(&os)
-                && s.arch
-                    .as_ref()
-                    .is_none_or(|cpus| arch.is_some_and(|a| cpus.contains(&a)))
-        })
+        self.install
+            .steps
+            .iter()
+            .filter(move |s| s.os.contains(&os) && cpu_listed(s.arch.as_deref(), arch))
+    }
+
+    /// Whether the app runs in a Linux container on `os` with `arch`.
+    pub fn in_container(&self, os: Os, arch: Option<Arch>) -> bool {
+        self.container.as_ref().is_some_and(|c| c.covers(os, arch))
+    }
+
+    /// The OS whose install steps, `provides` and run command apply on `os`
+    /// with `arch`: Linux where the app runs in a container.
+    pub fn target_os(&self, os: Os, arch: Option<Arch>) -> Os {
+        if self.in_container(os, arch) {
+            Os::Linux
+        } else {
+            os
+        }
     }
 
     /// The kind of computer this listing can't be installed on, as people name
@@ -366,6 +408,18 @@ impl Manifest {
         if !self.platforms.contains(&os) {
             return Some(os.label().into());
         }
+        // A container runs on this very CPU, so it needs a Linux build for it.
+        let ok = if self.in_container(os, arch) {
+            arch.is_some() && self.has_build(Os::Linux, arch)
+        } else {
+            self.has_build(os, arch)
+        };
+        (!ok).then(|| computer_name(os, arch))
+    }
+
+    /// Whether the steps for `os` cover `arch` and every download has an asset
+    /// for it. Once a step for `os` names CPUs, only those are covered.
+    fn has_build(&self, os: Os, arch: Option<Arch>) -> bool {
         let named: Vec<Arch> = self
             .install
             .steps
@@ -375,13 +429,13 @@ impl Manifest {
             .flatten()
             .copied()
             .collect();
-        let cpu_listed = named.is_empty() || arch.is_some_and(|a| named.contains(&a));
-        let has_builds = self.steps_for(os, arch).all(|s| {
-            s.download
-                .as_ref()
-                .is_none_or(|d| arch.and_then(|a| d.asset.for_arch(a)).is_some())
-        });
-        (!(cpu_listed && has_builds)).then(|| computer_name(os, arch))
+        let cpu_named = named.is_empty() || arch.is_some_and(|a| named.contains(&a));
+        cpu_named
+            && self.steps_for(os, arch).all(|s| {
+                s.download
+                    .as_ref()
+                    .is_none_or(|d| arch.and_then(|a| d.asset.for_arch(a)).is_some())
+            })
     }
 
     /// Every rule the type system cannot express. Empty means valid.
@@ -410,9 +464,14 @@ impl Manifest {
             out.push("platforms is empty".into());
         }
         let platforms: BTreeSet<Os> = self.platforms.iter().copied().collect();
+        let containerized = |os: &Os| self.container.as_ref().is_some_and(|c| c.os.contains(os));
         for os in &platforms {
-            if !self.install.steps.iter().any(|s| s.os.contains(os)) {
+            let native = self.install.steps.iter().any(|s| s.os.contains(os));
+            if !native && !containerized(os) {
                 out.push(format!("no install step for listed platform {os}"));
+            }
+            if !native {
+                continue;
             }
             if self.install.provides.for_os(*os).is_none() {
                 out.push(format!("install.provides has no value for {os}"));
@@ -420,6 +479,9 @@ impl Manifest {
             if self.run.command.for_os(*os).is_none() {
                 out.push(format!("run.command has no value for {os}"));
             }
+        }
+        if let Some(container) = &self.container {
+            self.container_problems(container, &platforms, &mut out);
         }
         for (i, step) in self.install.steps.iter().enumerate() {
             let n = i + 1;
@@ -542,6 +604,44 @@ impl Manifest {
             out.push("the agent cannot declare uninstall; it ships with OpenAgora".into());
         }
         out
+    }
+}
+
+impl Manifest {
+    fn container_problems(&self, c: &Container, platforms: &BTreeSet<Os>, out: &mut Vec<String>) {
+        if c.os.is_empty() {
+            out.push("container.os is empty".into());
+        }
+        if c.arch.as_ref().is_some_and(Vec::is_empty) {
+            out.push("container.arch is empty; leave it out for every CPU".into());
+        }
+        if let Some(os) = c.os.iter().find(|os| !platforms.contains(os)) {
+            out.push(format!("container targets {os}, which is not in platforms"));
+        }
+        if !platforms.contains(&Os::Linux) {
+            out.push("container runs the Linux install steps, so platforms needs linux".into());
+        }
+        for (i, step) in self.install.steps.iter().enumerate() {
+            if step.os.contains(&Os::Linux) && step.download.is_some() {
+                out.push(format!(
+                    "install step {}: downloads are not supported in containers yet",
+                    i + 1
+                ));
+            }
+        }
+        if self.ui.kind != UiKind::Web || !self.run.health.tcp {
+            out.push("container needs ui.kind = \"web\" and run.health.tcp".into());
+        }
+        // Linux steps run inside the container; other OSes use it instead.
+        for os in c.os.iter().filter(|os| **os != Os::Linux) {
+            for arch in [Arch::X64, Arch::Arm64] {
+                if c.covers(*os, Some(arch)) && self.steps_for(*os, Some(arch)).next().is_some() {
+                    out.push(format!(
+                        "{os} {arch} has install steps but runs in the container; limit the steps or container.arch"
+                    ));
+                }
+            }
+        }
     }
 }
 

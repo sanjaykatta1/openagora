@@ -18,22 +18,34 @@ fn shipped_catalog_is_valid() {
         t3.agent.is_some(),
         "T3 Code must declare how the agent connects"
     );
-    for os in [Os::Macos, Os::Linux, Os::Windows] {
-        for arch in [Arch::X64, Arch::Arm64] {
-            let missing = os == Os::Macos && arch == Arch::X64;
-            assert_eq!(
-                t3.steps_for(os, Some(arch)).count() == 0,
-                missing,
-                "T3 install steps for {os} {arch}"
-            );
-            assert_eq!(t3.unavailable_on(os, Some(arch)).is_some(), missing);
+    // Neither ships a native build for Intel Macs (T3's installer 404s there,
+    // Hermes would have to compile `cryptography`), so there both run their
+    // Linux install in a container. Everywhere else they run natively.
+    for app in [t3, hermes] {
+        for os in [Os::Macos, Os::Linux, Os::Windows] {
+            for arch in [Arch::X64, Arch::Arm64] {
+                let boxed = os == Os::Macos && arch == Arch::X64;
+                let id = &app.id;
+                assert_eq!(
+                    app.unavailable_on(os, Some(arch)),
+                    None,
+                    "{id} on {os} {arch}"
+                );
+                assert_eq!(
+                    app.in_container(os, Some(arch)),
+                    boxed,
+                    "{id} on {os} {arch}"
+                );
+                let target = app.target_os(os, Some(arch));
+                assert_eq!(target, if boxed { Os::Linux } else { os });
+                assert!(
+                    app.steps_for(target, Some(arch)).count() > 0,
+                    "{id} steps for {os} {arch}"
+                );
+            }
         }
+        assert_eq!(app.steps_for(Os::Macos, Some(Arch::X64)).count(), 0);
     }
-    // T3 Code publishes no `t3` for Intel Macs, so its installer 404s there.
-    assert_eq!(
-        t3.unavailable_on(Os::Macos, Some(Arch::X64)).as_deref(),
-        Some("Intel Macs")
-    );
 
     let maccy = &catalog.listings["maccy"].manifest;
     assert_eq!(maccy.platforms, [Os::Macos]);
@@ -282,6 +294,84 @@ fn steps_can_be_limited_to_some_cpus() {
         problems(|s| s.replace("shell = \"sh\"", "arch = [\"x86\"]\nshell = \"sh\""))
             .contains("x86")
     );
+}
+
+#[test]
+fn container_rules() {
+    let boxed = |s: &str| format!("{s}\n[container]\nos = [\"linux\"]\n");
+    let m = Manifest::parse(&boxed(VALID)).unwrap();
+    assert!(m.in_container(Os::Linux, Some(Arch::X64)));
+    assert_eq!(m.target_os(Os::Linux, Some(Arch::X64)), Os::Linux);
+    // A container runs on this CPU, so an unknown one can't use it.
+    assert!(m.unavailable_on(Os::Linux, None).is_some());
+
+    let cases: &[(&Edit, &str)] = &[
+        (
+            &|s| s.replace("os = [\"linux\"]\n", "os = []\n"),
+            "container.os is empty",
+        ),
+        (&|s| format!("{s}arch = []\n"), "container.arch is empty"),
+        (
+            &|s| {
+                s.replace(
+                    "[container]\nos = [\"linux\"]",
+                    "[container]\nos = [\"macos\"]",
+                )
+            },
+            "container targets macos, which is not in platforms",
+        ),
+        (
+            &|s| {
+                s.replace("kind = \"web\"", "kind = \"terminal\"")
+                    .replace("url = \"http://127.0.0.1:{port}/\"\n", "")
+            },
+            "container needs ui.kind = \"web\"",
+        ),
+    ];
+    for (edit, expected) in cases {
+        let problems = Manifest::parse(&edit(&boxed(VALID)))
+            .err()
+            .unwrap_or_default();
+        assert!(
+            problems.contains(expected),
+            "expected {expected:?} in {problems:?}"
+        );
+    }
+
+    // Downloads aren't carried into containers yet.
+    let problems =
+        background_problems(|s| boxed(s).replace("kind = \"background\"", "kind = \"web\""));
+    assert!(
+        problems.contains("downloads are not supported in containers"),
+        "{problems}"
+    );
+
+    // On an OS that uses the container, native steps for the same CPUs clash.
+    let both = VALID
+        .replace(
+            "platforms = [\"linux\"]",
+            "platforms = [\"linux\", \"macos\"]",
+        )
+        .replace(
+            "os = [\"linux\"]\nshell",
+            "os = [\"linux\", \"macos\"]\nshell",
+        );
+    let clash = format!("{both}\n[container]\nos = [\"macos\"]\narch = [\"x64\"]\n");
+    let problems = Manifest::parse(&clash).err().unwrap_or_default();
+    assert!(
+        problems.contains("macos x64 has install steps but runs in the container"),
+        "{problems}"
+    );
+    // Limiting the macOS step to the other CPU resolves it.
+    let fixed = clash.replace(
+        "os = [\"linux\", \"macos\"]\nshell = \"sh\"\nrun = \"echo install\"",
+        "os = [\"linux\"]\nshell = \"sh\"\nrun = \"echo install\"\n\n\
+         [[install.steps]]\nos = [\"macos\"]\narch = [\"arm64\"]\nshell = \"sh\"\nrun = \"echo mac\"",
+    );
+    let m = Manifest::parse(&fixed).unwrap();
+    assert!(m.in_container(Os::Macos, Some(Arch::X64)));
+    assert!(!m.in_container(Os::Macos, Some(Arch::Arm64)));
+    assert_eq!(m.unavailable_on(Os::Macos, Some(Arch::X64)), None);
 }
 
 #[test]

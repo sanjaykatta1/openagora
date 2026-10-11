@@ -13,8 +13,17 @@ provides = "t3"
 
 # T3 Code's own installer, so `t3 update` keeps working. It installs `t3` into
 # ~/.local/bin rather than an app-scoped folder; isolation comes later.
+# T3 Code publishes no `t3` for Intel Macs (Node single executables don't
+# support them), so its installer stops with exit 44 there. Intel Macs run
+# the Linux build in a container instead (see [container]).
 [[install.steps]]
-os = ["macos", "linux"]
+os = ["macos"]
+arch = ["arm64"]
+shell = "sh"
+run = "curl -fsSL https://t3.codes/install.sh | sh"
+
+[[install.steps]]
+os = ["linux"]
 shell = "sh"
 run = "curl -fsSL https://t3.codes/install.sh | sh"
 
@@ -22,6 +31,15 @@ run = "curl -fsSL https://t3.codes/install.sh | sh"
 os = ["windows"]
 shell = "powershell"
 run = "irm https://t3.codes/install.ps1 | iex"
+
+# Intel Macs: the Linux steps and `t3 serve` run in a Linux container. Your
+# home folder is shared at the same path so projects open as usual; providers
+# (Claude Code, Codex) are installed and signed in from T3's own setup, inside
+# the container.
+[container]
+os = ["macos"]
+arch = ["x64"]
+share_home = true
 
 [update]
 run = "t3 update"

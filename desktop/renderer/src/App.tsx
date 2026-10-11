@@ -368,7 +368,7 @@ function Store(props: {
               <div className="card-foot">
                 <span className="muted small">{app.license}</span>
                 {!app.available ? (
-                  <span className="muted small">Not available on {osName(window.openagora?.platform)}</span>
+                  <span className="muted small">Not available on {app.unavailable_on ?? osName(window.openagora?.platform)}</span>
                 ) : props.busy[app.id] ? (
                   <span className="small">{props.busy[app.id]}</span>
                 ) : app.installed ? (
@@ -499,7 +499,7 @@ function Detail(props: {
         </div>
         <div className="detail-actions">
           {!app.available ? (
-            <span className="muted">Not available on {osName(window.openagora?.platform)}</span>
+            <span className="muted">Not available on {app.unavailable_on ?? osName(window.openagora?.platform)}</span>
           ) : !app.installed ? (
             <button className="btn primary big" disabled={!!props.busy || !window.openagora} onClick={() => props.onInstall(app)}>
               {props.busy ?? "Install"}
@@ -565,23 +565,32 @@ function Detail(props: {
 }
 
 function InstallSteps({ app }: { app: Listing }) {
-  if (!app.available) return <p className="muted">Not available on this computer.</p>;
+  if (!app.available) return <p className="muted">Not available on {app.unavailable_on ?? "this computer"}.</p>;
   return (
-    <ol className="steps">
-      {app.steps.map((step, i) => (
-        <li key={i}>
-          {step.download && (
-            <div>
-              Download <code>{step.download.asset ?? "(no build for this CPU)"}</code> from the latest release of{" "}
-              <code>github.com/{step.download.github}</code>, checking its checksum
+    <>
+      {app.container && (
+        <p className="muted">
+          On this computer {app.name} runs in a Linux container, using Docker Desktop, OrbStack, Colima or Podman,
+          which must be installed and running.{app.share_home && " Your home folder is shared with it at the same path."}{" "}
+          These steps run inside the container:
+        </p>
+      )}
+      <ol className="steps">
+        {app.steps.map((step, i) => (
+          <li key={i}>
+            {step.download && (
+              <div>
+                Download <code>{step.download.asset ?? "(no build for this CPU)"}</code> from the latest release of{" "}
+                <code>github.com/{step.download.github}</code>, checking its checksum
+              </div>
+            )}
+            <div className="muted small">
+              {step.download ? "Then run" : "Run"}: <code>{step.run}</code>
             </div>
-          )}
-          <div className="muted small">
-            {step.download ? "Then run" : "Run"}: <code>{step.run}</code>
-          </div>
-        </li>
-      ))}
-    </ol>
+          </li>
+        ))}
+      </ol>
+    </>
   );
 }
 

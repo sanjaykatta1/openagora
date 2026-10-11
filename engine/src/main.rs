@@ -106,9 +106,9 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             let here = Os::current();
             for l in listings {
                 let m = &l.manifest;
-                let note = match here {
-                    Some(os) if !m.platforms.contains(&os) => "  (not available on this OS)",
-                    _ => "",
+                let note = match here.and_then(|os| m.unavailable_on(os, Arch::current())) {
+                    Some(computer) => format!("  (not available on {computer})"),
+                    None => String::new(),
                 };
                 println!("{:<10} {:<10} {}{note}", m.id, m.category, m.summary);
             }
@@ -133,6 +133,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             let m = listing(&catalog, &id)?;
             let engine = Engine::new()?;
             describe(m);
+            engine.check_available(m)?;
             if !confirm(&format!("Install {}?", m.name), yes)? {
                 println!("Nothing was installed.");
                 return Ok(());
@@ -215,22 +216,35 @@ fn describe(m: &Manifest) {
         "{} ({})\n{}\nsource:  {}\nlicense: {}",
         m.name, m.id, m.summary, m.source, m.license
     );
+    let arch = Arch::current();
     match Os::current() {
-        Some(os) if m.platforms.contains(&os) => {
-            println!("install on {os}:");
-            for step in m.steps_for(os) {
-                if let Some(d) = &step.download {
-                    let asset = Arch::current().and_then(|a| d.asset.for_arch(a));
+        Some(os) => match m.unavailable_on(os, arch) {
+            None => {
+                let target = m.target_os(os, arch);
+                if !m.in_container(os, arch) {
+                    println!("install on {os}:");
+                } else {
                     println!(
-                        "  download {} from github.com/{} (latest release)",
-                        asset.unwrap_or("(no build for this CPU)"),
-                        d.github
+                        "install on {os}: in a Linux container (needs Docker Desktop, OrbStack, Colima or Podman running)"
                     );
+                    if m.container.as_ref().is_some_and(|c| c.share_home) {
+                        println!("  your home folder is shared with the container");
+                    }
                 }
-                println!("  {}", step.run);
+                for step in m.steps_for(target, arch) {
+                    if let Some(d) = &step.download {
+                        let asset = arch.and_then(|a| d.asset.for_arch(a));
+                        println!(
+                            "  download {} from github.com/{} (latest release)",
+                            asset.unwrap_or("(no build for this CPU)"),
+                            d.github
+                        );
+                    }
+                    println!("  {}", step.run);
+                }
             }
-        }
-        Some(os) => println!("not available on {os}"),
+            Some(computer) => println!("not available on {computer}"),
+        },
         None => println!("install: this OS is not supported"),
     }
     if let Some(agent) = &m.agent {
@@ -258,9 +272,10 @@ fn confirm(question: &str, yes: bool) -> anyhow::Result<bool> {
 
 fn listing_json(engine: &Engine, m: &Manifest) -> anyhow::Result<serde_json::Value> {
     let os = engine.os;
-    let available = m.platforms.contains(&os);
+    let unavailable_on = m.unavailable_on(os, engine.arch);
+    let in_container = m.in_container(os, engine.arch);
     let steps: Vec<serde_json::Value> = m
-        .steps_for(os)
+        .steps_for(m.target_os(os, engine.arch), engine.arch)
         .map(|step| {
             let download = step.download.as_ref().map(|d| {
                 serde_json::json!({
@@ -304,7 +319,10 @@ fn listing_json(engine: &Engine, m: &Manifest) -> anyhow::Result<serde_json::Val
         "source": m.source,
         "license": m.license,
         "platforms": m.platforms.iter().map(|o| o.to_string()).collect::<Vec<_>>(),
-        "available": available,
+        "available": unavailable_on.is_none(),
+        "unavailable_on": unavailable_on,
+        "container": in_container,
+        "share_home": in_container && m.container.as_ref().is_some_and(|c| c.share_home),
         "role": format!("{:?}", m.role).to_lowercase(),
         "ui": format!("{:?}", m.ui.kind).to_lowercase(),
         "steps": steps,

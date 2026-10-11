@@ -80,7 +80,8 @@ A listing describes an app in four parts. The full schema is in
 | Section | Says |
 |---|---|
 | top level | id, name, summary, category, homepage, source, license, platforms, role |
-| `[install]` | what it provides (an executable on PATH or a path under `{app_dir}`), plus ordered steps per OS; a step can first download a file from the app's latest GitHub release, picked per CPU |
+| `[install]` | what it provides (an executable on PATH or a path under `{app_dir}`), plus ordered steps per OS; a step can first download a file from the app's latest GitHub release, picked per CPU, and can be limited to some CPUs (`arch = ["arm64"]`) when the app has no build for the others |
+| `[container]` | optional: the OSes (and CPUs) where the app runs its Linux build in a Linux container instead, and whether the container sees your home folder (`share_home`) |
 | `[update]`, `[uninstall]` | the app's own commands for these |
 | `[run]` | command (same everywhere or per OS) and args, port (`auto`, fixed, or none), health check (`tcp` or `process`) |
 | `[ui]` | `web` (tab), `terminal` (terminal tab), `window` (own window) or `background` (menu-bar, tray or shortcut utility), plus URL for `web`, and optionally `url_from_log_after`: the text the app prints right before its real address at startup, for apps that hand out a one-time sign-in link (only 127.0.0.1/localhost addresses are accepted) |
@@ -89,6 +90,19 @@ A listing describes an app in four parts. The full schema is in
 Placeholders the engine fills in: `{app_dir}` (the app's own folder under
 OpenAgora's data directory), `{download}` (the file a step downloaded) and
 `{port}` (the allocated port). Unknown placeholders are errors.
+
+Once a step for an OS names CPUs, the app is offered on that OS only for those
+CPUs. On other CPUs, and wherever a download has no asset for the CPU, the
+store shows the app as not available (for example "Not available on Intel
+Macs") instead of starting an install that can't finish, unless `[container]`
+covers that computer.
+
+`[container]` is for apps with a web UI whose own builds skip a computer that
+can run Linux containers. T3 Code and Hermes use it on Intel Macs. There, the
+listing's Linux install steps, `provides` and run command apply, inside a
+container. It needs `linux` in `platforms`, Linux steps without downloads, and
+`ui.kind = "web"` with `run.health.tcp`. Native steps can't also cover a
+computer the container covers.
 
 Rules the validator enforces:
 
@@ -136,6 +150,22 @@ All of these exist except `update` and `serve`. Details as built:
 - `stop` sends SIGTERM to the app's process group (Windows: `taskkill /T`),
   then forces it after 10 s.
 - The built-in agent (`role = "agent"`) cannot be uninstalled.
+- Container apps use a container runtime that is already installed and running
+  (Docker Desktop, OrbStack, Colima or Podman, found as `docker` or `podman`);
+  without one, install says so before doing anything. The first install builds
+  a small local image, `openagora-linux` (Debian slim with curl, git, CA
+  certificates and socat). Each app gets a volume, `openagora-<id>`, as its
+  home inside (`/openagora/home`), its own folder at `/openagora/app`
+  (`{app_dir}`), and, with `share_home`, your home folder at the same path.
+  Install steps run in throwaway containers; the app runs in a container named
+  `openagora-<id>` with its port published on 127.0.0.1 only. Apps keep
+  listening on 127.0.0.1 inside, and socat forwards the published port to them
+  once they listen, so any sign-in link they print works unchanged. A web app
+  counts as started when it answers HTTP, since the runtime accepts
+  connections on a published port before the app is up. Stopping removes the
+  container; uninstalling also removes the volume and everything installed in
+  it. `OPENAGORA_CONTAINER_CLI` picks the `docker`/`podman` command and
+  `OPENAGORA_CONTAINER_FROM` the base image (for mirrors).
 
 ### Toolchain
 

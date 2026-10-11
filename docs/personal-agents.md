@@ -18,6 +18,13 @@ other agents, move their memory, or migrate accounts.
 | [PicoClaw](https://github.com/sipeed/picoclaw) | Official installer | Configure in its own launcher/guide; the shortcut opens `picoclaw agent` for native CLI chat. |
 | [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) | Official installer | Shortcut to its `zeroclaw quickstart`; chat and services stay in ZeroClaw. |
 
+Hermes doesn't support Intel Macs natively. On an Intel Mac, OpenAgora installs
+and runs Hermes's Linux version in a Linux container instead, which needs Docker
+Desktop, OrbStack, Colima or Podman installed and running. Its dashboard opens
+in OpenAgora as usual, and your home folder is shared with it at the same path.
+Its terminal commands run inside the container, and the `hermes setup` shortcut
+isn't available there; use the dashboard.
+
 Hermes installation does not run invisible interactive prompts. After installation,
 OpenAgora returns to the Personal agent page with **Start and open Hermes**. Its
 dashboard includes its own model settings, channels, pairing, and gateway controls.

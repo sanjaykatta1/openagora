@@ -122,7 +122,7 @@ impl Target {
         }
     }
 
-    fn title(&self) -> Option<&str> {
+    pub(crate) fn title(&self) -> Option<&str> {
         match self {
             Target::Window(w) => w.title.as_deref(),
             Target::Tab { .. } => None,
@@ -131,7 +131,7 @@ impl Target {
 
     /// The target for the never-capture list, with the window title as last
     /// seen.
-    fn source<'a>(&'a self, title: Option<&'a str>) -> broker::Source<'a> {
+    pub(crate) fn source<'a>(&'a self, title: Option<&'a str>) -> broker::Source<'a> {
         let (key, exe) = match self {
             Target::Window(w) => (w.key.as_str(), w.exe.as_deref()),
             Target::Tab { id, .. } => (id.as_str(), None),
@@ -145,7 +145,7 @@ impl Target {
     }
 
     /// What OpenAgora's window needs to capture it.
-    fn wire(&self) -> Value {
+    pub(crate) fn wire(&self) -> Value {
         match self {
             Target::Window(w) => json!({
                 "kind": "window", "id": w.id, "pid": w.pid, "app": w.app,
@@ -507,7 +507,7 @@ impl Gateway {
     /// window can close, between finding it and capturing it. Where the OS
     /// can't say now, its title is unknown until OpenAgora's window reports
     /// it.
-    fn refresh(&self, target: &Target) -> Result<Target, Refusal> {
+    pub(crate) fn refresh(&self, target: &Target) -> Result<Target, Refusal> {
         let Target::Window(w) = target else {
             return Ok(target.clone());
         };

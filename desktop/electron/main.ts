@@ -10,7 +10,7 @@ import path from "node:path";
 import { readAgentPreferences, saveAgentPreferences } from "./preferences";
 import { registerUpdater } from "./updater";
 import { agentAvailability, commandDirectories, launchAgent } from "./agent-launcher";
-import { EngineLink, type ConfirmAnswer, type ConfirmRequest, type Picture } from "./engine-link";
+import { EngineLink, parseBackground, type BackgroundState, type ConfirmAnswer, type ConfirmRequest, type Picture } from "./engine-link";
 import { capture, mayCapture, screenAccess } from "./capture";
 import { readDesktopSettings, saveDesktopSettings, type DesktopSettings } from "./desktop-settings";
 import { TRAY_ICON } from "./tray-icon";
@@ -76,6 +76,10 @@ let link: EngineLink | null = null;
 let settings: DesktopSettings;
 let shortcutError: string | null = null;
 let quitting = false;
+/** Background mode, as the engine last said: shown in the tray and the window. */
+let background: BackgroundState = { on: false, paused: false, pausedUntil: null, keepDays: 7 };
+/** The tray's tooltip, as set (for UI tests). */
+let trayTooltip = "";
 
 /** The engine's questions waiting for the user's answer, and the window showing each. */
 const pendingConfirms = new Map<string, { window: BrowserWindow; request: ConfirmRequest; finish: (answer: ConfirmAnswer) => void }>();
@@ -330,12 +334,71 @@ function registerShortcut(accelerator: string): void {
   shortcutError = registered ? null : `${accelerator.replace("CommandOrControl", process.platform === "darwin" ? "Command" : "Ctrl")} is taken by another app or by the system. Choose another shortcut in Settings.`;
 }
 
-function trayIcon(): Electron.NativeImage {
+/** A dot in the icon's corner: background mode is capturing. Drawn into the
+ *  icon's pixels (BGRA), red where colour shows, the icon's own colour in a
+ *  macOS template image. */
+function withDot(image: Electron.NativeImage): Electron.NativeImage {
+  const { width, height } = image.getSize();
+  const pixels = Buffer.from(image.toBitmap());
+  const r = width * 0.22;
+  const cx = width - r - 0.5;
+  const cy = height - r - 0.5;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if ((x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 > r * r) continue;
+      const at = (y * width + x) * 4;
+      pixels[at] = 0x30; pixels[at + 1] = 0x3b; pixels[at + 2] = 0xff; pixels[at + 3] = 0xff;
+    }
+  }
+  return nativeImage.createFromBitmap(pixels, { width, height });
+}
+
+function trayIcon(capturing: boolean): Electron.NativeImage {
   const mac = process.platform === "darwin";
-  const icon = nativeImage.createFromDataURL(`data:image/png;base64,${mac ? TRAY_ICON.template16 : TRAY_ICON.color16}`);
-  icon.addRepresentation({ scaleFactor: 2, dataURL: `data:image/png;base64,${mac ? TRAY_ICON.template32 : TRAY_ICON.color32}` });
+  const one = (data: string) => {
+    const image = nativeImage.createFromDataURL(`data:image/png;base64,${data}`);
+    return capturing ? withDot(image) : image;
+  };
+  const small = one(mac ? TRAY_ICON.template16 : TRAY_ICON.color16);
+  const large = one(mac ? TRAY_ICON.template32 : TRAY_ICON.color32);
+  const icon = nativeImage.createEmpty();
+  icon.addRepresentation({ scaleFactor: 1, width: 16, height: 16, buffer: small.toPNG() });
+  icon.addRepresentation({ scaleFactor: 2, width: 32, height: 32, buffer: large.toPNG() });
   if (mac) icon.setTemplateImage(true);
   return icon;
+}
+
+/** Background mode's state in words, for the tray. */
+function backgroundWords(): string | null {
+  if (!background.on) return null;
+  if (!background.paused) return "Background capture is on";
+  if (background.pausedUntil === null) return "Background capture is paused";
+  return `Background capture is paused until ${new Date(background.pausedUntil * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+/** The engine said background mode changed: show it everywhere. */
+function setBackground(state: BackgroundState): void {
+  background = state;
+  updateTray();
+  for (const window of [mainWin, panelWin]) {
+    if (window && !window.isDestroyed()) window.webContents.send("background-state", state);
+  }
+}
+
+/** Asks the engine how background mode stands, after a change made here. */
+async function refreshBackground(): Promise<Record<string, unknown> | null> {
+  const r = await runEngine(["background", "status", "--json"]);
+  if (!r.ok) return null;
+  const status = JSON.parse(r.stdout) as Record<string, unknown>;
+  setBackground(parseBackground(status));
+  return status;
+}
+
+/** Runs a background-mode command, then shows the new state. */
+async function backgroundCommand(args: string[]): Promise<EngineResult> {
+  const result = await runEngine(["background", ...args]);
+  await refreshBackground();
+  return result;
 }
 
 function updateTray(): void {
@@ -345,14 +408,28 @@ function updateTray(): void {
     return;
   }
   try {
+    const capturing = background.on && !background.paused;
     if (!tray) {
-      tray = new Tray(trayIcon());
-      tray.setToolTip("OpenAgora · Sunday, powered by Hermes Agent from Nous Research");
+      tray = new Tray(trayIcon(capturing));
       tray.on("click", () => { if (process.platform !== "darwin") showMain(); });
+    } else {
+      tray.setImage(trayIcon(capturing));
     }
+    const words = backgroundWords();
+    trayTooltip = `OpenAgora · Sunday, powered by Hermes Agent from Nous Research${words ? ` · ${words}` : ""}`;
+    tray.setToolTip(trayTooltip);
+    const backgroundItems: Electron.MenuItemConstructorOptions[] = !background.on ? [] : [
+      { type: "separator" },
+      { label: words ?? "", enabled: false },
+      background.paused
+        ? { label: "Resume background capture", click: () => void backgroundCommand(["resume"]) }
+        : { label: "Pause background capture for an hour", click: () => void backgroundCommand(["pause", "--minutes", "60"]) },
+      { label: "Turn off background capture", click: () => void backgroundCommand(["off"]) },
+    ];
     tray.setContextMenu(Menu.buildFromTemplate([
       { label: "Open Sunday", accelerator: settings.shortcut, registerAccelerator: false, click: () => void onShortcut() },
       { label: "Show OpenAgora", click: showMain },
+      ...backgroundItems,
       { type: "separator" },
       { label: "Quit OpenAgora", click: () => { quitting = true; app.quit(); } },
     ]));
@@ -395,11 +472,14 @@ function startEngineLink(): EngineLink {
       await clipboard.write([new ClipboardItem({ "image/png": new Blob([png], { type: "image/png" }) })]);
     },
     openUrl: openOwnScheme,
+    backgroundState: setBackground,
     hello: windowReport,
     connected: (connected) => {
       for (const window of [mainWin, panelWin]) {
         if (window && !window.isDestroyed()) window.webContents.send("engine-connected", connected);
       }
+      // Without the engine nothing is captured; it says so again when it's back.
+      if (!connected && background.on) setBackground({ ...background, on: false, paused: false, pausedUntil: null });
     },
   });
   engine.start();
@@ -628,6 +708,30 @@ function registerIpc(): void {
   });
   handle("sessions-revoke", (_e, agent: unknown) => runEngine(["sessions", "revoke", checkId(agent)]));
 
+  // Background mode: the window's own dialog is the confirmation for turning
+  // it on and for clearing it.
+  handle("background-indicator", () => background);
+  handle("background-status", async () => {
+    const status = await refreshBackground();
+    if (!status) throw new Error("could not read background mode's state");
+    return status;
+  });
+  handle("background-turn", (_e, on: unknown) => {
+    if (typeof on !== "boolean") throw new Error("invalid choice");
+    return backgroundCommand(on ? ["on", "--yes"] : ["off"]);
+  });
+  handle("background-pause", (_e, minutes: unknown) => {
+    if (minutes === null) return backgroundCommand(["pause"]);
+    if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes < 1 || minutes > 7 * 24 * 60) throw new Error("invalid pause");
+    return backgroundCommand(["pause", "--minutes", String(minutes)]);
+  });
+  handle("background-resume", () => backgroundCommand(["resume"]));
+  handle("background-clear", () => backgroundCommand(["clear", "--yes"]));
+  handle("background-keep", (_e, days: unknown) => {
+    if (typeof days !== "number" || !Number.isInteger(days) || days < 1 || days > 30) throw new Error("keep captures for 1 to 30 days");
+    return backgroundCommand(["keep", String(days)]);
+  });
+
   // What Sunday can see: OpenAgora's own settings and the engine's broker.
   // macOS: reading other apps' text needs Accessibility permission (null
   // elsewhere, where nothing asks).
@@ -789,6 +893,7 @@ if (!app.requestSingleInstanceLock()) {
           main: () => mainWin,
           showMain,
           tabs: describeTabs,
+          background: () => ({ state: background, tooltip: trayTooltip }),
           tray: () => tray,
           shortcutRegistered: () => shortcutError === null,
         },

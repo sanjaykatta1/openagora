@@ -9,8 +9,8 @@ use openagora::manifest::{Arch, Manifest, Os, Role};
 use openagora::paths::Paths;
 use openagora::sunday::{self, MIN_VERSION, Start};
 use openagora::{
-    agents, audit, broker, connections, context, daemon, desk, focus, ipc, memory, paths, sessions,
-    state, t3,
+    agents, audit, broker, connections, context, daemon, desk, focus, history, ipc, memory, paths,
+    sessions, state, t3,
 };
 use std::io::{BufRead, IsTerminal, Write};
 
@@ -157,6 +157,12 @@ enum Cmd {
     Sessions {
         #[command(subcommand)]
         action: Option<SessionsCmd>,
+    },
+    /// Background mode (off unless you turn it on): OpenAgora keeps what the
+    /// apps you always allowed show, on this computer, for Sunday to search.
+    Background {
+        #[command(subcommand)]
+        action: Option<BackgroundCmd>,
     },
     /// The never-capture list: apps and windows OpenAgora never captures.
     Never {
@@ -402,6 +408,52 @@ enum MemoryCmd {
         /// Don't ask for confirmation.
         #[arg(short, long)]
         yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum BackgroundCmd {
+    /// Whether it's on, and what it kept (the default).
+    Status {
+        /// Print JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Turn it on: asks first.
+    On {
+        /// Don't ask (for scripts and OpenAgora's window, which asks itself).
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Turn it off. What it kept stays until it expires or you clear it.
+    Off,
+    /// Stop capturing for a while (until you resume, without --minutes).
+    Pause {
+        #[arg(long)]
+        minutes: Option<u64>,
+    },
+    /// Capture again after a pause.
+    Resume,
+    /// Delete everything it kept.
+    Clear {
+        #[arg(long)]
+        yes: bool,
+    },
+    /// How many days to keep captures (1 to 30; 7 unless you change it).
+    Keep { days: u32 },
+    /// Search what it kept, as Sunday does.
+    Search {
+        /// Words to find; leave out for the latest captures.
+        query: Option<String>,
+        /// "today", "yesterday", a date (2026-10-11) or a time.
+        #[arg(long)]
+        since: Option<String>,
+        /// Only this app.
+        #[arg(long)]
+        app: Option<String>,
+        /// Print JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -712,6 +764,167 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                             entry.outcome = "off".into();
                             audit::record(&engine.paths, &entry)?;
                             println!("Sunday's memory digest is off.");
+                        }
+                    }
+                }
+            }
+        }
+        Cmd::Background { action } => {
+            let paths = Paths::from_env()?;
+            let record = |action: &str, outcome: String| -> anyhow::Result<()> {
+                let mut entry = audit::Entry::new("user", "background", action);
+                entry.decision = "confirmed".into();
+                entry.via = Some("command line".into());
+                entry.outcome = outcome;
+                audit::record(&paths, &entry)
+            };
+            match action.unwrap_or(BackgroundCmd::Status { json: false }) {
+                BackgroundCmd::Status { json } => {
+                    let settings = history::settings(&paths);
+                    history::prune(&paths, state::now(), settings.keep_days)?;
+                    let status = history::status(&paths)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&status)?);
+                    } else {
+                        let state = match (status.settings.on, status.paused) {
+                            (false, _) => "off".to_string(),
+                            (true, true) => match status.settings.paused_until {
+                                Some(history::UNTIL_RESUMED) | None => {
+                                    "on, paused until you resume".into()
+                                }
+                                Some(until) => {
+                                    format!("on, paused until {} (UTC)", sessions::stamp(until))
+                                }
+                            },
+                            (true, false) => "on".into(),
+                        };
+                        println!("Background mode is {state}.");
+                        println!(
+                            "Kept: {} captures ({} KB), for {} days.",
+                            status.captures,
+                            status.bytes / 1024,
+                            status.settings.keep_days
+                        );
+                    }
+                }
+                BackgroundCmd::On { yes } => {
+                    let keep = history::settings(&paths).keep_days;
+                    let question = format!(
+                        "Turn on background mode? While OpenAgora runs, it looks at the window you're in when you switch windows, and every few minutes while you stay, and keeps what apps you always allowed Sunday to see show (a picture and the window's text) on this computer for {keep} days, for Sunday to search. Apps you allowed once, and apps and windows on the never-capture list, are never captured. What Sunday reads from it is sent to the model provider you chose. You can pause it or clear it any time."
+                    );
+                    if !confirm(&question, yes)? {
+                        println!("Nothing was changed.");
+                        return Ok(());
+                    }
+                    history::update(&paths, |s| {
+                        s.on = true;
+                        s.paused_until = None;
+                    })?;
+                    record("on", format!("on, keeping {keep} days"))?;
+                    println!(
+                        "Background mode is on: OpenAgora keeps what your allowed apps show for {keep} days."
+                    );
+                }
+                BackgroundCmd::Off => {
+                    history::update(&paths, |s| {
+                        s.on = false;
+                        s.paused_until = None;
+                    })?;
+                    record("off", "off".into())?;
+                    println!(
+                        "Background mode is off. What it kept stays until it expires; `openagora background clear` deletes it now."
+                    );
+                }
+                BackgroundCmd::Pause { minutes } => {
+                    let until = match minutes {
+                        Some(0) => anyhow::bail!("pause for at least a minute"),
+                        Some(m) => state::now()
+                            .saturating_add(m.saturating_mul(60))
+                            .min(history::UNTIL_RESUMED),
+                        None => history::UNTIL_RESUMED,
+                    };
+                    let settings = history::update(&paths, |s| s.paused_until = Some(until))?;
+                    record(
+                        "pause",
+                        match minutes {
+                            Some(m) => format!("for {m} minutes"),
+                            None => "until resumed".into(),
+                        },
+                    )?;
+                    if !settings.on {
+                        println!("Background mode is off anyway.");
+                    } else if let Some(m) = minutes {
+                        println!("Background mode is paused for {m} minutes.");
+                    } else {
+                        println!("Background mode is paused until you resume it.");
+                    }
+                }
+                BackgroundCmd::Resume => {
+                    history::update(&paths, |s| s.paused_until = None)?;
+                    record("resume", "resumed".into())?;
+                    println!("Background mode is no longer paused.");
+                }
+                BackgroundCmd::Clear { yes } => {
+                    if !confirm("Delete everything background mode kept?", yes)? {
+                        println!("Nothing was changed.");
+                        return Ok(());
+                    }
+                    let removed = history::clear(&paths)?;
+                    record("clear", format!("{removed} captures deleted"))?;
+                    println!("Deleted {removed} captures.");
+                }
+                BackgroundCmd::Keep { days } => {
+                    let days = history::check_keep(days)?;
+                    history::update(&paths, |s| s.keep_days = days)?;
+                    let removed = history::prune(&paths, state::now(), days)?;
+                    record("keep", format!("{days} days"))?;
+                    println!(
+                        "Background mode keeps captures for {days} days{}.",
+                        if removed > 0 {
+                            format!(" ({removed} older ones deleted)")
+                        } else {
+                            String::new()
+                        }
+                    );
+                }
+                BackgroundCmd::Search {
+                    query,
+                    since,
+                    app,
+                    json,
+                } => {
+                    let settings = history::settings(&paths);
+                    let now = state::now();
+                    history::prune(&paths, now, settings.keep_days)?;
+                    let from = match since.as_deref() {
+                        Some(text) => Some(
+                            sessions::since(text, now, sessions::local_offset())
+                                .or_else(|| sessions::parse_time(text))
+                                .ok_or_else(|| anyhow::anyhow!("{text:?} isn't a time I know"))?,
+                        ),
+                        None => None,
+                    };
+                    let hits = history::search(
+                        &paths,
+                        query.as_deref().unwrap_or(""),
+                        from,
+                        app.as_deref(),
+                        50,
+                    )?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&hits)?);
+                    } else if hits.is_empty() {
+                        println!("Nothing found.");
+                    } else {
+                        for h in hits {
+                            println!(
+                                "{}  {} (UTC)  {} — {}: {}",
+                                h.id,
+                                sessions::stamp(h.at),
+                                h.app,
+                                h.title,
+                                h.snippet.replace('\n', " ")
+                            );
                         }
                     }
                 }

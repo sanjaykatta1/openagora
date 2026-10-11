@@ -42,6 +42,21 @@ export interface Picture {
   title?: string;
 }
 
+/** Whether background mode is on, as the engine says, for OpenAgora to show. */
+export interface BackgroundState {
+  on: boolean;
+  paused: boolean;
+  /** Seconds since the epoch; null when paused until resumed, or not paused. */
+  pausedUntil: number | null;
+  keepDays: number;
+}
+
+export function parseBackground(params: Record<string, unknown>): BackgroundState {
+  const until = typeof params.paused_until === "number" && params.paused_until < 1e12 ? params.paused_until : null;
+  const keep = typeof params.keep_days === "number" && params.keep_days >= 1 && params.keep_days <= 30 ? params.keep_days : 7;
+  return { on: params.on === true, paused: params.on === true && params.paused === true, pausedUntil: until, keepDays: keep };
+}
+
 /** Whom a capture is for: the shortcut's are shown in Sunday's panel. */
 export type CapturePurpose = "shortcut" | "tool";
 
@@ -66,6 +81,8 @@ export interface EngineLinkEvents {
   writeClipboard(content: ClipboardContent): Promise<void>;
   /** Sunday handed a file to an app that opens files by its own URL scheme. */
   openUrl(url: string): Promise<void>;
+  /** Background mode was turned on or off, paused or resumed. */
+  backgroundState(state: BackgroundState): void;
   /** What the engine should know about this window when it (re)connects. */
   hello(): Record<string, unknown>;
   connected(connected: boolean): void;
@@ -228,6 +245,8 @@ export class EngineLink {
       this.events.openUrl(url).then(() => reply({ opened: true }), fail);
     } else if (message.method === "app/open" && typeof params.id === "string") {
       this.events.openApp(params.id);
+    } else if (message.method === "background/state" && message.id === undefined) {
+      this.events.backgroundState(parseBackground(params));
     } else if (message.id !== undefined && message.method !== undefined) {
       socket.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "unknown method" } }) + "\n");
     }

@@ -83,6 +83,20 @@ contextBridge.exposeInMainWorld("openagora", {
     disconnect: (app: string) => ipcRenderer.invoke("app-disconnect", app),
   },
   auditLog: () => ipcRenderer.invoke("audit-log"),
+  background: {
+    indicator: () => ipcRenderer.invoke("background-indicator"),
+    status: () => ipcRenderer.invoke("background-status"),
+    turn: (on: boolean) => ipcRenderer.invoke("background-turn", on),
+    pause: (minutes: number | null) => ipcRenderer.invoke("background-pause", minutes),
+    resume: () => ipcRenderer.invoke("background-resume"),
+    clear: () => ipcRenderer.invoke("background-clear"),
+    keep: (days: number) => ipcRenderer.invoke("background-keep", days),
+    onState: (callback: (state: unknown) => void) => {
+      const handler = (_e: IpcRendererEvent, state: unknown) => callback(state);
+      ipcRenderer.on("background-state", handler);
+      return () => ipcRenderer.removeListener("background-state", handler);
+    },
+  },
   memory: {
     state: () => ipcRenderer.invoke("memory-state"),
     use: (provider: string) => ipcRenderer.invoke("memory-use", provider),

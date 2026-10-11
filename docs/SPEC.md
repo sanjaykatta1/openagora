@@ -33,7 +33,7 @@ Principles that hold everywhere:
    every action. (Built: phase 2.)
 5. **Private by default.** Capture only when asked, per-app permission, a
    never-capture list, everything stored locally, background mode opt-in.
-   (Built: phase 3. Background mode: phase 6.)
+   (Built: phase 3; background mode: phase 6.)
 6. **OS-independent.** One codebase for macOS, Linux and Windows.
 
 ## 2. Architecture
@@ -320,6 +320,29 @@ engine decides what may be captured, keeps the result, and logs it.
   seconds. `OPENAGORA_SCREEN_TEXT_FILE` replaces the OS in tests; a test against
   a real GTK window reads it through the real AT-SPI bus (skipped where AT-SPI
   isn't installed). Audit: `read_window`.
+- **Background mode** (built: phase 6; `engine/src/history.rs`): opt-in, off by
+  default (`<data>/history/settings.toml`). While on and not paused, the
+  engine service looks at the window the user is in every 10 seconds; for an
+  app Sunday may *always* see (never a "once" grant, which it doesn't use up;
+  never the never-capture list) it keeps a capture on a switch, and again
+  every 5 minutes while the user stays if what the window shows changed: its
+  text (as `read_window` reads it) and a picture through OpenAgora's window
+  (1280 pixels at most), checked against the never-capture list with the title
+  as captured, in `<data>/history/` (SQLite with an FTS5 index over app, title
+  and text; pictures beside it; a folder only this user can open). Captures
+  older than the user keeps them (7 days by default, 1 to 30) are deleted on
+  every look and before every search. Pause (for some minutes, or until
+  resumed), clear-all, keep, off: `openagora background …` and Settings →
+  Background mode, which asks before turning it on and before clearing. The
+  engine tells OpenAgora's window (`background/state`) whether it captures; the
+  window shows a dot on its menu bar or tray icon, a line in the tray's menu
+  (pause, resume, turn off) and in the sidebar. Sunday's `history_search`
+  (words as words, never FTS operators; `since`, `app`; newest first, with
+  snippets) and `history_get` (text and picture) return only captures of apps
+  it may still always see; Sunday's per-reply hook says whether background mode
+  is on, on this computer only. Audit: `background_capture` (client
+  `openagora`), `background` (the user's changes), `history_search` and
+  `history_get`. On Wayland only OpenAgora's own apps can be seen.
 - **Tools for Sunday:** `capture_window` (the window the user is in, or a named
   app; returns the image), `read_window` (its text, as above), `desk_list`,
   `desk_get` (images as image content, text marked as data), and `allow_app` (a

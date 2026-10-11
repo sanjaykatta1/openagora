@@ -102,6 +102,28 @@ export interface AuditEntry {
   outcome: string;
 }
 
+/** Background mode as the tray and the sidebar show it; mirrors
+ *  electron/engine-link.ts. */
+export interface BackgroundState {
+  on: boolean;
+  paused: boolean;
+  /** Seconds since the epoch; null when paused until resumed, or not paused. */
+  pausedUntil: number | null;
+  keepDays: number;
+}
+
+/** Background mode and what it kept; mirrors `openagora background status --json`. */
+export interface BackgroundStatus {
+  on: boolean;
+  paused: boolean;
+  paused_until?: number;
+  keep_days: number;
+  captures: number;
+  bytes: number;
+  oldest?: number;
+  newest?: number;
+}
+
 /** Sunday's memory; mirrors `openagora sunday memory status --json`. */
 export interface MemoryState {
   /** The memory provider Hermes uses for Sunday, or null for built-in only. */
@@ -312,6 +334,16 @@ export interface Bridge {
   };
   /** The newest entries of the audit log, oldest first. */
   auditLog(): Promise<AuditEntry[]>;
+  background: {
+    indicator(): Promise<BackgroundState>;
+    status(): Promise<BackgroundStatus>;
+    turn(on: boolean): Promise<EngineResult>;
+    pause(minutes: number | null): Promise<EngineResult>;
+    resume(): Promise<EngineResult>;
+    clear(): Promise<EngineResult>;
+    keep(days: number): Promise<EngineResult>;
+    onState(callback: (state: BackgroundState) => void): () => void;
+  };
   memory: {
     state(): Promise<MemoryState>;
     use(provider: string): Promise<EngineResult>;

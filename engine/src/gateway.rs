@@ -36,6 +36,8 @@ pub struct Gateway {
     pub(crate) called: Mutex<Option<Called>>,
     /// Connected apps' own tools for Sunday, as last asked (`app_tools.rs`).
     pub(crate) app_tools: Mutex<BTreeMap<String, (std::time::Instant, Vec<Value>)>>,
+    /// Background mode's last capture (`history.rs`).
+    pub(crate) background: Mutex<crate::history::Background>,
 }
 
 /// How a confirmation went.
@@ -83,6 +85,7 @@ impl Gateway {
             window: Mutex::new(WindowState::default()),
             called: Mutex::new(None),
             app_tools: Mutex::new(BTreeMap::new()),
+            background: Mutex::new(crate::history::Background::default()),
         }
     }
 
@@ -92,6 +95,7 @@ impl Gateway {
         *self.window.lock().unwrap() = WindowState::default();
         self.set_window(hello);
         *self.desktop.lock().unwrap() = Some(peer);
+        self.background_window_attached();
     }
 
     pub fn detach_desktop(&self, peer: &Arc<Peer>) {
@@ -339,6 +343,7 @@ impl Handler for Gateway {
             "sunday" => store_tools()
                 .into_iter()
                 .chain(capture::tools())
+                .chain(crate::history::tools())
                 .chain(crate::handoff::sunday_tools())
                 .chain(crate::sessions::tools())
                 .chain(self.passthrough_tools())
@@ -351,6 +356,9 @@ impl Handler for Gateway {
 
     fn call(&self, client: &Client, name: &str, arguments: &Value) -> ToolResult {
         if let Some(result) = self.call_capture_tool(client, name, arguments) {
+            return result;
+        }
+        if let Some(result) = self.call_history_tool(client, name, arguments) {
             return result;
         }
         if let Some(result) = self.call_handoff_tool(client, name, arguments) {

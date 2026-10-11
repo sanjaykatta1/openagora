@@ -1,7 +1,8 @@
-// OpenAgora's window and the real engine together (acceptance tests 6 and
+// OpenAgora's window and the real engine together (acceptance tests 6, 9 and
 // 10 end to end): the engine finds the app in front, checks the broker, has
 // the window capture it through the OS, keeps the picture on the desk and
-// tells Sunday, and Sunday's MCP tools see the same picture. Only the OS's
+// tells Sunday, and Sunday's MCP tools see the same picture; background mode
+// keeps the window through OpenAgora's window, which shows it's on. Only the OS's
 // window list is replaced (OPENAGORA_FOCUS_FILE); the app in front is a real
 // window of another process. Linux (X11) only; skipped without an engine build.
 const assert = require('node:assert/strict');
@@ -28,6 +29,8 @@ const env = {
   HOME: path.join(root, 'home'),
   OPENAGORA_HOME: path.join(root, 'data'),
   OPENAGORA_FOCUS_FILE: path.join(root, 'focus.json'),
+  // Background mode looks every second here (it stays off until turned on).
+  OPENAGORA_BACKGROUND_TICK_SECONDS: '1',
 };
 const oa = (...args) => execFileSync(engine, args, { env, encoding: 'utf8' });
 let app;
@@ -156,13 +159,28 @@ async function run() {
     sunday.child.kill();
   }
 
+  // Background mode (acceptance test 9, end to end): turned on, it keeps the
+  // allowed app's window through OpenAgora's window, which shows it's on.
+  standin.stdin.write('title Docs — Mozilla Firefox\n');
+  await nextLine();
+  oa('background', 'on', '--yes');
+  let kept = [];
+  await waitFor(() => (kept = JSON.parse(oa('background', 'search', '--json'))).length > 0, 'background mode to keep the window', 30000);
+  assert.equal(kept[0].app, 'Firefox');
+  assert.equal(kept[0].title, 'Docs — Mozilla Firefox');
+  assert.equal(kept[0].image, true);
+  await waitFor(async () => /Background capture is on/.test((await app.evaluate(() => globalThis.openagoraTest.background())).tooltip), 'the tray to show background capture');
+  oa('background', 'off');
+  oa('background', 'clear', '--yes');
+  await waitFor(async () => !(await app.evaluate(() => globalThis.openagoraTest.background())).state.on, 'the tray to stop showing background capture');
+
   // Every step is in the audit log.
   const audit = JSON.parse(oa('audit', '--json'));
   const actions = audit.map((e) => `${e.client}:${e.action}:${e.decision}`);
-  for (const expected of ['user:capture:refused', 'user:allow_app:confirmed', 'user:capture:allowed', 'sunday:desk_get:allowed', 'sunday:capture:allowed', 'sunday:capture:refused']) {
+  for (const expected of ['user:capture:refused', 'user:allow_app:confirmed', 'user:capture:allowed', 'sunday:desk_get:allowed', 'sunday:capture:allowed', 'sunday:capture:refused', 'openagora:background_capture:allowed', 'user:background:confirmed']) {
     assert.ok(actions.includes(expected), `${expected} missing from ${actions}`);
   }
-  console.log('Real engine passed: shortcut, broker, OS window capture, the title as captured, desk, hook, MCP desk_get and capture_window, a private window refused, audit.');
+  console.log('Real engine passed: shortcut, broker, OS window capture, the title as captured, desk, hook, MCP desk_get and capture_window, a private window refused, background mode, audit.');
 }
 
 run().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => {

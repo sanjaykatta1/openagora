@@ -69,6 +69,16 @@ pub fn serve(paths: Paths, catalog: Option<PathBuf>) -> Result<()> {
             }
         }
     });
+    // While the user has background mode on, look at the window they're in.
+    let background = Arc::clone(&gateway);
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(crate::history::tick_every());
+            if let Err(e) = background.background_tick() {
+                eprintln!("openagora: background mode: {e:#}");
+            }
+        }
+    });
     for connection in listener.incoming() {
         match connection {
             Ok(stream) => {

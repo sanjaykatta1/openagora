@@ -62,6 +62,9 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .update-bar > div { height: 100%; background: var(--accent); transition: width 0.2s; }
 .update-error { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-foot { margin-top: 0; font-size: 11px; color: var(--muted); padding: 8px 10px; }
+.background-indicator { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; background: none; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; color: var(--text); font-size: 12px; }
+.background-indicator span { color: var(--red); }
+.background-indicator.paused span { color: var(--muted); }
 
 .content { overflow: auto; position: relative; }
 .titlebar-drag { position: fixed; top: 0; left: 220px; right: 0; height: 32px; -webkit-app-region: drag; z-index: 5; }

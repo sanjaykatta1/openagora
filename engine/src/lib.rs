@@ -16,6 +16,7 @@ pub mod focus;
 pub mod gateway;
 pub mod github;
 pub mod handoff;
+pub mod history;
 pub mod http;
 pub mod inbox;
 pub mod ipc;

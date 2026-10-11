@@ -29,6 +29,8 @@ Your tools on the `openagora` MCP server (`mcp__openagora__<tool>` in Hermes):
 | `capture_window` | take a new screenshot of the app the user is in, or of an app you name |
 | `read_window` | read the text on the window the user is in, or of an app you name, when you need the words: a page, a document, an error message |
 | `allow_app` | ask the user to let you see an app (leave out the app for the one they're in) |
+| `history_search` | search what the user's allowed apps showed earlier, if they turned on background mode |
+| `history_get` | read one capture from that history: its text and picture |
 
 ## When the user asks about what they're doing
 
@@ -45,6 +47,15 @@ Your tools on the `openagora` MCP server (`mcp__openagora__<tool>` in Hermes):
 4. If OpenAgora says an app or window is on its never-capture list (password
    managers, private browser windows, anything the user added), say that you
    can't see it, and don't ask to allow it.
+
+## When the user asks about something they saw earlier
+
+If the user turned on OpenAgora's background mode, the note before your reply
+says so. OpenAgora then keeps what their always-allowed apps showed (a picture
+and the window's text) for a few days. Search it with `history_search` (words,
+and `since` or `app` to narrow it), then look at a capture with `history_get`.
+Without background mode there is no history: say so, and that they can turn it
+on in OpenAgora's Settings. Never turn it on or ask to; it's the user's choice.
 
 ## Rules
 

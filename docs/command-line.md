@@ -175,11 +175,35 @@ macOS, Windows or X11 desktop (on macOS, window titles need Screen Recording
 permission); Wayland doesn't let apps see other apps' windows.
 
 The engine gives Sunday these tools through its gateway: `capture_window`,
+`read_window` (the window's text, through the system's accessibility support),
 `desk_list`, `desk_get` and `allow_app`. `allow_app` asks you in OpenAgora's
 window. Sunday isn't told the names of your never-capture rules, nor of apps it
 may not see unless you pressed the shortcut over them. Every capture, allowed or
 refused, every grant and revocation, and every desk read is in `openagora audit`,
 rules included.
+
+### Background mode
+
+Off unless you turn it on. While it's on and OpenAgora runs, OpenAgora keeps
+what apps you always allowed Sunday to see show (a picture and the window's
+text, on each switch and every few minutes while you stay) on this computer,
+for Sunday to search with `history_search` and `history_get`. The same as
+**Settings → Background mode**:
+
+```sh
+openagora background                     # on or off, and how much it kept
+openagora background on                  # asks first (--yes for scripts)
+openagora background pause --minutes 60  # or until `resume`, without --minutes
+openagora background resume
+openagora background keep 3              # keep captures 1 to 30 days (7 unless you change it)
+openagora background search "invoice"    # search what it kept, as Sunday does (--since, --app, --json)
+openagora background clear               # delete everything it kept (asks first)
+openagora background off                 # what it kept stays until it expires or you clear it
+```
+
+The menu bar or tray icon shows a dot while it captures. Apps you allowed only
+once, and the never-capture list, are never captured; taking back an app takes
+its captures out of what Sunday can find. Every capture is in `openagora audit`.
 
 ## Coding agents
 

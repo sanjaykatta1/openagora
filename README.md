@@ -4,7 +4,8 @@ An open-source app store for your desktop.
 
 - **Find open-source apps** in one store, and install them with one click from
   their official source.
-- **Use them side by side** in one window. Each app keeps its own interface.
+- **Use them side by side** in one window, or pop an app out into a window of
+  its own. Each app keeps its own interface.
 - **Meet Sunday**, OpenAgora's personal agent. Sunday is
   [Hermes Agent](https://github.com/NousResearch/hermes-agent), the open-source
   agent by [Nous Research](https://nousresearch.com), running in a Hermes
@@ -18,7 +19,10 @@ An open-source app store for your desktop.
   your coding agent (Claude Code, Codex, OpenCode, or a new T3 Code thread),
   each set up once with its own command. Ask it "what did I do in my coding
   sessions today?" and it answers from those agents' own records, after asking
-  you; give it long-term memory on your computer with Holographic.
+  you; give it long-term memory on your computer with Holographic. Sunday can
+  read a window's text, and if you turn on background mode (off unless you do),
+  it can search what your allowed apps showed over the last days, all kept on
+  your computer; Settings → Activity shows everything Sunday and your agents did.
   Other personal agents are coming soon. See [Sunday](docs/personal-agents.md).
 
 ## Download

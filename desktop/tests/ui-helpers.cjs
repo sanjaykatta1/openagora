@@ -93,6 +93,7 @@ function freshFakeState(overrides = {}) {
     present: false, installed: false, adopted: false, clean: false, version: '0.21.6',
     setup: 'unknown', running: false, dashboardUrl: null, pid: null, connected: false,
     extraApps: [], calls: [], grants: [], never: [], agents: [], connections: [], audit: [],
+    background: { on: false, paused: false, keep_days: 7, captures: 0, bytes: 0 },
     memory: {
       provider: null, digest: false, sessions: [],
       providers: [{ id: 'holographic', name: 'Holographic', needs: '0.21.5', commands: [
@@ -213,6 +214,27 @@ async function installFakeEngine(app, state) {
       return ok;
     });
     handle('audit-log', () => f().audit);
+    handle('background-status', () => f().background);
+    handle('background-turn', (_e, on) => {
+      f().calls.push(['background-turn', on]);
+      const { paused_until: _gone, ...rest } = f().background;
+      f().background = { ...rest, on, paused: false };
+      return ok;
+    });
+    handle('background-pause', (_e, minutes) => {
+      f().calls.push(['background-pause', minutes]);
+      const until = minutes === null ? 9223372036854775807 : Math.floor(Date.now() / 1000) + minutes * 60;
+      f().background = { ...f().background, paused: true, paused_until: until };
+      return ok;
+    });
+    handle('background-resume', () => {
+      f().calls.push(['background-resume']);
+      const { paused_until: _gone, ...rest } = f().background;
+      f().background = { ...rest, paused: false };
+      return ok;
+    });
+    handle('background-clear', () => { f().calls.push(['background-clear']); f().background = { ...f().background, captures: 0, bytes: 0 }; return ok; });
+    handle('background-keep', (_e, days) => { f().calls.push(['background-keep', days]); f().background = { ...f().background, keep_days: days }; return ok; });
     handle('memory-state', () => f().memory);
     handle('memory-use', (_e, provider) => { f().calls.push(['memory-use', provider]); f().memory.provider = provider; return ok; });
     handle('memory-off', () => { f().calls.push(['memory-off']); f().memory.provider = null; return ok; });

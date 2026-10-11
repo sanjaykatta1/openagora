@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { bridge, osName, type App as Listing, type ConfirmRequest, type EngineResult, type SundaySetupChoice, type SundayStatus, type UpdateState } from "./api";
+import { bridge, osName, type App as Listing, type BackgroundState, type ConfirmRequest, type EngineResult, type SundaySetupChoice, type SundayStatus, type UpdateState } from "./api";
 import { AgentConfirm } from "./Confirm";
 import { CoversTabs } from "./Covers";
 import { NEW_AGENT_PREFERENCES, PERSONAL_AGENTS, SUNDAY_ID, parseAgentPreferences, type AgentPreferences } from "../../electron/agents";
@@ -8,6 +8,7 @@ import { SeeingSettings } from "./Seeing";
 import { CodingAgentsSettings } from "./CodingAgents";
 import { MemorySettings } from "./Memory";
 import { ActivitySettings } from "./Activity";
+import { BackgroundSettings, backgroundWords } from "./Background";
 import { SundayDashboard, SundayHome, SundaySettings, sundayStage } from "./Sunday";
 
 type View = { kind: "sunday" } | { kind: "store" } | { kind: "library" } | { kind: "settings" } | { kind: "app"; id: string } | { kind: "tab"; id: string };
@@ -147,6 +148,14 @@ export function App() {
     setAsks((a) => a.filter((r) => r.id !== request.id));
     void bridge?.answerConfirm(request.id, allowed, choice);
   };
+
+  // Background mode, shown in the sidebar while it's on (and in the tray).
+  const [background, setBackground] = useState<BackgroundState | null>(null);
+  useEffect(() => {
+    if (!bridge) return;
+    void bridge.background.indicator().then(setBackground, () => {});
+    return bridge.background.onState(setBackground);
+  }, []);
 
   // Apps popped out into their own windows outlive the main window: a main
   // window that opens again lists them as tabs.
@@ -332,6 +341,11 @@ export function App() {
             <span>Settings<span className="muted small block">{agentName ? `Personal agent: ${agentName}` : "No personal agent"}</span></span>
           </button>
         </nav>
+        {background?.on && (
+          <button className={background.paused ? "background-indicator paused" : "background-indicator"} onClick={() => setView({ kind: "settings" })}>
+            <span aria-hidden>●</span> {backgroundWords(background)}
+          </button>
+        )}
         <UpdateCard />
         <div className="sidebar-foot">{bridge ? `Running on ${osName(bridge.platform)}` : "Preview"}</div>
       </aside>
@@ -368,6 +382,7 @@ export function App() {
             {sundayChosen && <SeeingSettings />}
             {sundayChosen && <CodingAgentsSettings apps={apps} />}
             {sundayChosen && <MemorySettings />}
+            {sundayChosen && <BackgroundSettings onChange={setBackground} />}
             {sundayChosen && <ActivitySettings />}
           </SundaySettings>
         ))}

@@ -208,6 +208,21 @@ could ask for what Sunday may see; on macOS that includes pictures of apps you
 always allowed, through OpenAgora's Screen Recording permission. Allow apps
 **once** when you only need it once; the audit log shows every capture.
 
+**Background mode** (off unless you turn it on, in **Settings → Background
+mode** or with `openagora background on`): while OpenAgora runs, it looks at the
+window you're in when you switch windows, and every few minutes while you stay,
+and keeps what apps you **always** allowed Sunday to see show, a picture and the
+window's text, in a searchable history on this computer (SQLite full-text
+search), for 7 days unless you choose 1 to 30. Sunday finds things in it with
+`history_search` and `history_get` when you ask about something you saw. Apps
+you allowed once, and apps and windows on the never-capture list, are never
+captured; take back an app and its captures drop out of what Sunday can find.
+**Pause** it (for an hour, or until you resume), **clear** everything it kept, or
+turn it off any time, in Settings or from the menu bar or tray. The icon there
+shows a dot, and the sidebar says so, while it captures. Every capture is in the
+audit log. On Wayland it keeps only OpenAgora's own apps, since other windows
+can't be seen.
+
 **OpenAgora keeps running in the menu bar (or tray) after you close its window**,
 so the shortcut keeps working. **Quit OpenAgora** is in its menu. Turn this off,
 or change the shortcut, in **Settings → What Sunday can see**.

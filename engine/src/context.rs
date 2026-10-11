@@ -61,6 +61,9 @@ pub struct Snapshot {
     /// Desk items already mentioned.
     #[serde(default)]
     pub desk: Vec<String>,
+    /// What Sunday was last told about background mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<String>,
 }
 
 /// The hook's answer for one turn.
@@ -231,6 +234,31 @@ pub fn for_turn(
         lines.push(line);
     }
 
+    // Background mode, for chats on this computer: whether there is a history
+    // of the user's screen to search.
+    let mut background = before.background.clone();
+    if local {
+        let settings = crate::history::settings(&engine.paths);
+        let now_line = match (settings.on, settings.paused(now)) {
+            (true, false) => Some(format!(
+                "Background mode is on: OpenAgora keeps what the user's allowed apps show, for {} days. When they ask about something they saw, search it with history_search.",
+                settings.keep_days
+            )),
+            (true, true) => Some(
+                "Background mode is paused: OpenAgora keeps nothing new for now. What it kept can still be searched with history_search."
+                    .to_string(),
+            ),
+            (false, _) if background.is_some() => {
+                Some("Background mode is off: OpenAgora keeps nothing new.".to_string())
+            }
+            (false, _) => None,
+        };
+        if now_line.is_some() && now_line != background {
+            lines.extend(now_line.clone());
+        }
+        background = now_line.filter(|_| settings.on);
+    }
+
     // Only what was said counts as told: items left out this turn are
     // mentioned on a later one.
     let mut told: Vec<String> = if local {
@@ -256,6 +284,7 @@ pub fn for_turn(
         front: live.front.clone(),
         called_at,
         desk: told,
+        background,
     });
     let text = (!lines.is_empty()).then(|| {
         format!(

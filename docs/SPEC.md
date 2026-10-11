@@ -139,6 +139,8 @@ openagora desk                the desk: list, show, add, remove, clear
 openagora grants              the apps Sunday may see: list, allow, revoke
 openagora never               the never-capture list: list, add, remove
 openagora agents              coding agents: list, setup, remove (their own commands), add, forget
+openagora sessions            your coding sessions as Sunday reads them; allow, revoke Sunday's reading
+openagora sunday memory       Sunday's memory: status, the digest on or off (Hermes's own cron)
 openagora connect <app>       connect OpenAgora to an app that signs agents in with OAuth (T3 Code)
 openagora disconnect <app>    forget that sign-in
 openagora connections         the apps OpenAgora is connected to
@@ -393,6 +395,58 @@ interface (`engine/src/destinations.rs`):
   Setups, removals, connections, handoffs, tasks, reads by coding agents and app
   tool calls are all in the audit log.
 
+### Memory across apps and coding agents (phase 5, in progress)
+
+Three layers, as the issue lays out; Hermes holds the memory itself.
+
+- **Live lookup.** Sunday's `coding_activity` lists the user's sessions in
+  their coding agents since a time ("today", "yesterday", a date or an RFC 3339
+  time, read in the user's own time zone): each session's project, when, the
+  last prompts and the last answer, newest first. `coding_session` reads one
+  in full: every prompt and every answer, never tool calls, tool output or
+  subagents' side chains. Nothing is copied: each agent stays the source of
+  truth, read where it keeps its sessions (`engine/src/sessions.rs`):
+  - **Claude Code:** `~/.claude/projects/<folder>/<session>.jsonl`
+    (`CLAUDE_CONFIG_DIR` moves it). Claude Code calls the entries' format
+    internal, and its only supported reader is its Agent SDK (TypeScript or
+    Python), so OpenAgora reads just what that SDK documents (entries of type
+    `user` and `assistant` with a `message`), and skips anything else.
+  - **Codex:** `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl` (`~/.codex`),
+    in both of Codex's formats (older `user_message`/`agent_message` events,
+    newer `item_completed` events; only final answers, not commentary), named
+    from `session_index.jsonl`. Files Codex compresses after a week are
+    skipped. Codex's supported reader, `codex app-server`, isn't used: it can
+    migrate Codex's databases when it starts.
+  - **OpenCode:** its SQLite database (`$XDG_DATA_HOME/opencode/opencode.db`,
+    else `~/.local/share/opencode`, on every OS; `OPENCODE_DB`), opened read
+    only. OpenCode 1's tables (`session`, `message`, `part`) and OpenCode 2's
+    (`session_v2`, `session_message`) are both read, since OpenCode 2 copies
+    OpenCode 1's sessions once; the newer copy of a session wins. Its command
+    line isn't used: it would add a project for the folder it runs in.
+  - **T3 Code:** its own MCP tools (`t3_project_list`, `t3_thread_list`,
+    `t3_thread_read`), while it runs and OpenAgora is connected.
+- **Permission.** Reading an agent's sessions asks the user in OpenAgora's
+  window, once or always, per agent (grant source `sessions:<agent>`, family
+  `sessions/*`); without the window, only "always" lets Sunday read. The user
+  can allow or take it back with `openagora sessions allow|revoke <agent>`.
+  Every read and answer is in the audit log (`sessions_read`,
+  `allow_sessions`).
+- **Keeping memory fresh.** `openagora sunday memory digest on` (after a yes)
+  creates a job in Sunday's own scheduler with Hermes's command: `hermes -p
+  sunday cron create "every 2h" <prompt> --name openagora-digest --deliver
+  local --continuity --skill openagora-memory`. Each run, Sunday reads what
+  changed since the last run (`--continuity` gives it the previous output) and
+  saves decisions, conventions and open problems with its memory tool, never
+  code or secrets. Turning it on also lets Sunday always read the agents'
+  sessions it covers. Hermes runs jobs from its gateway; while OpenAgora runs
+  it also runs Sunday's due jobs with `hermes -p sunday cron tick` every 15
+  minutes (Hermes's own lock keeps that to one tick at a time). `digest off`
+  removes the job with `hermes -p sunday cron remove`.
+- **Memory provider.** Hermes's built-in memory (MEMORY.md and USER.md) is
+  always on. A long-term memory provider is set up with Hermes's own commands,
+  for the `sunday` profile only; which one is the user's call (open).
+- The `openagora-memory` skill teaches Sunday the tools and what never to save.
+
 ### Toolchain
 
 Long-term, the engine brings its own pinned toolchain (`uv` for Python, Node,
@@ -465,8 +519,9 @@ Settings → Coding agents, with its own command (§4).
 
 **Planned.**
 
-- *Phase 5:* memory across apps and agents: live lookup, a local memory provider,
-  and a scheduled refresh job.
+- *Phase 5 (in progress):* memory across apps and agents: live lookup of the
+  user's coding sessions (built), a scheduled digest through Hermes's own
+  scheduler (built), and a local memory provider.
 
 **Safety.**
 
@@ -536,7 +591,7 @@ real accounts are checked by hand.
 | 2. Engine daemon + gateway | daemon, MCP gateway with store tools, per-reply hook, first skills | Test 5 | Built |
 | 3. Capture | desk, capture, focus tracker, shortcut and panel, broker basics | Tests 6, 8, 10 | Built |
 | 4. Coding agents | registry, destinations, pull path, T3 Code push adapter | Test 7 | Built |
-| 5. Memory | live lookup, memory provider, refresh job | Tests 11, 12 | Planned |
+| 5. Memory | live lookup, memory provider, refresh job | Tests 11, 12 | In progress |
 | 6. Polish | grants and audit UI, background mode, on-screen text, OpenCode push, pop-out windows | Tests 9, 13 | Planned |
 
 ## 9. Prior art

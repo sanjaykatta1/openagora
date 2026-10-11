@@ -210,6 +210,22 @@ other agent or app, Sunday can put one item on the clipboard (`clipboard`) or
 save items into a folder in your home (`folder`); OpenAgora's window must be
 open, since it asks you each time before saving into a folder.
 
+## Sunday's memory and your coding sessions
+
+```sh
+openagora sessions list --since today      # your sessions in Claude Code, Codex, OpenCode and T3 Code
+openagora sessions list --agent codex --json
+openagora sessions allow claude-code       # let Sunday always read them (otherwise it asks each time)
+openagora sessions revoke claude-code
+openagora sunday memory                    # Sunday's memory, the digest, which sessions Sunday may read
+openagora sunday memory digest on          # every 2 hours, Sunday saves what's worth remembering (asks first)
+openagora sunday memory digest off
+```
+
+Sunday answers "what did I do in my coding sessions today?" from the same
+sessions, after asking you in OpenAgora's window. The digest is a job in
+Sunday's own Hermes scheduler (`hermes -p sunday cron …`).
+
 ## Uninstall the command line tool
 
 - macOS `.pkg`: `sudo rm /usr/local/bin/openagora && sudo pkgutil --forget app.openagora.cli`

@@ -402,6 +402,15 @@ impl Desktop {
         desktop
     }
 
+    /// Closes OpenAgora's window: the engine sees it go.
+    pub fn close(self) {
+        let _ = self
+            .writer
+            .lock()
+            .unwrap()
+            .shutdown(std::net::Shutdown::Both);
+    }
+
     fn write(&self, message: Value) {
         let mut out = self.writer.lock().unwrap();
         writeln!(out, "{message}").unwrap();

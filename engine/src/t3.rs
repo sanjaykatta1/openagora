@@ -25,6 +25,7 @@ use crate::http;
 use crate::manifest::Manifest;
 use crate::oauth::{Authorize, Callback, Pkce, random_token};
 use crate::paths::Paths;
+use crate::sessions;
 use crate::state;
 
 /// The MCP protocol version T3 speaks.
@@ -595,14 +596,14 @@ impl T3 {
         Ok((text.trim().to_string(), attachments))
     }
 
-    /// The project to start in: the one named, or the only one there is.
-    fn project(&self, named: Option<&str>) -> Result<Option<String>> {
+    /// T3's projects, as (id, title).
+    fn projects(&self) -> Result<Vec<(String, String)>> {
         let listed = self.call(
             "t3_project_list",
             json!({"limit": 100}),
             Duration::from_secs(30),
         )?;
-        let projects: Vec<(String, String)> = listed["projects"]
+        Ok(listed["projects"]
             .as_array()
             .map(|all| {
                 all.iter()
@@ -615,7 +616,12 @@ impl T3 {
                     })
                     .collect()
             })
-            .unwrap_or_default();
+            .unwrap_or_default())
+    }
+
+    /// The project to start in: the one named, or the only one there is.
+    fn project(&self, named: Option<&str>) -> Result<Option<String>> {
+        let projects = self.projects()?;
         let titles = || {
             projects
                 .iter()
@@ -850,6 +856,20 @@ pub fn destination(
     m: &Manifest,
     port: u16,
 ) -> Result<Box<dyn Destination>, String> {
+    Ok(Box::new(connected(gateway, m, port)?))
+}
+
+/// T3 Code's threads, as sessions, while it runs on `port`.
+pub fn reader(
+    gateway: &Gateway,
+    m: &Manifest,
+    port: u16,
+) -> Result<Box<dyn sessions::Reader>, String> {
+    Ok(Box::new(connected(gateway, m, port)?))
+}
+
+/// T3 Code through OpenAgora's grant, while it runs on `port`.
+fn connected(gateway: &Gateway, m: &Manifest, port: u16) -> Result<T3, String> {
     let connection = match connections::get(&gateway.paths, &m.id).ok().flatten() {
         Some(c) if c.usable() => c,
         Some(_) => {
@@ -870,13 +890,117 @@ pub fn destination(
         .as_ref()
         .map(|d| d.accepts.clone())
         .unwrap_or_default();
-    Ok(Box::new(T3 {
+    Ok(T3 {
         paths: gateway.paths.clone(),
         id: m.id.clone(),
         name: m.name.clone(),
         accepts,
         client: Client::new(port, &connection.access_token),
-    }))
+    })
+}
+
+/// A T3 thread's messages: what the user asked and the agent's answers.
+fn turns(items: &Value) -> Vec<sessions::Turn> {
+    items
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let role = match item["type"].as_str()? {
+                "user_message" => sessions::Role::User,
+                "assistant_message" => sessions::Role::Assistant,
+                _ => return None,
+            };
+            let text = item["text"].as_str()?.trim();
+            (!text.is_empty()).then(|| sessions::Turn {
+                role,
+                text: text.to_string(),
+                at: item["updatedAt"].as_str().and_then(sessions::parse_time),
+            })
+        })
+        .collect()
+}
+
+/// A thread from `t3_thread_list` or `t3_thread_read`, as a session.
+fn thread_session(thread: &Value, project: Option<String>) -> Option<sessions::Session> {
+    Some(sessions::Session {
+        id: thread["threadId"].as_str()?.to_string(),
+        title: thread["title"].as_str().map(str::to_string),
+        project,
+        started_at: thread["createdAt"]
+            .as_str()
+            .and_then(sessions::parse_time)
+            .unwrap_or(0),
+        updated_at: thread["updatedAt"]
+            .as_str()
+            .and_then(sessions::parse_time)
+            .unwrap_or(0),
+        turns: Vec::new(),
+    })
+}
+
+impl T3 {
+    /// A thread's messages, the newest `limit` of them.
+    fn messages(&self, thread: &str, limit: u32) -> Result<Value> {
+        self.call(
+            "t3_thread_read",
+            json!({"threadId": thread, "view": "messages", "limit": limit, "maxCharsPerItem": 4000}),
+            Duration::from_secs(60),
+        )
+    }
+}
+
+impl sessions::Reader for T3 {
+    fn agent(&self) -> &str {
+        &self.id
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn sessions(&self, since: u64) -> Result<Vec<sessions::Session>> {
+        let mut found = Vec::new();
+        for (project, title) in self.projects()? {
+            let listed = self.call(
+                "t3_thread_list",
+                json!({"projectId": project, "limit": 100}),
+                Duration::from_secs(30),
+            )?;
+            let project_name = Some(if title.is_empty() {
+                project.clone()
+            } else {
+                title
+            });
+            for thread in listed["threads"].as_array().into_iter().flatten() {
+                if thread["relationshipToParent"] == "subagent" {
+                    continue;
+                }
+                let Some(mut session) = thread_session(thread, project_name.clone()) else {
+                    continue;
+                };
+                if session.updated_at < since {
+                    continue;
+                }
+                session.turns = turns(&self.messages(&session.id, 20)?["items"]);
+                found.push(session);
+            }
+        }
+        Ok(found)
+    }
+
+    fn session(&self, id: &str) -> Result<Option<sessions::Session>> {
+        let read = match self.messages(id, 100) {
+            Ok(read) => read,
+            Err(e) if format!("{e:#}").contains("not found") => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let project = read["thread"]["projectId"].as_str().map(str::to_string);
+        Ok(thread_session(&read["thread"], project).map(|mut session| {
+            session.turns = turns(&read["items"]);
+            session
+        }))
+    }
 }
 
 /// Whether a T3 tool only reads.

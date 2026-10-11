@@ -340,6 +340,7 @@ impl Handler for Gateway {
                 .into_iter()
                 .chain(capture::tools())
                 .chain(crate::handoff::sunday_tools())
+                .chain(crate::sessions::tools())
                 .chain(self.passthrough_tools())
                 .collect(),
             // A coding agent reads only what it was sent.
@@ -353,6 +354,9 @@ impl Handler for Gateway {
             return result;
         }
         if let Some(result) = self.call_handoff_tool(client, name, arguments) {
+            return result;
+        }
+        if let Some(result) = self.call_sessions_tool(client, name, arguments) {
             return result;
         }
         if let Some(result) = self.call_passthrough(client, name, arguments) {

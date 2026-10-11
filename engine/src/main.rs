@@ -4,11 +4,13 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use openagora::apps::{Engine, Status, tail};
 use openagora::catalog::{Catalog, load_listing};
+use openagora::gateway::Gateway;
 use openagora::manifest::{Arch, Manifest, Os, Role};
 use openagora::paths::Paths;
 use openagora::sunday::{self, MIN_VERSION, Start};
 use openagora::{
-    agents, audit, broker, connections, context, daemon, desk, focus, ipc, paths, state, t3,
+    agents, audit, broker, connections, context, daemon, desk, focus, ipc, memory, paths, sessions,
+    state, t3,
 };
 use std::io::{BufRead, IsTerminal, Write};
 
@@ -149,6 +151,12 @@ enum Cmd {
         /// Print JSON (for the desktop app).
         #[arg(long)]
         json: bool,
+    },
+    /// Your sessions in your coding agents (Claude Code, Codex, OpenCode,
+    /// T3 Code), and which of them Sunday may read.
+    Sessions {
+        #[command(subcommand)]
+        action: Option<SessionsCmd>,
     },
     /// The never-capture list: apps and windows OpenAgora never captures.
     Never {
@@ -354,6 +362,53 @@ enum SundayCmd {
         #[arg(short, long)]
         yes: bool,
     },
+    /// Sunday's memory: Hermes's memory for Sunday, and the digest that keeps
+    /// it up to date with your coding sessions.
+    Memory {
+        #[command(subcommand)]
+        action: Option<MemoryCmd>,
+    },
+}
+
+#[derive(Subcommand)]
+enum MemoryCmd {
+    /// Where Sunday's memory stands (the default).
+    Status {
+        /// Print JSON (for the desktop app).
+        #[arg(long)]
+        json: bool,
+    },
+    /// Keep Sunday's memory up to date with your coding sessions: a job in
+    /// Sunday's own scheduler (Hermes's `cron create`) reads them every two
+    /// hours and saves what's worth remembering (asks first).
+    Digest {
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
+        /// Don't ask for confirmation.
+        #[arg(short, long)]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum SessionsCmd {
+    /// Your sessions since a time, as Sunday reads them (the default: the
+    /// last 24 hours).
+    List {
+        /// "today", "yesterday", a date (2026-10-11) or a time.
+        #[arg(long)]
+        since: Option<String>,
+        /// Only this agent, e.g. claude-code.
+        #[arg(long)]
+        agent: Option<String>,
+        /// Print JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Let Sunday always read an agent's sessions.
+    Allow { agent: String },
+    /// Take that back: Sunday asks again before reading them.
+    Revoke { agent: String },
 }
 
 fn main() -> ExitCode {
@@ -550,6 +605,129 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     }
                     sunday::disconnect(&engine, m)?;
                     println!("Sunday no longer uses OpenAgora.");
+                }
+                SundayCmd::Memory { action } => {
+                    match action.unwrap_or(MemoryCmd::Status { json: false }) {
+                        MemoryCmd::Status { json } => {
+                            let status = memory::status(&engine, m)?;
+                            if json {
+                                println!("{}", serde_json::to_string_pretty(&status)?);
+                            } else {
+                                print_memory(&status);
+                            }
+                        }
+                        MemoryCmd::Digest { state, yes } if state == "on" => {
+                            let agents = memory::readable_agents();
+                            let names: Vec<&str> = agents.iter().map(|(_, n)| n.as_str()).collect();
+                            let question = format!(
+                                "Keep Sunday's memory up to date with your coding sessions? Every two hours, a job in Sunday's own scheduler (`hermes -p sunday cron create`) has Sunday read your sessions{} and save what's worth remembering: decisions, conventions, open problems. Sunday may then always read those sessions; what it reads goes to the model provider it uses. While OpenAgora runs, it also runs Sunday's due jobs (`hermes -p sunday cron tick`).",
+                                if names.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(" in {}", names.join(", "))
+                                }
+                            );
+                            if !confirm(&question, yes)? {
+                                println!("Nothing was changed.");
+                                return Ok(());
+                            }
+                            let job = memory::digest_on(&engine, m, &agents)?;
+                            let mut entry = audit::Entry::new("user", "memory_digest", "on");
+                            entry.decision = "confirmed".into();
+                            entry.via = Some("command line".into());
+                            entry.outcome = job.clone();
+                            audit::record(&engine.paths, &entry)?;
+                            println!(
+                                "Sunday's memory digest is on (job {job}, {}).",
+                                memory::DIGEST_SCHEDULE
+                            );
+                        }
+                        MemoryCmd::Digest { yes, .. } => {
+                            if !confirm("Turn off Sunday's memory digest?", yes)? {
+                                println!("Nothing was changed.");
+                                return Ok(());
+                            }
+                            let removed = memory::digest_off(&engine, m)?;
+                            let mut entry = audit::Entry::new("user", "memory_digest", "off");
+                            entry.decision = "confirmed".into();
+                            entry.via = Some("command line".into());
+                            entry.outcome = if removed { "removed" } else { "none" }.into();
+                            audit::record(&engine.paths, &entry)?;
+                            println!("Sunday's memory digest is off.");
+                        }
+                    }
+                }
+            }
+        }
+        Cmd::Sessions { action } => {
+            let paths = Paths::from_env()?;
+            match action.unwrap_or(SessionsCmd::List {
+                since: None,
+                agent: None,
+                json: false,
+            }) {
+                SessionsCmd::List { since, agent, json } => {
+                    let gateway = Gateway::new(paths.clone(), cli.catalog.clone());
+                    let now = state::now();
+                    let from = match since.as_deref() {
+                        Some(text) => sessions::since(text, now, sessions::local_offset())
+                            .ok_or_else(|| anyhow::anyhow!("{text:?} isn't a time I know"))?,
+                        None => now.saturating_sub(24 * 3600),
+                    };
+                    let (found, notes) = gateway.gather_sessions(from, agent.as_deref());
+                    if json {
+                        let listed: Vec<serde_json::Value> = found
+                            .iter()
+                            .map(|(agent, s)| {
+                                serde_json::json!({
+                                    "agent": agent,
+                                    "id": s.id,
+                                    "title": s.title,
+                                    "project": s.project,
+                                    "started_at": s.started_at,
+                                    "updated_at": s.updated_at,
+                                    "prompts": s.turns.iter().filter(|t| t.role == sessions::Role::User).count(),
+                                })
+                            })
+                            .collect();
+                        println!("{}", serde_json::to_string_pretty(&listed)?);
+                    } else {
+                        if found.is_empty() {
+                            println!("No sessions since {} (UTC).", sessions::stamp(from));
+                        }
+                        for (agent, session) in &found {
+                            print!("{}", sessions::listing(agent, session));
+                        }
+                        for note in notes {
+                            eprintln!("{note}");
+                        }
+                    }
+                }
+                SessionsCmd::Allow { agent } => {
+                    let Some((id, name)) = memory::readable_agents()
+                        .into_iter()
+                        .find(|(id, _)| *id == agent)
+                    else {
+                        anyhow::bail!(
+                            "OpenAgora can't read {agent:?}'s sessions on this computer (see openagora sessions)"
+                        );
+                    };
+                    memory::allow_sessions(&paths, &id, &name)?;
+                    let mut entry = audit::Entry::new("user", "allow_sessions", &id);
+                    entry.decision = "confirmed".into();
+                    entry.via = Some("command line".into());
+                    entry.outcome = "always".into();
+                    audit::record(&paths, &entry)?;
+                    println!("Sunday may always read your {name} sessions.");
+                }
+                SessionsCmd::Revoke { agent } => {
+                    let removed = memory::revoke_sessions(&paths, &agent)?;
+                    let mut entry = audit::Entry::new("user", "revoke_sessions", &agent);
+                    entry.decision = "confirmed".into();
+                    entry.via = Some("command line".into());
+                    entry.outcome = format!("{removed} grants");
+                    audit::record(&paths, &entry)?;
+                    println!("Sunday asks again before reading your {agent} sessions.");
                 }
             }
         }
@@ -1625,6 +1803,43 @@ fn sunday_json(engine: &Engine, m: &Manifest) -> anyhow::Result<serde_json::Valu
         "pid": pid,
         "gateway": gateway,
     }))
+}
+
+fn print_memory(status: &memory::Status) {
+    println!(
+        "Memory: {}",
+        match &status.provider {
+            Some(provider) => format!("Hermes's built-in memory, plus {provider}"),
+            None => "Hermes's built-in memory (MEMORY.md and USER.md)".to_string(),
+        }
+    );
+    println!(
+        "Digest: {}",
+        if status.digest {
+            format!(
+                "on ({}){}",
+                memory::DIGEST_SCHEDULE,
+                status
+                    .digest_last_run
+                    .as_deref()
+                    .map(|at| format!(", last run {at}"))
+                    .unwrap_or_default()
+            )
+        } else {
+            "off (openagora sunday memory digest on)".to_string()
+        }
+    );
+    for agent in &status.sessions {
+        println!(
+            "Sessions in {}: {}",
+            agent.name,
+            if agent.always {
+                "Sunday may always read them"
+            } else {
+                "Sunday asks first"
+            }
+        );
+    }
 }
 
 fn print_sunday(s: &serde_json::Value) {

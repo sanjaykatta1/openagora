@@ -59,6 +59,17 @@ pub fn serve(paths: Paths, catalog: Option<PathBuf>) -> Result<()> {
         }
     });
     let gateway = Arc::new(Gateway::new(paths, catalog));
+    // While the user wants the memory digest, run Sunday's due jobs: Hermes's
+    // gateway may not be running to do it.
+    let ticker = Arc::clone(&gateway);
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(crate::memory::tick_every());
+            if let Err(e) = ticker.tick_sunday_jobs() {
+                eprintln!("openagora: running Sunday's scheduled jobs: {e:#}");
+            }
+        }
+    });
     for connection in listener.incoming() {
         match connection {
             Ok(stream) => {

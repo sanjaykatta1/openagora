@@ -33,6 +33,8 @@ pub struct State {
     /// Uploaded attachments: (id, bytes).
     pub uploads: Vec<(String, Vec<u8>)>,
     pub projects: Vec<Value>,
+    /// Threads, as `t3_thread_list` gives them.
+    pub threads: Vec<Value>,
     /// What waiting on a run reports.
     pub run_status: String,
     pub requests: Vec<String>,
@@ -53,6 +55,12 @@ impl FakeT3 {
             projects: vec![
                 json!({"id": "proj-1", "title": "openagora", "workspaceRoot": "/src/openagora", "deletedAt": null}),
                 json!({"id": "proj-2", "title": "website", "workspaceRoot": "/src/website", "deletedAt": null}),
+            ],
+            threads: vec![
+                json!({"threadId": "thread-1", "projectId": "proj-1", "title": "Fix the crash", "relationshipToParent": null,
+                       "createdAt": iso_ago(3600), "updatedAt": iso_ago(600)}),
+                json!({"threadId": "thread-2", "projectId": "proj-1", "title": "Explore the parser", "relationshipToParent": "subagent",
+                       "createdAt": iso_ago(3000), "updatedAt": iso_ago(900)}),
             ],
             ..State::default()
         }));
@@ -440,9 +448,19 @@ fn mcp(stream: &TcpStream, request: &Request, state: &Arc<Mutex<State>>) {
 fn call(s: &mut State, tool: &str, args: &Value) -> Value {
     match tool {
         "t3_project_list" => tool_result(json!({"projects": s.projects, "nextCursor": null})),
-        "t3_thread_list" => tool_result(
-            json!({"threads": [{"threadId": "thread-1", "title": "Fix the crash"}], "nextCursor": null, "total": 1}),
-        ),
+        "t3_thread_list" => {
+            let project = args["projectId"].as_str();
+            let threads: Vec<Value> = s
+                .threads
+                .iter()
+                .filter(|t| project.is_none_or(|p| t["projectId"] == p))
+                .cloned()
+                .collect();
+            let total = threads.len();
+            tool_result(
+                json!({"projectId": project, "currentThreadId": null, "threads": threads, "nextCursor": null, "total": total}),
+            )
+        }
         "t3_attachment_prepare_upload" => {
             let upload = &args["upload"];
             let size = upload["sizeBytes"].as_u64().unwrap_or(0) as usize;
@@ -495,13 +513,30 @@ fn call(s: &mut State, tool: &str, args: &Value) -> Value {
                     {"type": "assistant_message", "title": null, "text": "Fixed the null check in parser.ts; the tests pass.", "status": "completed"},
                 ])
             };
-            tool_result(
-                json!({"thread": {"threadId": args["threadId"], "status": s.run_status}, "recentRuns": [], "items": items, "nextPosition": null, "hasMore": false}),
-            )
+            let known = s
+                .threads
+                .iter()
+                .find(|t| t["threadId"] == args["threadId"])
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            tool_result(json!({
+                "thread": {"threadId": args["threadId"], "status": s.run_status, "projectId": known["projectId"],
+                           "title": known["title"], "createdAt": known["createdAt"], "updatedAt": known["updatedAt"]},
+                "recentRuns": [], "items": items, "nextPosition": null, "hasMore": false,
+            }))
         }
         "t3_thread_send" | "t3_thread_send_attachments" => tool_result(
             json!({"threadId": args["threadId"], "messageId": "message-2", "runId": "run-2", "status": "queued"}),
         ),
         _ => tool_error("unknown tool"),
     }
+}
+
+/// An RFC 3339 time `seconds` ago.
+pub fn iso_ago(seconds: u64) -> String {
+    let at = openagora::state::now().saturating_sub(seconds);
+    format!(
+        "{}:00.000Z",
+        openagora::sessions::stamp(at).replace(' ', "T")
+    )
 }

@@ -271,6 +271,32 @@ send is shared with that agent and the model provider it uses. Every setup,
 connection, handoff, task and read is in the audit log. Take back "always" in
 **Settings → What Sunday can see**.
 
+## Sunday remembers what you did in your coding agents
+
+Ask Sunday **"what did I do in my coding sessions today?"** and it answers from
+your sessions in Claude Code, Codex, OpenCode and T3 Code: what you asked, in
+which project, and what each agent answered. Sunday reads them where each agent
+keeps them, on this computer, and copies nothing. Ask about one session and it
+reads that session in full (your prompts and the agent's answers, not its tool
+calls).
+
+The first time Sunday wants to read an agent's sessions, OpenAgora asks you in
+its own window: **Allow once** or **Always allow**, per agent. What Sunday reads
+goes to the model provider it uses. You can allow an agent ahead of time, or
+take it back, with `openagora sessions allow <agent>` and `openagora sessions
+revoke <agent>`; every read is in the audit log.
+
+**Keeping Sunday's memory up to date (optional).** Turn on the digest with
+`openagora sunday memory digest on`: every two hours, a job in Sunday's own
+scheduler (Hermes's `cron`) has Sunday read what changed in your sessions and
+save what's worth remembering, such as decisions, conventions and open
+problems, never code or secrets. While OpenAgora runs, it runs Sunday's due jobs
+itself, so this works without Hermes's messaging gateway. `openagora sunday
+memory` shows where it stands; `digest off` removes the job.
+
+Sunday's memory is Hermes's: its built-in memory (MEMORY.md and USER.md) is
+always on and stays across restarts.
+
 ## Home screen and settings
 
 The home screen is Hermes's dashboard for Sunday's profile, labelled **Sunday**,
@@ -302,6 +328,22 @@ deletes only the `sunday` profile with Hermes's own `hermes profile delete sunda
 profile named `sunday` that OpenAgora didn't set up is never deleted.
 
 ## Verification and limits
+
+Phase 5 (memory, in progress): Rust tests write sessions the way Claude Code,
+Codex (both of its formats), OpenCode (1 and 2, in one SQLite file) and T3 Code
+(its MCP tools) keep them, and check test 11: the command line lists them all;
+Sunday is asked about per agent and reads only what was allowed (always, once,
+or not at all); prompts and final answers come back, never tool output,
+subagents, Codex's commentary or Claude Code's own notes; old sessions stay out;
+one session reads in full; nothing is read without the window unless always
+allowed; and the audit rows. For test 12, OpenAgora's part: the digest goes into
+Sunday's own scheduler only after a yes, runs while OpenAgora runs and across a
+restart, Sunday's memory file is untouched, and every Hermes call is for
+Sunday's profile.
+
+Not tested automatically, and to be checked by hand: real Claude Code, Codex and
+OpenCode sessions on each OS (their formats change between versions), and
+Sunday answering "what did I do today?" from them.
 
 Phase 4 (coding agents): Rust tests run the engine against stand-ins for Claude
 Code, Codex and OpenCode (scripts that record every call) and for T3 Code's

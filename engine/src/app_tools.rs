@@ -27,7 +27,7 @@ const ACT: &str = "act/*";
 impl Gateway {
     /// Apps that take work through a push adapter, with their port while they
     /// run.
-    fn push_apps(&self) -> Vec<(Manifest, u16)> {
+    pub(crate) fn push_apps(&self) -> Vec<(Manifest, u16)> {
         let (Ok(catalog), Ok(engine)) = (self.catalog(), Engine::new()) else {
             return Vec::new();
         };

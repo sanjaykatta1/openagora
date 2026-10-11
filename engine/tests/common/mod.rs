@@ -175,6 +175,12 @@ impl Drop for Env {
 impl Env {
     /// Adds a small web app (python's http.server) to the catalog.
     pub fn add_web_app(&self, id: &str) {
+        self.add_web_app_with(id, "");
+    }
+
+    /// Adds a small web app, with `extra` at the end of its listing (e.g. a
+    /// `[destination]`).
+    pub fn add_web_app_with(&self, id: &str, extra: &str) {
         let os = this_os();
         write_listing(
             &self.catalog,
@@ -210,7 +216,7 @@ tcp = true
 [ui]
 kind = "web"
 url = "http://127.0.0.1:{{port}}/"
-"#
+{extra}"#
             ),
         );
     }

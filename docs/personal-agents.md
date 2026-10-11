@@ -253,6 +253,15 @@ before each change. The sign-in lasts 30 days; you can take it back in T3
 Code's Settings → Connections. Sunday can also use T3 Code's own tools: reading
 threads needs no question, anything else asks you first.
 
+**Any other agent or app: the clipboard or a folder.** For an agent that isn't
+set up, or any app at all, Sunday can put a screenshot or text **on the
+clipboard** for you to paste (one thing at a time), or **save it into your
+project folder** as a new file, and tells you where it went. OpenAgora asks you
+every time before saving into a folder, and saves only into your own folders in
+your home: never a hidden folder, `Library` or `AppData`, and never over a file
+that's already there. Apps in the store can take files the same way, by a
+folder they watch or a link in their own URL scheme.
+
 **What you send stays yours to decide.** OpenAgora asks you before Sunday sends
 anything to an agent (**Send once** or **Always allow**, per app and agent),
 before it starts a task, and before it acts in an app. Nothing from an app on the
@@ -307,15 +316,19 @@ T3 Code on its approval page (PKCE, the grant in a file only you can open), a
 thread started with the uploaded picture attached, its status and its result,
 more for the same thread, T3's own tools (reading free, acting asked), a
 read-only connection, a declined one, and a taken-back sign-in; the command
-line's connect through the browser; and the audit rows. A UI test covers
-Settings → Coding agents (the exact command shown before anything runs, manual
-removal for OpenCode, T3 Code's connect) and the approval window with T3's own
-session.
+line's connect through the browser; the fallbacks (the clipboard, one item at a
+time; a folder, asked each time, never "always", only the user's own folders,
+nothing overwritten; apps that take files by a folder or their own URL scheme);
+and the audit rows. UI tests cover Settings → Coding agents (the exact command
+shown before anything runs, manual removal for OpenCode, T3 Code's connect),
+the approval window with T3's own session, and the window writing the clipboard
+and opening only an installed app's own URL scheme.
 
 Not tested automatically, and to be checked by hand: the real Claude Code,
 Codex and OpenCode commands on each OS, each agent reading the picture (and
 Claude Code's hook running, in a trusted folder); T3 Code's real approval page
-with its paired session, and a real thread with the picture; the 30-day expiry.
+with its paired session, and a real thread with the picture; the 30-day expiry;
+pasting a picture from the clipboard into another app on each OS.
 
 Phase 3 (capture): Rust tests drive the engine with a stand-in for OpenAgora's
 window and a stand-in window list. They cover: the shortcut over an app

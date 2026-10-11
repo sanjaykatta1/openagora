@@ -6,6 +6,7 @@
 //! was sent to it, or what comes from apps the user lets it see, never the
 //! whole desk.
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -18,10 +19,10 @@ use crate::audit::Entry;
 use crate::broker::{self, Scope};
 use crate::capture::SUNDAY;
 use crate::desk::{self, Item, Kind};
-use crate::destinations::{self, Destination, Pull, Task};
+use crate::destinations::{self, Destination, Fallback, Pull, Task, Way};
 use crate::gateway::{Choice, Gateway, client_name};
 use crate::inbox;
-use crate::manifest::Manifest;
+use crate::manifest::{Deliver, Manifest};
 use crate::mcp::{Client, ToolResult};
 use crate::state;
 
@@ -67,12 +68,13 @@ pub fn sunday_tools() -> Vec<Value> {
         tool(
             "send_to",
             "Send to a coding agent",
-            "Send desk items to a coding agent or app. A coding agent finds them in its inbox: the user asks it \"what did Sunday send me?\". OpenAgora asks the user first, in its own window, unless they always allow it. To start work in an app that runs tasks (T3 Code), use start_task; to add to a task it runs, give its task id.",
+            "Send desk items to a coding agent or app. A coding agent finds them in its inbox: the user asks it \"what did Sunday send me?\". For any agent or app that isn't set up, put an item on the clipboard (to \"clipboard\") or save it into the user's project folder (to \"folder\", with folder), and tell the user. OpenAgora asks the user first, in its own window, unless they always allow it. To start work in an app that runs tasks (T3 Code), use start_task; to add to a task it runs, give its task id.",
             json!({
-                "to": {"type": "string", "description": "A destination id, e.g. \"claude-code\" (see destinations)."},
+                "to": {"type": "string", "description": "A destination id, e.g. \"claude-code\", \"clipboard\" or \"folder\" (see destinations)."},
                 "items": items_property(),
                 "message": {"type": "string", "description": "A note for the agent, e.g. what to do with them."},
                 "task": {"type": "string", "description": "A task id from start_task, to add the items to that task."},
+                "folder": {"type": "string", "description": "With to \"folder\": the folder's full path, in the user's home, e.g. their project. The user is asked each time."},
             }),
             &["to", "items"],
             false,
@@ -231,8 +233,23 @@ impl Gateway {
         })
     }
 
-    /// A destination by id: a coding agent, or an app with a push adapter.
+    /// A destination by id: the clipboard, a coding agent, or an app that
+    /// takes work.
     pub(crate) fn destination(&self, id: &str) -> Result<Box<dyn Destination>, String> {
+        if id == destinations::CLIPBOARD {
+            return Ok(Box::new(self.fallback(
+                id,
+                "the clipboard",
+                Way::Clipboard,
+                clipboard_types(),
+                false,
+            )));
+        }
+        if id == destinations::FOLDER {
+            return Err(
+                "A folder only takes items from send_to, with folder set to its full path.".into(),
+            );
+        }
         if let Some(name) = agents::name(&self.paths, id) {
             return Ok(Box::new(Pull {
                 paths: self.paths.clone(),
@@ -251,9 +268,13 @@ impl Gateway {
         self.app_destination(m)
     }
 
-    /// An app that takes work through its push adapter, while it runs and
-    /// OpenAgora is connected to it.
+    /// An installed app that takes work: through its push adapter while it
+    /// runs and OpenAgora is connected to it, or by the folder, URL scheme or
+    /// clipboard its listing names.
     fn app_destination(&self, m: &Manifest) -> Result<Box<dyn Destination>, String> {
+        let Some(d) = &m.destination else {
+            return Err(format!("{} doesn't take work.", m.name));
+        };
         let engine = Engine::new().map_err(|e| format!("{e:#}"))?;
         if engine.installed(&m.id).ok().flatten().is_none() {
             return Err(format!(
@@ -261,17 +282,111 @@ impl Gateway {
                 m.name, m.id
             ));
         }
-        let port = match engine.status(&m.id) {
-            Ok(Status::Running(r)) => r.port,
-            _ => None,
+        let way = match d.deliver {
+            Deliver::Mcp => {
+                let port = match engine.status(&m.id) {
+                    Ok(Status::Running(r)) => r.port,
+                    _ => None,
+                };
+                let Some(port) = port else {
+                    return Err(format!(
+                        "{} isn't running. Start it first (app_start with id \"{}\").",
+                        m.name, m.id
+                    ));
+                };
+                return match d.adapter.as_deref() {
+                    Some("t3code") => crate::t3::destination(self, m, port),
+                    other => Err(format!(
+                        "This OpenAgora has no adapter {} for {}.",
+                        other.unwrap_or("?"),
+                        m.name
+                    )),
+                };
+            }
+            Deliver::Clipboard => Way::Clipboard,
+            Deliver::Folder => {
+                let home = crate::paths::home().map_err(|e| format!("{e:#}"))?;
+                let folder = d
+                    .folder
+                    .as_deref()
+                    .unwrap_or_default()
+                    .replace(
+                        "{app_dir}",
+                        &self.paths.app_dir(&m.id).display().to_string(),
+                    )
+                    .replace("{home}", &home.display().to_string());
+                Way::Folder(PathBuf::from(folder))
+            }
+            Deliver::UrlScheme => Way::UrlScheme(d.url.clone().unwrap_or_default()),
         };
-        let Some(port) = port else {
+        Ok(Box::new(self.fallback(
+            &m.id,
+            &m.name,
+            way,
+            d.accepts.clone(),
+            false,
+        )))
+    }
+
+    fn fallback(
+        &self,
+        id: &str,
+        name: &str,
+        way: Way,
+        accepts: Vec<String>,
+        ask_each_time: bool,
+    ) -> Fallback {
+        Fallback {
+            paths: self.paths.clone(),
+            id: id.to_string(),
+            name: name.to_string(),
+            accepts,
+            way,
+            ask_each_time,
+            desktop: self.desktop(),
+        }
+    }
+
+    /// A folder Sunday named for `send_to`: an existing folder in the user's
+    /// home. Each save into it is asked for on its own.
+    fn folder_destination(&self, folder: Option<&str>) -> Result<Box<dyn Destination>, String> {
+        let Some(folder) = folder.map(str::trim).filter(|f| !f.is_empty()) else {
+            return Err(
+                "Say which folder to save into (folder): its full path, e.g. the user's project folder."
+                    .into(),
+            );
+        };
+        if !Path::new(folder).is_absolute() {
             return Err(format!(
-                "{} isn't running. Start it first (app_start with id \"{}\").",
-                m.name, m.id
+                "{folder:?} isn't a full path. Give the folder's full path."
             ));
-        };
-        crate::t3::destination(self, m, port)
+        }
+        let dir = Path::new(folder)
+            .canonicalize()
+            .ok()
+            .filter(|d| d.is_dir())
+            .ok_or_else(|| format!("There's no folder {folder:?}."))?;
+        let home = crate::paths::home()
+            .and_then(|h| Ok(h.canonicalize()?))
+            .map_err(|e| format!("{e:#}"))?;
+        let data = self
+            .paths
+            .root
+            .canonicalize()
+            .unwrap_or_else(|_| self.paths.root.clone());
+        if !savable(&dir, &home, &data) {
+            return Err(format!(
+                "OpenAgora saves only into the user's own folders in their home (not hidden or settings folders, nor its own), and {folder:?} isn't one."
+            ));
+        }
+        let name = format!("the folder {}", destinations::shown(&dir));
+        Ok(Box::new(self.fallback(
+            destinations::FOLDER,
+            &name,
+            Way::Folder(dir),
+            vec!["*/*".into()],
+            true,
+        )))
     }
 
     fn destinations_tool(&self) -> ToolResult {
@@ -299,6 +414,12 @@ impl Gateway {
                 c.name, c.id
             ));
         }
+        lines.push(
+            "- The clipboard (clipboard): takes a picture (PNG, JPEG) or text, one at a time; the user pastes it where they want it. For any agent or app that isn't set up.".into(),
+        );
+        lines.push(
+            "- A folder (folder, with folder set to its full path): saves items as new files into a folder in the user's home, e.g. their project; the user is asked each time.".into(),
+        );
         if let Ok(catalog) = self.catalog() {
             let engine = Engine::new().ok();
             for m in catalog.listings.values().map(|l| &l.manifest) {
@@ -310,7 +431,10 @@ impl Gateway {
                     continue;
                 }
                 let state = match self.app_destination(m) {
-                    Ok(_) => "ready: it runs tasks (start_task)".to_string(),
+                    Ok(dest) if dest.needs_task() => {
+                        "ready: it runs tasks (start_task)".to_string()
+                    }
+                    Ok(_) => "ready (send_to)".to_string(),
                     Err(why) => why,
                 };
                 lines.push(format!(
@@ -393,14 +517,15 @@ impl Gateway {
         for item in items {
             let key = source_key(item);
             let family = item.family();
-            let allowed = match broker::allowed(&self.paths, &client.id, &key, dest.id(), &family) {
-                Ok(Some(Scope::Always)) => true,
-                Ok(Some(Scope::Once)) => {
-                    broker::use_once(&self.paths, &client.id, &key, dest.id(), &family)
-                        .unwrap_or(false)
-                }
-                _ => false,
-            };
+            let allowed = dest.may_always()
+                && match broker::allowed(&self.paths, &client.id, &key, dest.id(), &family) {
+                    Ok(Some(Scope::Always)) => true,
+                    Ok(Some(Scope::Once)) => {
+                        broker::use_once(&self.paths, &client.id, &key, dest.id(), &family)
+                            .unwrap_or(false)
+                    }
+                    _ => false,
+                };
             if !allowed {
                 pending.push(item);
             }
@@ -413,12 +538,23 @@ impl Gateway {
             .map(|i| format!("• {}", i.describe()))
             .collect();
         let question = format!(
-            "{who} wants to {what} {name}:\n{}\n\n{name} can then see them, and so can the model provider it uses. OpenAgora sends nothing else. You can take \"always\" back in OpenAgora's Settings.",
+            "{who} wants to {what} {name}:\n{}\n\n{}{}",
             listed.join("\n"),
+            dest.consequence(),
+            if dest.may_always() {
+                " You can take \"always\" back in OpenAgora's Settings."
+            } else {
+                ""
+            },
             who = client_name(&client.id),
         );
-        let choices = [("once", "Send once"), ("always", "Always allow")];
-        match self.ask_choice(client, &format!("Send to {name}?"), &question, &choices) {
+        let choices: &[(&str, &str)] = if dest.may_always() {
+            &[("once", "Send once"), ("always", "Always allow")]
+        } else {
+            &[("once", "Allow once")]
+        };
+        let title = format!("{} {name}?", capitalized(dest.verb()));
+        match self.ask_choice(client, &title, &question, choices) {
             Choice::Chose(choice) => {
                 if choice == "always" {
                     for item in &pending {
@@ -499,7 +635,12 @@ impl Gateway {
 
     fn send_to(&self, client: &Client, args: &Value) -> ToolResult {
         let to = args["to"].as_str().unwrap_or_default();
-        let dest = match self.destination(to) {
+        let dest = if to == destinations::FOLDER {
+            self.folder_destination(args["folder"].as_str())
+        } else {
+            self.destination(to)
+        };
+        let dest = match dest {
             Ok(dest) => dest,
             Err(why) => return ToolResult::error(why),
         };
@@ -510,6 +651,11 @@ impl Gateway {
             Ok(items) => items,
             Err(why) => return ToolResult::error(why),
         };
+        if dest.one_item() && items.len() > 1 {
+            return ToolResult::error(
+                "That goes through the clipboard, which holds one thing at a time: send one item.",
+            );
+        }
         let task = match args["task"].as_str() {
             Some(id) => match destinations::task(&self.paths, id).ok().flatten() {
                 Some(task) if task.destination == dest.id() => Some(task),
@@ -524,11 +670,12 @@ impl Gateway {
                 dest.name()
             ));
         }
-        if let Err(why) = self.approve(client, dest.as_ref(), &items, "send") {
+        if let Err(why) = self.approve(client, dest.as_ref(), &items, dest.verb()) {
             return ToolResult::text(why);
         }
         let message = args["message"].as_str();
         let mut sent = Vec::new();
+        let mut places = Vec::new();
         for item in &items {
             match dest.deliver(item, task.as_ref(), message) {
                 Ok(place) => {
@@ -541,6 +688,7 @@ impl Gateway {
                         &format!("sent to {place}"),
                     );
                     sent.push(format!("{} ({})", item.id, item.describe()));
+                    places.push(place);
                 }
                 Err(e) => {
                     self.audit_handoff(
@@ -567,11 +715,7 @@ impl Gateway {
         let next = if task.is_some() {
             format!("They were added to the task in {}.", dest.name())
         } else {
-            format!(
-                "In {name}, the user can ask \"what did Sunday send me?\": {name} reads its inbox with OpenAgora's tools.{}",
-                self.setup_hint(dest.id()),
-                name = dest.name()
-            )
+            format!("{}{}", dest.next_step(&places), self.setup_hint(dest.id()))
         };
         ToolResult::text(format!(
             "Sent to {}: {}. {next}",
@@ -957,5 +1101,79 @@ impl Gateway {
             text,
             fresh.into_iter().map(|(sent, _)| sent.item).collect(),
         )))
+    }
+}
+
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|c| c.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
+/// What the clipboard takes: pictures OpenAgora's window can put on it, and
+/// text.
+fn clipboard_types() -> Vec<String> {
+    ["image/png", "image/jpeg", "text/*"]
+        .map(String::from)
+        .to_vec()
+}
+
+/// Whether OpenAgora may save into `dir`: in the user's home, but not in a
+/// hidden folder, the OS's settings folders (where a file could run at
+/// login), or OpenAgora's own data.
+fn savable(dir: &Path, home: &Path, data: &Path) -> bool {
+    let Ok(inside) = dir.strip_prefix(home) else {
+        return false;
+    };
+    let parts: Vec<String> = inside
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    !dir.starts_with(data)
+        && !parts.iter().any(|p| p.starts_with('.'))
+        && !parts.first().is_some_and(|first| {
+            first.eq_ignore_ascii_case("Library") || first.eq_ignore_ascii_case("AppData")
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saves_only_into_the_users_own_folders() {
+        let home = Path::new("/home/u");
+        let data = Path::new("/home/u/.local/share/openagora");
+        assert!(savable(Path::new("/home/u"), home, data));
+        assert!(savable(Path::new("/home/u/code/app"), home, data));
+        assert!(!savable(Path::new("/etc"), home, data));
+        assert!(!savable(Path::new("/home/other"), home, data));
+        assert!(!savable(Path::new("/home/u/.ssh"), home, data));
+        assert!(!savable(
+            Path::new("/home/u/code/app/.git/hooks"),
+            home,
+            data
+        ));
+        assert!(!savable(Path::new("/home/u/.config/autostart"), home, data));
+        assert!(!savable(
+            Path::new("/home/u/Library/LaunchAgents"),
+            home,
+            data
+        ));
+        assert!(!savable(Path::new("/home/u/AppData/Roaming"), home, data));
+        assert!(!savable(
+            Path::new("/home/u/library/LaunchAgents"),
+            home,
+            data
+        ));
+        let data = Path::new("/home/u/openagora-data");
+        assert!(!savable(
+            Path::new("/home/u/openagora-data/apps"),
+            home,
+            data
+        ));
+        assert_eq!(capitalized("save into"), "Save into");
     }
 }

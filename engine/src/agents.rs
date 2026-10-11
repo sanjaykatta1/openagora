@@ -310,7 +310,13 @@ pub fn add_custom(paths: &Paths, id: &str, name: &str) -> Result<()> {
     if !valid_id(id) {
         bail!("{id:?} must be lowercase letters, digits and dashes, starting with a letter");
     }
-    if descriptor(id).is_some() || id == "sunday" || id == "user" {
+    let built_in = [
+        "sunday",
+        "user",
+        crate::destinations::CLIPBOARD,
+        crate::destinations::FOLDER,
+    ];
+    if descriptor(id).is_some() || built_in.contains(&id) {
         bail!("{id:?} is already taken; OpenAgora knows that one");
     }
     if name.trim().is_empty() {

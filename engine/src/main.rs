@@ -1537,7 +1537,7 @@ fn listing_json(engine: &Engine, m: &Manifest) -> anyhow::Result<serde_json::Val
         })
         .collect();
     let destination = m.destination.as_ref().map(|d| {
-        serde_json::json!({"accepts": d.accepts, "deliver": d.deliver.as_str(), "adapter": d.adapter})
+        serde_json::json!({"accepts": d.accepts, "deliver": d.deliver.as_str(), "adapter": d.adapter, "folder": d.folder, "url": d.url})
     });
     let mcp_auth = m.agent.as_ref().map(|a| match a.mcp.auth {
         openagora::manifest::McpAuth::Oauth => "oauth",

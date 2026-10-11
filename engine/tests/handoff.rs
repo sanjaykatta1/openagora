@@ -10,6 +10,7 @@ mod common;
 use std::fs;
 use std::io::Write;
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -366,6 +367,278 @@ fn coding_agents_see_apps_the_user_allowed_for_them_and_nothing_else() {
         &mut no_questions,
     );
     assert!(refused.contains("unknown tool send_to"), "{refused}");
+}
+
+/// OpenAgora's window: writes the clipboard and opens URLs when the engine
+/// asks, noting each request; leaves questions to the test.
+fn connect_recording_window(env: &Env) -> (Desktop, Arc<Mutex<Vec<Value>>>) {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let noted = Arc::clone(&seen);
+    let responder: Responder = Box::new(move |request: &Value| {
+        let method = request["method"].as_str()?;
+        if method != "clipboard/write" && method != "url/open" {
+            return None;
+        }
+        noted.lock().unwrap().push(request.clone());
+        Some(json!({"done": true}))
+    });
+    let window = Desktop::connect_with(env, json!({"pid": 4242}), Some(responder));
+    (window, seen)
+}
+
+/// Sends to `to`, answers OpenAgora's question with `choice`, and returns
+/// the question and Sunday's (text, is_error).
+fn send_asked(
+    sunday: &mut McpClient,
+    window: &mut Desktop,
+    arguments: Value,
+    choice: &str,
+) -> (Value, (String, bool)) {
+    std::thread::scope(|scope| {
+        let call = scope.spawn(|| sunday.call("send_to", arguments, &mut no_questions));
+        let ask = window.next();
+        assert_eq!(ask["method"], "confirm/ask", "{ask}");
+        window.reply(&ask["id"], json!({"allowed": true, "choice": choice}));
+        (ask, call.join().unwrap())
+    })
+}
+
+fn choices(ask: &Value) -> Vec<String> {
+    ask["params"]["choices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn any_agent_or_app_gets_items_on_the_clipboard_or_in_a_folder() {
+    let env = Env::new();
+    // Apps that take files without an MCP server: one watches a folder, one
+    // opens files by its own URL scheme.
+    env.add_web_app_with(
+        "drop",
+        "\n[destination]\naccepts = [\"image/*\", \"text/*\"]\ndeliver = \"folder\"\nfolder = \"{app_dir}/inbox\"\n",
+    );
+    env.add_web_app_with(
+        "sketch",
+        "\n[destination]\naccepts = [\"image/png\"]\ndeliver = \"url-scheme\"\nurl = \"sketch://open?file={file}\"\n",
+    );
+    env.ok(&["install", "drop", "--yes"]);
+    env.ok(&["install", "sketch", "--yes"]);
+    let project = env.home.join("code/app");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(env.home.join(".config/autostart")).unwrap();
+
+    let mut sunday = McpClient::start(&env, "sunday", true);
+    let (mut window, seen) = connect_recording_window(&env);
+    let picture = png(8, 8);
+    let added = window.request(
+        "desk/add",
+        json!({"kind": "image", "data": BASE64.encode(&picture), "source": {"app": "Notes"}}),
+    );
+    let shot = added["result"]["id"].as_str().unwrap().to_string();
+    let added = window.request(
+        "desk/add",
+        json!({"kind": "text", "text": "TODO: ship it", "source": {"app": "Notes"}}),
+    );
+    let note = added["result"]["id"].as_str().unwrap().to_string();
+
+    let (listed, _) = sunday.call("destinations", json!({}), &mut no_questions);
+    for line in [
+        "The clipboard (clipboard)",
+        "A folder (folder",
+        "Web drop (drop): app, takes image/*, text/*; ready (send_to)",
+        "Web sketch (sketch): app, takes image/png; ready (send_to)",
+    ] {
+        assert!(listed.contains(line), "{line}: {listed}");
+    }
+
+    // The clipboard holds one thing: said before the user is asked.
+    let (one, error) = send(
+        &mut sunday,
+        &mut window,
+        json!({"to": "clipboard", "items": [shot, note]}),
+        None,
+    );
+    assert!(error && one.contains("one thing at a time"), "{one}");
+
+    // The picture goes on the clipboard, once.
+    let (ask, (text, error)) = send_asked(
+        &mut sunday,
+        &mut window,
+        json!({"to": "clipboard", "items": [shot]}),
+        "once",
+    );
+    assert_eq!(ask["params"]["title"], "Put on the clipboard?");
+    assert_eq!(choices(&ask), ["once", "always"]);
+    assert!(!error && text.contains("on the clipboard"), "{text}");
+    {
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0]["method"], "clipboard/write");
+        assert_eq!(seen[0]["params"]["kind"], "image");
+        assert_eq!(seen[0]["params"]["type"], "image/png");
+        assert_eq!(
+            BASE64
+                .decode(seen[0]["params"]["data"].as_str().unwrap())
+                .unwrap(),
+            picture
+        );
+    }
+    // Text, always: the next time, no question.
+    let (_, (_, error)) = send_asked(
+        &mut sunday,
+        &mut window,
+        json!({"to": "clipboard", "items": [note]}),
+        "always",
+    );
+    assert!(!error);
+    let (again, error) = send(
+        &mut sunday,
+        &mut window,
+        json!({"to": "clipboard", "items": [note]}),
+        None,
+    );
+    assert!(!error, "{again}");
+    {
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 3);
+        assert_eq!(
+            seen[2]["params"],
+            json!({"kind": "text", "text": "TODO: ship it"})
+        );
+    }
+
+    // A folder must be a real folder of the user's own.
+    let outside = env.data.to_str().unwrap().to_string();
+    let hidden = env.home.join(".config/autostart");
+    let missing = env.home.join("nope");
+    for (folder, says) in [
+        (None, "Say which folder"),
+        (Some("code/app".to_string()), "isn't a full path"),
+        (Some(missing.display().to_string()), "There's no folder"),
+        (Some(outside), "saves only into the user's own folders"),
+        (
+            Some(hidden.display().to_string()),
+            "saves only into the user's own folders",
+        ),
+    ] {
+        let mut arguments = json!({"to": "folder", "items": [note]});
+        if let Some(folder) = folder {
+            arguments["folder"] = json!(folder);
+        }
+        let (refused, error) = send(&mut sunday, &mut window, arguments, None);
+        assert!(error && refused.contains(says), "{says}: {refused}");
+    }
+
+    // Saving into the project: asked each time, never "always".
+    let canonical = project.canonicalize().unwrap();
+    let folder =
+        json!({"to": "folder", "folder": project.display().to_string(), "items": [shot, note]});
+    let (ask, (text, error)) = send_asked(&mut sunday, &mut window, folder.clone(), "once");
+    assert_eq!(
+        ask["params"]["title"],
+        format!("Save into the folder {}?", canonical.display())
+    );
+    assert_eq!(choices(&ask), ["once"]);
+    let message = ask["params"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("nothing there is overwritten"),
+        "{message}"
+    );
+    assert!(!message.contains("always"), "{message}");
+    assert!(!error && text.contains("Tell the user where"), "{text}");
+    let saved_shot = canonical.join(format!("sunday-{shot}.png"));
+    let saved_note = canonical.join(format!("sunday-{note}.txt"));
+    assert_eq!(fs::read(&saved_shot).unwrap(), picture);
+    assert_eq!(fs::read_to_string(&saved_note).unwrap(), "TODO: ship it");
+    assert!(text.contains(&saved_shot.display().to_string()), "{text}");
+    // An "always" answer isn't one of the choices, so it isn't a yes.
+    let (_, (text, _)) = send_asked(&mut sunday, &mut window, folder.clone(), "always");
+    assert!(text.contains("didn't want"), "{text}");
+    // Again: asked again, and nothing is overwritten.
+    let (_, (_, error)) = send_asked(
+        &mut sunday,
+        &mut window,
+        json!({"to": "folder", "folder": project.display().to_string(), "items": [note]}),
+        "once",
+    );
+    assert!(!error);
+    assert_eq!(
+        fs::read_to_string(canonical.join(format!("sunday-{note}-2.txt"))).unwrap(),
+        "TODO: ship it"
+    );
+    assert_eq!(fs::read(&saved_shot).unwrap(), picture);
+
+    // An app that watches a folder: the file lands in it.
+    let (ask, (_, error)) = send_asked(
+        &mut sunday,
+        &mut window,
+        json!({"to": "drop", "items": [note]}),
+        "once",
+    );
+    assert_eq!(ask["params"]["title"], "Send to Web drop?");
+    assert!(!error);
+    let inbox = env.data.join("apps/drop/inbox");
+    assert_eq!(
+        fs::read_to_string(inbox.join(format!("sunday-{note}.txt"))).unwrap(),
+        "TODO: ship it"
+    );
+
+    // An app that opens files by its own URL scheme takes only what it says.
+    let (refused, _) = send(
+        &mut sunday,
+        &mut window,
+        json!({"to": "sketch", "items": [note]}),
+        None,
+    );
+    assert!(refused.contains("doesn't take"), "{refused}");
+    let (_, (text, error)) = send_asked(
+        &mut sunday,
+        &mut window,
+        json!({"to": "sketch", "items": [shot]}),
+        "once",
+    );
+    assert!(!error && text.contains("Web sketch opened it"), "{text}");
+    {
+        let seen = seen.lock().unwrap();
+        let open = seen.last().unwrap();
+        assert_eq!(open["method"], "url/open");
+        assert_eq!(open["params"]["scheme"], "sketch");
+        let url = open["params"]["url"].as_str().unwrap();
+        let handed = env.data.join("handoff").join(format!("sunday-{shot}.png"));
+        assert!(url.starts_with("sketch://open?file="), "{url}");
+        assert!(url.ends_with(&format!("sunday-{shot}.png")), "{url}");
+        assert_eq!(url.matches('/').count(), 2, "the path is encoded: {url}");
+        assert_eq!(fs::read(&handed).unwrap(), picture);
+    }
+
+    // Every handoff is in the audit log.
+    let audit = env.audit();
+    for target in [
+        format!("clipboard:{shot}"),
+        format!("folder:{note}"),
+        format!("drop:{note}"),
+        format!("sketch:{shot}"),
+    ] {
+        assert!(
+            audit.iter().any(|e| e["action"] == "handoff"
+                && e["target"] == target.as_str()
+                && e["outcome"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .starts_with("sent to")),
+            "{target}: {audit:?}"
+        );
+    }
+    // Nobody can name their own agent after a built-in destination.
+    assert!(
+        !env.run(&["agents", "add", "clipboard", "--name", "Mine"])
+            .status
+            .success()
+    );
 }
 
 /// A browser following `url` on this computer, one redirect deep, as

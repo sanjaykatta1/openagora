@@ -1,6 +1,7 @@
 // OpenAgora's window and the engine service: the engine's confirmations shown
-// in the window, agents opening apps in tabs, and connecting Sunday to
-// OpenAgora (with consent). The engine side is a stand-in; Rust tests cover it.
+// in the window, agents opening apps in tabs, handoffs through the clipboard or
+// an app's own URL scheme, and connecting Sunday to OpenAgora (with consent).
+// The engine side is a stand-in; Rust tests cover it.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -10,10 +11,17 @@ let session;
 let daemon;
 let dashboard;
 const directory = tempProfile('openagora-engine-link-');
+/** A 1×1 PNG. */
+const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
 async function run() {
   dashboard = await fakeDashboard();
   daemon = await fakeDaemon();
+  // The window reads the catalog itself before opening an app by its URL scheme.
+  const engine = path.join(directory, 'fake-engine');
+  fs.copyFileSync(path.join(__dirname, 'fixtures', 'fake-engine-catalog.cjs'), engine);
+  fs.chmodSync(engine, 0o755);
+  process.env.OPENAGORA_ENGINE = engine;
   fs.writeFileSync(path.join(directory, 'personal-agent.json'), JSON.stringify({ version: 1, completed: true, selectedAgent: 'hermes' }));
   const notes = {
     id: 'notes', name: 'Notes', summary: 'A notes app', category: 'productivity',
@@ -64,6 +72,38 @@ async function run() {
   await page.getByRole('button', { name: 'Notes', exact: true }).waitFor();
   await waitFor(() => dashboard.requests.length > 0, 'the app tab to load');
 
+  // Sunday hands things over on the clipboard: text, or a PNG or JPEG.
+  daemon.send({ id: 'clip-1', method: 'clipboard/write', params: { kind: 'text', text: 'TODO: ship it' } });
+  assert.deepEqual((await daemon.reply('clip-1')).result, { written: true });
+  assert.equal(await app.evaluate(({ clipboard }) => clipboard.readText()), 'TODO: ship it');
+  daemon.send({ id: 'clip-2', method: 'clipboard/write', params: { kind: 'image', type: 'image/png', data: PIXEL } });
+  assert.deepEqual((await daemon.reply('clip-2')).result, { written: true });
+  const pasted = await app.evaluate(async ({ clipboard, nativeImage }) => {
+    for (const item of await clipboard.read()) {
+      if (!item.types.includes('image/png')) continue;
+      const blob = await item.getType('image/png');
+      return nativeImage.createFromBuffer(Buffer.from(await blob.arrayBuffer())).getSize();
+    }
+    return null;
+  });
+  assert.deepEqual(pasted, { width: 1, height: 1 });
+  daemon.send({ id: 'clip-3', method: 'clipboard/write', params: { kind: 'image', type: 'image/svg+xml', data: 'PHN2Zz4=' } });
+  assert.match((await daemon.reply('clip-3')).error.message, /PNG or JPEG/);
+
+  // An app that opens files by its own URL scheme: only a scheme an installed
+  // app's listing names, never a web page, file or script.
+  await app.evaluate(({ shell }) => {
+    globalThis.opened = [];
+    shell.openExternal = async (url) => { globalThis.opened.push(url); };
+  });
+  daemon.send({ id: 'url-1', method: 'url/open', params: { url: 'sketch://open?file=%2Ftmp%2Fa.png', scheme: 'sketch' } });
+  assert.deepEqual((await daemon.reply('url-1')).result, { opened: true });
+  for (const [id, url] of [['url-2', 'https://example.com/'], ['url-3', 'javascript:alert(1)'], ['url-4', 'file:///etc/passwd'], ['url-5', 'paint://open?file=x'], ['url-6', 'other://x']]) {
+    daemon.send({ id, method: 'url/open', params: { url } });
+    assert.ok((await daemon.reply(id)).error, `${url} was opened`);
+  }
+  assert.deepEqual(await app.evaluate(() => globalThis.opened), ['sketch://open?file=%2Ftmp%2Fa.png']);
+
   // Settings shows the connection and can undo it.
   await page.getByRole('button', { name: /^Settings/ }).click();
   await heading(page, 'Settings');
@@ -72,7 +112,7 @@ async function run() {
   await page.getByRole('status').filter({ hasText: 'Sunday no longer uses OpenAgora' }).waitFor();
   assert.deepEqual((await fakeCalls(app)).at(-1), ['sunday-disconnect']);
   assert.deepEqual(session.errors, []);
-  console.log('Engine link UI passed: connect consent, confirmation allow/deny/escape/queue, app/open, disconnect.');
+  console.log('Engine link UI passed: connect consent, confirmation allow/deny/escape/queue, app/open, clipboard, own URL schemes, disconnect.');
 }
 
 run().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => {

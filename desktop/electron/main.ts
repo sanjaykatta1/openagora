@@ -3,7 +3,7 @@
 // Sunday's shortcut and panel, and the menu bar or tray icon that keeps
 // OpenAgora running after its window closes.
 
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, Menu, nativeImage, screen, session, shell, Tray } from "electron";
+import { app, BrowserWindow, clipboard, ClipboardItem, globalShortcut, ipcMain, Menu, nativeImage, screen, session, shell, Tray } from "electron";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -297,6 +297,19 @@ async function openApproval(app: string, url: string): Promise<void> {
   window.focus();
 }
 
+/** Opens an app with a URL in its own scheme, for a handoff: only a scheme
+ *  that an installed app's listing names for taking files. */
+async function openOwnScheme(url: string): Promise<void> {
+  const scheme = url.slice(0, url.indexOf(":") + 1).toLowerCase();
+  const r = await runEngine(["catalog", "--json"]);
+  if (!r.ok) throw new Error(r.stderr || "could not read the catalog");
+  const apps = JSON.parse(r.stdout) as { installed?: boolean; destination?: { deliver?: string; url?: string | null } | null }[];
+  const declared = apps.some((a) => a.installed && a.destination?.deliver === "url-scheme"
+    && typeof a.destination.url === "string" && a.destination.url.toLowerCase().startsWith(scheme));
+  if (!declared) throw new Error("no installed app takes files by that URL scheme");
+  await shell.openExternal(url);
+}
+
 // --- The global shortcut and the tray ------------------------------------
 
 function registerShortcut(accelerator: string): void {
@@ -365,6 +378,15 @@ function startEngineLink(): EngineLink {
       if (purpose === "shortcut") lastPicture = thumbnail(picture);
       return picture;
     },
+    writeClipboard: async (content) => {
+      if (content.kind === "text") return clipboard.writeText(content.text);
+      // The clipboard takes pictures as PNG: a JPEG goes on as one.
+      const image = nativeImage.createFromBuffer(Buffer.from(content.data, "base64"));
+      if (image.isEmpty()) throw new Error("that picture can't be read");
+      const png = content.type === "image/png" ? Buffer.from(content.data, "base64") : image.toPNG();
+      await clipboard.write([new ClipboardItem({ "image/png": new Blob([png], { type: "image/png" }) })]);
+    },
+    openUrl: openOwnScheme,
     hello: windowReport,
     connected: (connected) => {
       for (const window of [mainWin, panelWin]) {

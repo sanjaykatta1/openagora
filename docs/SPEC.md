@@ -367,8 +367,21 @@ interface (`engine/src/destinations.rs`):
   the status (waited in steps of at most 240 s, under Hermes's 300 s call
   limit) and `t3_thread_read` the messages, commands and changes. A refused
   grant is forgotten and the user asked to connect again.
-- **Sunday's tools:** `destinations`, `send_to` (to an agent's inbox, or into a
-  task), `start_task`, `task_status`, `task_result`, and the connected app's own
+- **Fallbacks, for any agent or app.** `send_to` with `to = "clipboard"` puts
+  one picture (PNG or JPEG) or text on the clipboard, written by OpenAgora's
+  window; `to = "folder"`, with `folder`, saves items as new files into an
+  existing folder in the user's home, e.g. their project. A folder is never a
+  hidden one, `Library` or `AppData` (where a file could run at login), nor
+  OpenAgora's own data, and each save is asked for on its own: "always" isn't
+  offered, and isn't accepted. Nothing is overwritten (`name-2.ext`) or written
+  through a link. Catalog apps whose `[destination]` delivers by `folder`,
+  `url-scheme` or `clipboard` go the same way: a `url-scheme` app gets the file
+  saved under `<data>/handoff/` and its own URL opened by the window, which
+  opens only a scheme an installed app's listing names, never a web, file, mail
+  or script scheme. Sunday tells the user where things went.
+- **Sunday's tools:** `destinations`, `send_to` (to an agent's inbox, into a
+  task, onto the clipboard or into a folder), `start_task`, `task_status`,
+  `task_result`, and the connected app's own
   tools passed through as `<app>__<tool>` (reading is allowed once the user
   connected the app; anything else asks first; uploads stay the engine's). The
   hook lists the coding agents and apps Sunday can send to. The

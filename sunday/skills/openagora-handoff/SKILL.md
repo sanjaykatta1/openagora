@@ -1,7 +1,7 @@
 ---
 name: openagora-handoff
 description: Hand what the user is working on (screenshots, text, links, files) to their coding agents (Claude Code, Codex, OpenCode, T3 Code and others) through OpenAgora, start tasks there, and report back.
-version: 1.0.0
+version: 1.1.0
 author: OpenAgora
 license: MIT
 metadata:
@@ -22,7 +22,7 @@ Your tools on the `openagora` MCP server (`mcp__openagora__<tool>` in Hermes):
 | Tool | Use it to |
 |---|---|
 | `destinations` | see where you can send things, what each takes, and whether it's ready |
-| `send_to` | send desk items to a coding agent's inbox, with a note; or add them to a task you started |
+| `send_to` | send desk items to a coding agent's inbox, with a note; add them to a task you started; or, for anything else, put one on the clipboard (`clipboard`) or save them into a folder (`folder`, with its full path) |
 | `start_task` | start a task in an app that runs them (a new T3 Code thread), with desk items attached |
 | `task_status` | see whether a task finished; it can wait up to 240 seconds at a time |
 | `task_result` | read what a task did: the agent's messages, commands and changes |
@@ -46,6 +46,10 @@ the user first.
    Give the user the thread's link, written exactly as OpenAgora returns it.
 5. When the user asks how it went, use `task_status` (wait in steps if it's
    still running) and then `task_result`, and summarize it for them.
+6. For an agent or app that isn't set up, or isn't listed: `send_to` with
+   `clipboard` (one item: a picture or text, for the user to paste) or with
+   `folder` and the folder's full path (e.g. the user's project; ask which if
+   you don't know). Tell the user where it went: OpenAgora's answer says.
 
 ## Rules
 

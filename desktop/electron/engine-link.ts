@@ -2,8 +2,9 @@
 // its local socket. The engine asks the user to confirm agents' actions here
 // when the asking agent can't ask in its own chat, asks to show apps in tabs,
 // and asks the window to capture windows (only the window may ask the OS for
-// a picture). The window tells the engine about its own windows and the
-// shortcut, and puts things on the desk.
+// a picture), write the clipboard and open an app by its own URL scheme. The
+// window tells the engine about its own windows and the shortcut, and puts
+// things on the desk.
 
 import net from "node:net";
 
@@ -44,6 +45,10 @@ export interface Picture {
 /** Whom a capture is for: the shortcut's are shown in Sunday's panel. */
 export type CapturePurpose = "shortcut" | "tool";
 
+/** What the engine puts on the clipboard: a picture (base64) or text that
+ *  Sunday handed over. */
+export type ClipboardContent = { kind: "image"; type: "image/png" | "image/jpeg"; data: string } | { kind: "text"; text: string };
+
 export interface EngineLinkEvents {
   /** The engine wants the user's yes or no; resolve allowed only for an explicit yes. */
   confirm(request: ConfirmRequest): Promise<ConfirmAnswer>;
@@ -54,6 +59,10 @@ export interface EngineLinkEvents {
   openApproval(app: string, url: string): Promise<void>;
   /** The engine asks for a picture of a window. */
   capture(target: CaptureTarget, maxEdge: number, purpose: CapturePurpose): Promise<Picture>;
+  /** Sunday handed something to the clipboard, for the user to paste. */
+  writeClipboard(content: ClipboardContent): Promise<void>;
+  /** Sunday handed a file to an app that opens files by its own URL scheme. */
+  openUrl(url: string): Promise<void>;
   /** What the engine should know about this window when it (re)connects. */
   hello(): Record<string, unknown>;
   connected(connected: boolean): void;
@@ -202,6 +211,14 @@ export class EngineLink {
     } else if (message.method === "oauth/open" && message.id !== undefined) {
       if (typeof params.app !== "string" || typeof params.url !== "string") { fail("an approval page needs an app and an address"); return; }
       this.events.openApproval(params.app, params.url).then(() => reply({ opened: true }), fail);
+    } else if (message.method === "clipboard/write" && message.id !== undefined) {
+      const content = parseClipboard(params);
+      if (!content) { fail("the clipboard takes a PNG or JPEG picture, or text"); return; }
+      this.events.writeClipboard(content).then(() => reply({ written: true }), fail);
+    } else if (message.method === "url/open" && message.id !== undefined) {
+      const url = ownSchemeUrl(params.url);
+      if (!url) { fail("OpenAgora opens only an app's own URL scheme"); return; }
+      this.events.openUrl(url).then(() => reply({ opened: true }), fail);
     } else if (message.method === "app/open" && typeof params.id === "string") {
       this.events.openApp(params.id);
     } else if (message.id !== undefined && message.method !== undefined) {
@@ -221,4 +238,34 @@ export function parseTarget(value: unknown): CaptureTarget | null {
   if (target.kind === "tab" && typeof target.app === "string" && APP_ID.test(target.app)) return { kind: "tab", app: target.app };
   if (target.kind === "pick") return { kind: "pick" };
   return null;
+}
+
+/** The most the engine puts on the clipboard at once: a 20 MB desk item, as base64. */
+const CLIPBOARD_MAX = 28 * 1024 * 1024;
+
+export function parseClipboard(params: Record<string, unknown>): ClipboardContent | null {
+  if (params.kind === "text" && typeof params.text === "string" && params.text.length <= CLIPBOARD_MAX) {
+    return { kind: "text", text: params.text };
+  }
+  if (params.kind === "image" && (params.type === "image/png" || params.type === "image/jpeg")
+    && typeof params.data === "string" && params.data.length > 0 && params.data.length <= CLIPBOARD_MAX
+    && /^[A-Za-z0-9+/]+={0,2}$/.test(params.data)) {
+    return { kind: "image", type: params.type, data: params.data };
+  }
+  return null;
+}
+
+/** Schemes that open web pages, files, mail or scripts, or that Windows
+ *  runs tools with: never an app's own. */
+const NOT_AN_APPS_OWN = new Set([
+  "http", "https", "file", "ftp", "javascript", "vbscript", "data", "blob", "about", "mailto",
+  "ms-msdt", "search-ms", "search", "ms-officecmd", "ms-settings",
+]);
+
+/** `value`, when it is a URL in an app's own scheme. */
+export function ownSchemeUrl(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > 8192 || /[\s\0]/.test(value)) return null;
+  const match = /^([a-z][a-z0-9+.-]*):/i.exec(value);
+  if (!match || NOT_AN_APPS_OWN.has(match[1].toLowerCase())) return null;
+  return value;
 }

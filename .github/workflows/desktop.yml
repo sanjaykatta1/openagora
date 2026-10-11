@@ -1,6 +1,6 @@
 name: desktop
 # Builds the OpenAgora desktop app (Electron) with the engine bundled inside:
-# .dmg for macOS (Apple Silicon and Intel), .exe installer for Windows, and
+# .dmg for Macs with Apple Silicon, .exe installer for Windows, and
 # AppImage + .deb for Linux. Each release also carries the files the app's
 # Update button reads: latest*.yml, Mac .zip apps, and .blockmap files.
 #   - On every push to main that touches the app or engine: build and upload
@@ -41,7 +41,6 @@ jobs:
       matrix:
         include:
           - { name: macos-arm64, os: macos-14, target: aarch64-apple-darwin, arch: arm64 }
-          - { name: macos-x64, os: macos-15-intel, target: x86_64-apple-darwin, arch: x64 }
           - { name: windows-x64, os: windows-latest, target: x86_64-pc-windows-msvc, builder: --win --x64 }
           - { name: linux-x64, os: ubuntu-latest, target: x86_64-unknown-linux-musl, builder: --linux --x64 }
     runs-on: ${{ matrix.os }}
@@ -119,8 +118,8 @@ jobs:
               if path.suffix in {'.dmg', '.zip', '.exe', '.AppImage', '.deb'}:
                   subprocess.run([sys.executable, 'packaging/checksums.py', str(path)], check=True)
           PY
-      # The in-app updater reads latest*.yml from the release. Both Mac jobs
-      # write latest-mac.yml, so name each by architecture; publish merges them.
+      # The in-app updater reads latest*.yml from the release. Name the Mac
+      # job's latest-mac.yml by architecture; publish writes the release's one.
       - name: Keep the update files
         if: runner.os == 'macOS'
         shell: bash
@@ -152,10 +151,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
-      - name: Merge the Mac update files
+      # Apple Silicon only since 0.4.0 (the script also merges several).
+      - name: Write the Mac update file
         run: |
-          python3 src/packaging/merge-mac-update.py latest-mac.yml latest-mac-arm64.yml latest-mac-x64.yml
-          rm latest-mac-arm64.yml latest-mac-x64.yml
+          python3 src/packaging/merge-mac-update.py latest-mac.yml latest-mac-arm64.yml
+          rm latest-mac-arm64.yml
           ls latest.yml latest-mac.yml latest-linux.yml
       - uses: softprops/action-gh-release@v2
         with:

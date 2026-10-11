@@ -134,8 +134,9 @@ development signature tests and must not be used for distribution.
 The desktop app updates itself from GitHub releases (`electron-updater`), so
 each desktop release also carries `latest.yml`, `latest-mac.yml` and
 `latest-linux.yml`, the Mac apps as `.zip` (the format the Mac updater
-installs), and `.blockmap` files. The two Mac jobs each write their own
-`latest-mac.yml`; the publish job merges them with `merge-mac-update.py`.
+installs), and `.blockmap` files. Since 0.4.0 the desktop app is built for
+Apple Silicon Macs only; the publish job writes the release's `latest-mac.yml`
+from that build's with `merge-mac-update.py`, which can also merge several.
 
 The desktop workflow reuses the same six secrets and temporary-keychain wrapper.
 Electron Builder signs the app, its bundled CLI, and the DMG. Release and manual

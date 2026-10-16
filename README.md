@@ -32,15 +32,15 @@ An open-source app store for your desktop.
 
 ## Download
 
-Version 0.4.0, with Sunday across your apps and coding agents and a new app icon.
+Version 0.4.1, with reliable Handy opening on Linux and Hermes setup, removal and reinstall recovery.
 All downloads are on the [release page](https://github.com/sanjaykatta1/openagora/releases/latest).
 
 | Your computer | Download |
 |---|---|
-| Mac with Apple Silicon (M1 or later) | [OpenAgora-0.4.0-mac-arm64.dmg](https://github.com/sanjaykatta1/openagora/releases/download/v0.4.0/OpenAgora-0.4.0-mac-arm64.dmg) |
-| Windows | [OpenAgora-0.4.0-win-x64.exe](https://github.com/sanjaykatta1/openagora/releases/download/v0.4.0/OpenAgora-0.4.0-win-x64.exe) |
-| Linux (any distribution) | [OpenAgora-0.4.0-linux-x86_64.AppImage](https://github.com/sanjaykatta1/openagora/releases/download/v0.4.0/OpenAgora-0.4.0-linux-x86_64.AppImage) |
-| Debian / Ubuntu | [OpenAgora-0.4.0-linux-amd64.deb](https://github.com/sanjaykatta1/openagora/releases/download/v0.4.0/OpenAgora-0.4.0-linux-amd64.deb) |
+| Mac with Apple Silicon (M1 or later) | [OpenAgora-0.4.1-mac-arm64.dmg](https://github.com/sanjaykatta1/openagora/releases/download/v0.4.1/OpenAgora-0.4.1-mac-arm64.dmg) |
+| Windows | [OpenAgora-0.4.1-win-x64.exe](https://github.com/sanjaykatta1/openagora/releases/download/v0.4.1/OpenAgora-0.4.1-win-x64.exe) |
+| Linux (any distribution) | [OpenAgora-0.4.1-linux-x86_64.AppImage](https://github.com/sanjaykatta1/openagora/releases/download/v0.4.1/OpenAgora-0.4.1-linux-x86_64.AppImage) |
+| Debian / Ubuntu | [OpenAgora-0.4.1-linux-amd64.deb](https://github.com/sanjaykatta1/openagora/releases/download/v0.4.1/OpenAgora-0.4.1-linux-amd64.deb) |
 
 The Mac app needs Apple Silicon (M1 or later): Apple menu → About This Mac says
 "Chip: Apple M…". On a Mac with an Intel processor, use

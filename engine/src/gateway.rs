@@ -684,6 +684,18 @@ impl Gateway {
 
     fn open(&self, client: &Client, engine: &Engine, m: &Manifest) -> ToolResult {
         let mut entry = Entry::new(&client.id, "app_open", &m.id);
+        if m.ui.show_args.is_some() {
+            let result = match engine.show(m) {
+                Ok(_) => ToolResult::text(format!("Asked {} to show its own window.", m.name)),
+                Err(e) => {
+                    entry.outcome = format!("failed: {e:#}");
+                    ToolResult::error(format!("{e:#}"))
+                }
+            };
+            self.audit(&entry);
+            return result;
+        }
+
         let result = match engine.status(&m.id) {
             Ok(Status::Running(running)) => match (self.desktop(), running.url) {
                 (Some(desktop), _) => {

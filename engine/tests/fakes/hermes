@@ -101,6 +101,15 @@ case "$1" in
         fi
         rm -rf "$root/profiles/$3"
         echo "Deleted profile '$3'"
+        if [ "$FAKE_DELETE_IDENTITY_PENDING" = 1 ]; then
+          touch "$root/.identity-pending"
+          echo "Error: Profile '$3' was deleted, but its session/routing identity settlement is still pending — run: hermes profile purge-identity $3" >&2
+          exit 1
+        fi
+        exit 0 ;;
+      purge-identity)
+        if [ "$FAKE_PURGE_FAIL" = 1 ]; then echo 'Restart the gateway, then retry identity cleanup' >&2; exit 1; fi
+        rm -f "$root/.identity-pending"
         exit 0 ;;
     esac ;;
   dashboard)

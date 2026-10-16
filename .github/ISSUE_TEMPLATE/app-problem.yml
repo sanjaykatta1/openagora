@@ -1,0 +1,29 @@
+name: App will not install, open, or recover
+description: Report a reproducible app lifecycle failure.
+body:
+  - type: input
+    id: versions
+    attributes:
+      label: App and versions
+      description: App name, app version if known, and OpenAgora version.
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: OS version, CPU architecture, and on Linux the desktop and X11/Wayland session (for example Ubuntu 26.04, x64, GNOME Wayland).
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: What happened?
+      description: Exact steps, expected result, actual result. If an app was deleted, say whether it was removed in OpenAgora or outside it. Does opening it directly work?
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Startup error or relevant log excerpt
+      description: Remove tokens, account details, prompts and personal paths. Never attach .env files, private keys, full profiles or conversation history.

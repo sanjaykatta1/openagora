@@ -54,10 +54,11 @@ openagora catalog clipboard  # search
 openagora show handy         # what installing it involves on this machine
 openagora install handy      # shows the steps and asks before doing anything
 openagora start handy        # runs it in the background
+openagora open handy         # shows its own window, including an already-running instance
 openagora ps                 # installed apps and whether they're running
 openagora logs handy         # the app's recent output
 openagora stop handy
-openagora update handy       # runs the app's own update command, after asking
+openagora update hermes      # runs Hermes’s own updater, after asking
 openagora uninstall handy    # stops it and removes its folder
 openagora adopt t3code       # an app that's already on this computer: use it as it is
 ```
@@ -271,3 +272,20 @@ OpenAgora's tools.
 - macOS / Linux one-line installer: `rm ~/.local/bin/openagora`
 - Windows one-line installer: remove `%LOCALAPPDATA%\OpenAgora\bin\openagora.exe`
   and remove that directory from your **user** PATH in Environment Variables.
+
+## Handy on Linux
+
+New installs retain the upstream AppImage and launch it with AppImage’s supported
+FUSE-free extract-and-run mode. Handy’s original AppImage path and restart
+context are preserved for its own updater. Existing raw-AppImage installations
+show “Reinstall missing app” once so OpenAgora can add the launcher.
+
+On Ubuntu, missing runtime libraries are supplied by `libgtk-layer-shell0` and
+`libegl1`. Use **Open** to reach Handy’s own setup. Ubuntu 26.04 GNOME/Wayland
+needs Handy’s upstream ydotool/desktop-shortcut setup for dictation; a visible
+window alone does not prove that microphone capture or typing works. Follow
+[Handy’s Linux notes](https://github.com/cjpais/Handy#linux-notes).
+
+When startup fails, `openagora logs handy` shows the app’s output. Report the
+OS/version, architecture, session type and a redacted error excerpt. See the
+[reliability review](reliability-review.md) for the testing and AI-tool strategy.

@@ -162,6 +162,7 @@ async function installFakeEngine(app, state) {
     });
     handle('sunday-setup', (_e, choice) => {
       f().calls.push(['sunday-setup', choice]);
+      if (f().setupFailures > 0) { f().setupFailures--; return { ok: false, stdout: '', stderr: 'Temporary profile creation failure' }; }
       if (!f().installed) { f().installed = true; f().adopted = true; }
       f().setup = 'ready';
       return ok;

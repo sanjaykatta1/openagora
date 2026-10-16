@@ -541,7 +541,7 @@ function registerIpc(): void {
       !event.sender.isDestroyed() && event.sender.send("progress", { id: appId, line }),
     );
   });
-  for (const action of ["uninstall", "start", "stop"] as const) {
+  for (const action of ["uninstall", "start", "stop", "open"] as const) {
     handle(action, (_e, id: unknown) => {
       const args = [action, checkId(id)];
       if (action === "uninstall") args.push("--yes");

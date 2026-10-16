@@ -208,7 +208,7 @@ async function run() {
   await page.getByRole('alert').filter({ hasText: /Invalid settings/ }).waitFor();
   await shortcut.fill('CommandOrControl+Alt+K');
   await page.getByRole('button', { name: 'Save shortcut' }).click();
-  await page.getByRole('status').filter({ hasText: 'Sunday’s shortcut is now Ctrl + Alt + K.' }).waitFor();
+  await page.getByRole('status').filter({ hasText: `Sunday’s shortcut is now ${process.platform === 'darwin' ? 'Command' : 'Ctrl'} + Alt + K.` }).waitFor();
   const saved = JSON.parse(fs.readFileSync(path.join(directory, 'desktop-settings.json'), 'utf8'));
   assert.deepEqual(saved, { version: 1, shortcut: 'CommandOrControl+Alt+K', keepRunning: true });
   assert.equal(await app.evaluate(() => globalThis.openagoraTest.shortcutRegistered()), true);
@@ -219,6 +219,11 @@ async function run() {
   await page.getByRole('status').filter({ hasText: 'OpenAgora closes with its window.' }).waitFor();
   assert.equal(JSON.parse(fs.readFileSync(path.join(directory, 'desktop-settings.json'), 'utf8')).keepRunning, false);
   await keep.check();
+  await page.getByRole("status").filter({ hasText: "OpenAgora keeps running in the" }).waitFor();
+  // Start with a hidden panel; on macOS closing the main window can focus
+  // a visible panel, where the shortcut correctly toggles it closed.
+  await panel.keyboard.press("Escape");
+  await waitFor(async () => !(await panelVisible(app)), "the panel to hide");
 
   // Closing the window keeps OpenAgora running, so the shortcut still works.
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => !w.webContents.getURL().endsWith('#panel') && w.webContents.getURL().endsWith('index.html'))?.close());

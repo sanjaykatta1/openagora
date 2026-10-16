@@ -188,6 +188,8 @@ pub struct Step {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Install {
+    /// User-facing prerequisites and upstream setup guidance, optionally per OS.
+    pub notes: Option<PerOs<String>>,
     /// What the install leaves behind, checked afterwards: an executable name on
     /// PATH, or a path under `{app_dir}`.
     pub provides: PerOs<String>,
@@ -247,6 +249,8 @@ pub enum UiKind {
 #[serde(deny_unknown_fields)]
 pub struct Ui {
     pub kind: UiKind,
+    /// Arguments that show an existing single-instance native app.
+    pub show_args: Option<Vec<String>>,
     pub url: Option<String>,
     /// For apps that print their own address at startup, e.g. one carrying a
     /// one-time sign-in token: the text that comes right before it in the
@@ -443,11 +447,14 @@ impl Manifest {
                 &step.run,
                 STEP_PLACEHOLDERS,
             );
+            let uses_download = step.run.contains("{download}")
+                || step.run.contains("$OPENAGORA_DOWNLOAD")
+                || step.run.contains("$env:OPENAGORA_DOWNLOAD");
             match &step.download {
                 Some(download) => {
-                    if !step.run.contains("{download}") {
+                    if !uses_download {
                         out.push(format!(
-                            "install step {n} downloads a file but never uses {{download}}"
+                            "install step {n} downloads a file but never uses {{download}} or OPENAGORA_DOWNLOAD"
                         ));
                     }
                     if !self
@@ -466,7 +473,7 @@ impl Manifest {
                         out.push(format!("install step {n} has an invalid asset name"));
                     }
                 }
-                None if step.run.contains("{download}") => {
+                None if uses_download => {
                     out.push(format!(
                         "install step {n} uses {{download}} without a download"
                     ));
@@ -519,6 +526,14 @@ impl Manifest {
             }
             (_, Some(_)) => out.push("ui.url is only for kind = \"web\"".into()),
             (_, None) => {}
+        }
+        if let Some(args) = &self.ui.show_args {
+            if !matches!(self.ui.kind, UiKind::Window | UiKind::Background) {
+                out.push("ui.show_args is only for native window/background apps".into());
+            }
+            for arg in args {
+                check_placeholders(&mut out, "ui.show_args", arg, &["app_dir"]);
+            }
         }
         if let Some(marker) = &self.ui.url_from_log_after {
             if self.ui.kind != UiKind::Web {

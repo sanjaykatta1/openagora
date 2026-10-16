@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("openagora", {
   agentPreferences: () => ipcRenderer.invoke("agent-preferences"),
   saveAgentPreferences: (value: AgentPreferences) => ipcRenderer.invoke("save-agent-preferences", value),
   catalog: () => ipcRenderer.invoke("catalog"),
+  open: (id: string) => ipcRenderer.invoke("open", id),
   install: (id: string) => ipcRenderer.invoke("install", id),
   uninstall: (id: string) => ipcRenderer.invoke("uninstall", id),
   start: (id: string) => ipcRenderer.invoke("start", id),

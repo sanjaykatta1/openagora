@@ -75,6 +75,7 @@ export function SundayHome(props: {
   const [start, setStart] = useState<"fresh" | "clone" | null>(null);
   const autoSetup = useRef(false);
   useEffect(() => {
+    if (stage !== "setting-up") autoSetup.current = false;
     // OpenAgora just installed Hermes: set Sunday's profile up straight away.
     if (props.chosen && stage === "setting-up" && !autoSetup.current && !props.busy && !props.error) {
       autoSetup.current = true;
@@ -178,7 +179,7 @@ export function SundayHome(props: {
     {head}
     {body}
     {props.error && <div className="notice error sunday-error" role="alert">
-      {props.error} <button className="link" onClick={props.onRetry}>Try again</button>
+      {props.error} <button className="link" disabled={!!props.busy} onClick={() => { autoSetup.current = false; props.onRetry(); }}>Try again</button>
     </div>}
   </section>;
 }

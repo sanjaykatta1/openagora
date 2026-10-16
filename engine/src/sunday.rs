@@ -87,6 +87,15 @@ pub enum Start {
     Clone { channels: bool },
 }
 
+#[derive(Debug)]
+struct IdentityPending;
+impl fmt::Display for IdentityPending {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Hermes removed the profile; its identity cleanup is pending")
+    }
+}
+impl std::error::Error for IdentityPending {}
+
 /// The Hermes command line, always aimed at Sunday's profile.
 pub struct Hermes {
     exe: PathBuf,
@@ -122,6 +131,9 @@ impl Hermes {
     /// The installed version, or None if Hermes doesn't say.
     pub fn version(&self) -> Option<Version> {
         let out = self.run(&["--version"], QUICK).ok()?;
+        if !out.status.success() {
+            return None;
+        }
         Version::from_hermes_output(&String::from_utf8_lossy(&out.stdout))
     }
 
@@ -148,7 +160,10 @@ impl Hermes {
             .map(PathBuf::from)
             .filter(|path| path.file_name().is_some_and(|n| n == "config.yaml"))
             .with_context(|| format!("unexpected output from hermes config path: {stdout}"))?;
-        Ok(config.parent().map(Path::to_path_buf))
+        Ok(config
+            .parent()
+            .filter(|dir| is_profile(dir))
+            .map(Path::to_path_buf))
     }
 
     pub fn create(&self, start: Start) -> Result<()> {
@@ -166,7 +181,27 @@ impl Hermes {
 
     pub fn delete(&self) -> Result<()> {
         let args = ["profile", "delete", self.profile.as_str(), "--yes"];
+        let out = self.run(&args, SLOW)?;
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // Hermes 0.22.2 can delete the directory, then fail identity settlement.
+        // Only its exact retry instruction plus an absent profile authorizes this path.
+        if !out.status.success()
+            && text.contains(&format!("hermes profile purge-identity {}", self.profile))
+            && self.profile_dir()?.is_none()
+        {
+            return Err(IdentityPending.into());
+        }
+        check(out, &args)
+    }
+
+    fn purge_identity(&self) -> Result<()> {
+        let args = ["profile", "purge-identity", self.profile.as_str()];
         check(self.run(&args, SLOW)?, &args)
+            .context("Hermes removed Sunday's files but could not finish its identity cleanup. Follow Hermes's gateway instructions, then retry removing or setting up Sunday")
     }
 
     /// `hermes -p <profile> config set <key> <value>`; a JSON value is read by
@@ -372,7 +407,7 @@ pub fn report(engine: &Engine, m: &Manifest) -> Result<Report> {
         .and_then(|r| r.version.as_deref())
         .and_then(|v| Version::from_hermes_output(&format!("Hermes Agent v{v}")));
     let (profile, dir) = match (&saved, &hermes) {
-        (Some(saved), _) if is_profile(Path::new(&saved.dir)) => {
+        (Some(saved), Some(_)) if has_block(Path::new(&saved.dir)) => {
             (ProfileState::Ready, Some(PathBuf::from(&saved.dir)))
         }
         (_, None) => (ProfileState::Unknown, None),
@@ -429,19 +464,25 @@ pub fn setup(
             m.id
         );
     }
-    let ours = record(engine, m)?.is_some();
+    let mut previous = record(engine, m)?;
+    if previous.as_ref().is_some_and(|p| p.deletion_pending) {
+        hermes.purge_identity()?;
+    }
     let dir = match hermes.profile_dir()? {
         Some(dir) => {
-            if !ours && !has_block(&dir) && !use_existing {
+            if !has_block(&dir) && !use_existing {
                 bail!(
                     "A Hermes profile named {:?} already exists, and OpenAgora didn't create it. \
                      To use it for Sunday, run again with --use-existing.",
                     hermes.profile
                 );
             }
+            previous = previous.filter(|p| Path::new(&p.dir) == dir && has_block(&dir));
             dir
         }
         None => {
+            // A recreated profile has none of the old profile’s connections.
+            previous = None;
             let start = match start {
                 Some(start) => start,
                 None if installed.clean => Start::Fresh,
@@ -458,8 +499,8 @@ pub fn setup(
         }
     };
     write_soul(&dir)?;
-    let previous = record(engine, m)?;
     let profile = AgentProfile {
+        deletion_pending: false,
         profile: hermes.profile.clone(),
         dir: dir.display().to_string(),
         version: version.map(|v| v.to_string()),
@@ -625,7 +666,7 @@ pub fn prepare_start(engine: &Engine, m: &Manifest) -> Result<()> {
         format!("Sunday isn't set up yet. Set it up first: openagora sunday setup (it uses {}'s own profile)", m.name)
     })?;
     let dir = PathBuf::from(&saved.dir);
-    if !is_profile(&dir) {
+    if !has_block(&dir) {
         bail!(
             "Sunday's profile at {} is gone. Set Sunday up again: openagora sunday setup",
             dir.display()
@@ -659,16 +700,34 @@ pub fn remove_profile(engine: &Engine, m: &Manifest) -> Result<Option<String>> {
     let saved = record(engine, m)?;
     let note = match Hermes::find(engine, m) {
         Some(hermes) => match hermes.profile_dir()? {
-            Some(dir) if saved.is_some() || has_block(&dir) => {
-                hermes.delete()?;
+            Some(dir) if has_block(&dir) => {
+                if let Err(error) = hermes.delete() {
+                    if !error.is::<IdentityPending>() { return Err(error); }
+                    let mut pending = saved.clone().unwrap_or(AgentProfile {
+                        deletion_pending: true, profile: hermes.profile.clone(),
+                        dir: dir.display().to_string(), version: None,
+                        set_up_at: state::now(), connected: false, hooks_auto_accept_before: None,
+                    });
+                    pending.deletion_pending = true;
+                    state::write(&engine.paths.agent_profile_file(&m.id), &pending)?;
+                    hermes.purge_identity()?;
+                }
                 None
             }
             Some(dir) => Some(format!(
                 "The Hermes profile at {} wasn't created by OpenAgora, so it was kept.",
                 dir.display()
             )),
-            None => None,
+            None => {
+                if saved.as_ref().is_some_and(|p| p.deletion_pending) {
+                    hermes.purge_identity()?;
+                }
+                None
+            },
         },
+        None if saved.as_ref().is_some_and(|p| p.deletion_pending) => {
+            bail!("Hermes is missing while Sunday's identity cleanup is pending. Reinstall Hermes, then retry removing or setting up Sunday.");
+        }
         None => saved.map(|s| {
             format!(
                 "Hermes is no longer on this computer, so Sunday's profile folder {} was left in place.",

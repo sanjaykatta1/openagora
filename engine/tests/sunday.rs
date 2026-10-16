@@ -220,6 +220,99 @@ fn removing_sunday_deletes_only_its_profile() {
 }
 
 #[test]
+fn sunday_can_be_removed_and_recreated_repeatedly() {
+    let env = Env::new();
+    env.install_hermes_by_hand();
+    env.existing_hermes_setup();
+    let before = env.snapshot_outside_sunday();
+    for _ in 0..2 {
+        env.ok(&["sunday", "setup", "--fresh"]);
+        env.ok(&["start", "hermes"]);
+        assert_eq!(
+            env.json(&["sunday", "status", "--json"])["dashboard"],
+            "running"
+        );
+        env.ok(&["uninstall", "hermes", "--yes"]);
+        assert_eq!(
+            env.json(&["sunday", "status", "--json"])["setup"],
+            "missing"
+        );
+        assert_eq!(env.snapshot_outside_sunday(), before);
+    }
+}
+
+#[test]
+fn externally_deleted_profile_is_recreated_without_stale_connections() {
+    let env = Env::new();
+    env.ok(&["install", "hermes", "--yes"]);
+    env.ok(&["sunday", "setup"]);
+    let record = env.data.join("state/hermes.profile.toml");
+    let saved = fs::read_to_string(&record)
+        .unwrap()
+        .replace("connected = false", "connected = true");
+    fs::write(&record, saved).unwrap();
+    fs::remove_dir_all(env.sunday_dir()).unwrap();
+    assert_eq!(
+        env.json(&["sunday", "status", "--json"])["setup"],
+        "missing"
+    );
+    env.ok(&["sunday", "setup"]);
+    assert_eq!(
+        env.json(&["sunday", "status", "--json"])["connected"],
+        false
+    );
+    env.ok(&["start", "hermes"]);
+    env.ok(&["stop", "hermes"]);
+}
+
+#[test]
+fn externally_deleted_hermes_can_be_reinstalled_with_its_profile_preserved() {
+    let env = Env::new();
+    env.ok(&["install", "hermes", "--yes"]);
+    env.ok(&["sunday", "setup"]);
+    fs::write(
+        env.sunday_dir().join("memories/MEMORY.md"),
+        "Keep my memory",
+    )
+    .unwrap();
+    fs::remove_file(env.home.join(".local/bin/hermes")).unwrap();
+    let status = env.json(&["sunday", "status", "--json"]);
+    assert!(status["hermes"].is_null());
+    assert_eq!(status["setup"], "unknown");
+    env.ok(&["install", "hermes", "--yes"]);
+    assert_eq!(env.json(&["sunday", "status", "--json"])["setup"], "ready");
+    assert_eq!(
+        fs::read_to_string(env.sunday_dir().join("memories/MEMORY.md")).unwrap(),
+        "Keep my memory"
+    );
+    env.ok(&["start", "hermes"]);
+    env.ok(&["stop", "hermes"]);
+}
+
+#[test]
+fn a_replacement_profile_is_not_claimed_or_deleted_by_a_stale_record() {
+    let env = Env::new();
+    env.ok(&["install", "hermes", "--yes"]);
+    env.ok(&["sunday", "setup"]);
+    fs::remove_dir_all(env.sunday_dir()).unwrap();
+    fs::create_dir_all(env.sunday_dir()).unwrap();
+    fs::write(env.sunday_dir().join("config.yaml"), "model: mine").unwrap();
+    assert_eq!(
+        env.json(&["sunday", "status", "--json"])["setup"],
+        "foreign"
+    );
+    let setup = env.run(&["sunday", "setup"]);
+    assert!(!setup.status.success());
+    assert!(stderr(&setup).contains("--use-existing"));
+    assert!(!env.run(&["start", "hermes"]).status.success());
+    env.ok(&["uninstall", "hermes", "--yes"]);
+    assert_eq!(
+        fs::read_to_string(env.sunday_dir().join("config.yaml")).unwrap(),
+        "model: mine"
+    );
+}
+
+#[test]
 fn a_sunday_profile_openagora_did_not_create_is_left_alone() {
     let env = Env::new();
     env.install_hermes_by_hand();

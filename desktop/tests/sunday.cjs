@@ -64,6 +64,11 @@ async function freshUser(dashboard) {
   // Hermes is still here, so Sunday now asks how to start again.
   await page.getByRole('button', { name: /^Sunday/ }).click();
   await heading(page, 'You already use Hermes');
+  await page.getByRole('radio', { name: /Start fresh/ }).check();
+  await page.getByRole('button', { name: 'Set up Sunday' }).click();
+  await waitFor(async () => (await fakeCalls(app)).filter((c) => c[0] === 'start').length === 2, 'recreated Sunday to start');
+  await page.locator('.webview-bar').waitFor();
+  assert.deepEqual((await fakeCalls(app)).slice(-2), [['sunday-setup', 'fresh'], ['start', 'hermes']]);
   assert.deepEqual(session.errors, []);
   await app.close();
 
@@ -112,12 +117,32 @@ async function existingHermesUser(dashboard) {
   await session.app.close();
 }
 
+async function retryAndExternalRemoval(dashboard) {
+  const directory = tempProfile('openagora-sunday-retry-');
+  dirs.push(directory);
+  fs.writeFileSync(path.join(directory, 'personal-agent.json'), JSON.stringify({ version: 1, completed: true, selectedAgent: 'hermes' }));
+  session = await launch({ directory, fake: freshFakeState({ present: true, installed: true, clean: true, setup: 'missing', setupFailures: 1, dashboardUrl: dashboard.url }) });
+  const { app, page } = session;
+  await page.locator('.sunday-error').filter({ hasText: 'Temporary profile creation failure' }).waitFor();
+  assert.equal((await fakeCalls(app)).filter((c) => c[0] === 'sunday-setup').length, 1);
+  await page.locator('.sunday-error').getByRole('button', { name: 'Try again' }).click();
+  await page.locator('.webview-bar').waitFor();
+  assert.equal((await fakeCalls(app)).filter((c) => c[0] === 'sunday-setup').length, 2);
+  // Losing a profile while the home screen stays mounted must trigger fresh setup again.
+  await app.evaluate(() => { globalThis.fake.setup = 'missing'; globalThis.fake.running = false; });
+  await waitFor(async () => (await fakeCalls(app)).filter((c) => c[0] === 'start').length === 2, 'external profile removal recovery', 20000);
+  await page.locator('.webview-bar').waitFor();
+  assert.deepEqual(session.errors, []);
+  await app.close();
+}
+
 async function run() {
   const dashboard = await fakeDashboard();
   try {
     await freshUser(dashboard);
     dashboard.requests.length = 0;
     await existingHermesUser(dashboard);
+    await retryAndExternalRemoval(dashboard);
   } finally {
     dashboard.close();
   }

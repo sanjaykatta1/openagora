@@ -78,6 +78,8 @@ enum Cmd {
     },
     /// Start an installed app in the background.
     Start { id: String },
+    /// Show a native app window, starting it if needed.
+    Open { id: String },
     /// Stop a running app.
     Stop { id: String },
     /// List installed apps and whether they are running.
@@ -1718,6 +1720,14 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 }
             }
         }
+        Cmd::Open { id } => {
+            let catalog = load_catalog(&cli.catalog)?;
+            let m = listing(&catalog, &id)?;
+            match Engine::new()?.show(m)? {
+                Some(r) => println!("Opened {} (pid {})", m.name, r.pid),
+                None => println!("Asked the existing {} instance to open its window.", m.name),
+            }
+        }
         Cmd::Start { id } => {
             let catalog = load_catalog(&cli.catalog)?;
             let m = listing(&catalog, &id)?;
@@ -1818,6 +1828,9 @@ fn describe(m: &Manifest) {
     );
     match Os::current() {
         Some(os) if m.platforms.contains(&os) => {
+            if let Some(notes) = m.install.notes.as_ref().and_then(|n| n.for_os(os)) {
+                println!("before you start: {notes}");
+            }
             println!("install on {os}:");
             for step in m.steps_for(os) {
                 if let Some(d) = &step.download {
@@ -2019,12 +2032,14 @@ fn listing_json(engine: &Engine, m: &Manifest) -> anyhow::Result<serde_json::Val
         "profile": m.profile,
         "ui": format!("{:?}", m.ui.kind).to_lowercase(),
         "steps": steps,
+        "setup_notes": m.install.notes.as_ref().and_then(|notes| notes.for_os(os)),
         "permissions": permissions,
         "destination": destination,
         "mcp_auth": mcp_auth,
         "installed": installed,
         "adopted": record.as_ref().is_some_and(|i| i.adopted),
         "present": engine.present(m),
+        "can_open_window": m.ui.show_args.is_some(),
         "status": status,
         "pid": pid,
         "url": url,

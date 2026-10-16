@@ -118,6 +118,7 @@ pub fn spawn(program: &Path, args: &[String], cwd: &Path, log: &Path) -> Result<
         .with_context(|| format!("opening {}", log.display()))?;
     let mut cmd = Command::new(program);
     cmd.args(args)
+        .env("PATH", crate::apps::search_path())
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(out.try_clone()?)

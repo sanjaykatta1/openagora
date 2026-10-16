@@ -77,7 +77,7 @@ A listing describes an app in these parts. The full schema is in
 | `[install]` | what it provides (an executable on PATH or a path under `{app_dir}`), plus ordered steps per OS; a step can first download a file from the app's latest GitHub release, picked per CPU |
 | `[update]`, `[uninstall]` | the app's own commands for these |
 | `[run]` | command (same everywhere or per OS) and args, port (`auto`, fixed, or none), health check (`tcp` or `process`) |
-| `[ui]` | `web` (tab), `terminal`, `window` or `background`, plus URL for `web`, and optionally `url_from_log_after` for apps that print a one-time sign-in link (only 127.0.0.1/localhost addresses are accepted) |
+| `[ui]` | `web` (tab), `terminal`, `window` or `background`, optional `show_args` for raising a single-instance native app, plus URL for `web`, and optionally `url_from_log_after` for apps that print a one-time sign-in link (only 127.0.0.1/localhost addresses are accepted) |
 | `[agent]` | the app's MCP URL and auth, plus the permissions Sunday asks for |
 | `[destination]` | what Sunday may hand to the app: the MIME types or families it `accepts` (and `provides`), and how it's delivered: `mcp` (its own MCP server, through a built-in `adapter`), `folder`, `url-scheme` or `clipboard` |
 
@@ -721,3 +721,18 @@ real accounts are checked by hand.
 
 None combines a store, one window with each app's own UI, and one agent with
 memory across every app and coding agent.
+
+### Native launch and prerequisite metadata
+
+`[ui].show_args` declares that invoking the run command with these arguments
+asks an existing native instance to raise its window and exits. `[]` is valid
+(Handy). `openagora open` starts a stopped instance and then sends this
+activation request, so an upstream saved start-hidden preference still works.
+Web/terminal listings cannot declare this action. A handoff to an instance
+started outside OpenAgora does not invent a managed PID.
+
+`[install].notes` is optional plain text, shared or per OS. The desktop and CLI
+show it as prerequisite/upstream setup guidance. Installer steps receive
+`OPENAGORA_APP_DIR` and, when downloading, `OPENAGORA_DOWNLOAD`. Prefer quoted
+shell environment variables for paths; raw placeholder substitution is not
+shell escaping.

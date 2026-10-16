@@ -31,6 +31,19 @@ pub struct Engine {
 }
 
 #[derive(Debug)]
+struct RunningElsewhere(String);
+impl std::fmt::Display for RunningElsewhere {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} handed off to an existing instance outside OpenAgora",
+            self.0
+        )
+    }
+}
+impl std::error::Error for RunningElsewhere {}
+
+#[derive(Debug)]
 pub enum Status {
     Running(Running),
     Stopped,
@@ -66,6 +79,9 @@ impl Engine {
             if self.present(m) {
                 bail!("{} is already installed", m.name);
             }
+            // Missing files can still belong to a running process. Stop it
+            // before replacing its managed directory during repair.
+            self.stop(m)?;
             // Removed outside OpenAgora since: the record is stale.
             state::remove(&self.paths.state_file(&m.id))?;
         }
@@ -99,7 +115,7 @@ impl Engine {
             }
             Err(e) => {
                 let _ = fs::remove_dir_all(&app_dir);
-                Err(e.context(format!("installing {} failed; nothing was kept", m.name)))
+                Err(e.context(format!("installing {} failed; managed app files were cleaned up. The upstream installer may have left files outside OpenAgora", m.name)))
             }
         }
     }
@@ -124,7 +140,12 @@ impl Engine {
                 vars.insert("download", dest.display().to_string());
             }
             let script = fill(&step.run, &vars);
-            run_shell(step.shell, &script, app_dir)?;
+            run_shell(
+                step.shell,
+                &script,
+                app_dir,
+                vars.get("download").map(String::as_str),
+            )?;
         }
         let provides = m
             .install
@@ -179,6 +200,7 @@ impl Engine {
             self.shell(),
             &fill(&cmd.run, &vars(&[("app_dir", &app_dir)])),
             &app_dir,
+            None,
         )?;
         if m.role == Role::Agent {
             sunday::refresh_version(self, m)?;
@@ -211,6 +233,7 @@ impl Engine {
                 self.shell(),
                 &fill(&cmd.run, &vars(&[("app_dir", &app_dir)])),
                 &app_dir,
+                None,
             )?;
         }
         if app_dir.exists() {
@@ -301,10 +324,15 @@ impl Engine {
             }
             _ => {
                 std::thread::sleep(SETTLE);
-                if process::child_running(&mut child) {
-                    Ok(())
-                } else {
-                    Err(anyhow::anyhow!("the app exited right after starting"))
+                match child.try_wait()? {
+                    None => Ok(()),
+                    Some(exit) if exit.success() && m.ui.show_args.is_some() => {
+                        state::remove(&self.paths.run_file(&m.id))?;
+                        return Err(RunningElsewhere(m.name.clone()).into());
+                    }
+                    Some(exit) => Err(anyhow::anyhow!(
+                        "the app exited right after starting ({exit})"
+                    )),
                 }
             }
         };
@@ -332,6 +360,57 @@ impl Engine {
             }
         }
         Ok(running)
+    }
+
+    /// Open a native app's own window without restarting its managed instance.
+    pub fn show(&self, m: &Manifest) -> Result<Option<Running>> {
+        let args =
+            m.ui.show_args
+                .as_ref()
+                .with_context(|| format!("{} has no native window action", m.name))?;
+        let running = match self.status(&m.id)? {
+            Status::Stopped => match self.start(m) {
+                Ok(r) => r,
+                // The relaunch already raised an instance started outside OpenAgora.
+                Err(e) if e.is::<RunningElsewhere>() => return Ok(None),
+                Err(e) => return Err(e),
+            },
+            Status::Running(r) => r,
+        };
+        let app_dir = self.paths.app_dir(&m.id);
+        let vars = vars(&[("app_dir", &app_dir)]);
+        let command = fill(
+            m.run.command.for_os(self.os).context("no run command")?,
+            &vars,
+        );
+        let program = resolve(&command)
+            .with_context(|| format!("{command} was not found; reinstall {}", m.name))?;
+        let args: Vec<_> = args.iter().map(|a| fill(a, &vars)).collect();
+        let log = self.paths.log_file(&m.id);
+        let mut child = process::spawn(&program, &args, &app_dir, &log)?;
+        let deadline = std::time::Instant::now() + STOP_GRACE;
+        loop {
+            if let Some(exit) = child.try_wait()? {
+                if !exit.success() {
+                    bail!(
+                        "{} could not show its window ({exit}); see {}",
+                        m.name,
+                        log.display()
+                    );
+                }
+                return Ok(Some(running));
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = process::stop(child.id(), STOP_GRACE);
+                let _ = child.wait();
+                bail!(
+                    "{} did not acknowledge opening its window; see {}",
+                    m.name,
+                    log.display()
+                );
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
     }
 
     /// The port an app with an MCP server keeps: the engine's OAuth grant
@@ -376,7 +455,7 @@ pub fn fill(text: &str, vars: &BTreeMap<&'static str, String>) -> String {
     })
 }
 
-fn run_shell(shell: Shell, script: &str, cwd: &Path) -> Result<()> {
+fn run_shell(shell: Shell, script: &str, cwd: &Path, download: Option<&str>) -> Result<()> {
     let mut cmd = match shell {
         Shell::Sh => {
             let mut c = Command::new("sh");
@@ -396,6 +475,10 @@ fn run_shell(shell: Shell, script: &str, cwd: &Path) -> Result<()> {
             c
         }
     };
+    cmd.env_remove("OPENAGORA_DOWNLOAD");
+    if let Some(download) = download {
+        cmd.env("OPENAGORA_DOWNLOAD", download);
+    }
     let status = cmd
         .current_dir(cwd)
         .env("OPENAGORA_APP_DIR", cwd)

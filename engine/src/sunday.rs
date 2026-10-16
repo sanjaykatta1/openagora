@@ -122,6 +122,9 @@ impl Hermes {
     /// The installed version, or None if Hermes doesn't say.
     pub fn version(&self) -> Option<Version> {
         let out = self.run(&["--version"], QUICK).ok()?;
+        if !out.status.success() {
+            return None;
+        }
         Version::from_hermes_output(&String::from_utf8_lossy(&out.stdout))
     }
 
@@ -148,7 +151,10 @@ impl Hermes {
             .map(PathBuf::from)
             .filter(|path| path.file_name().is_some_and(|n| n == "config.yaml"))
             .with_context(|| format!("unexpected output from hermes config path: {stdout}"))?;
-        Ok(config.parent().map(Path::to_path_buf))
+        Ok(config
+            .parent()
+            .filter(|dir| is_profile(dir))
+            .map(Path::to_path_buf))
     }
 
     pub fn create(&self, start: Start) -> Result<()> {
@@ -372,7 +378,7 @@ pub fn report(engine: &Engine, m: &Manifest) -> Result<Report> {
         .and_then(|r| r.version.as_deref())
         .and_then(|v| Version::from_hermes_output(&format!("Hermes Agent v{v}")));
     let (profile, dir) = match (&saved, &hermes) {
-        (Some(saved), _) if is_profile(Path::new(&saved.dir)) => {
+        (Some(saved), Some(_)) if has_block(Path::new(&saved.dir)) => {
             (ProfileState::Ready, Some(PathBuf::from(&saved.dir)))
         }
         (_, None) => (ProfileState::Unknown, None),
@@ -429,19 +435,22 @@ pub fn setup(
             m.id
         );
     }
-    let ours = record(engine, m)?.is_some();
+    let mut previous = record(engine, m)?;
     let dir = match hermes.profile_dir()? {
         Some(dir) => {
-            if !ours && !has_block(&dir) && !use_existing {
+            if !has_block(&dir) && !use_existing {
                 bail!(
                     "A Hermes profile named {:?} already exists, and OpenAgora didn't create it. \
                      To use it for Sunday, run again with --use-existing.",
                     hermes.profile
                 );
             }
+            previous = previous.filter(|p| Path::new(&p.dir) == dir && has_block(&dir));
             dir
         }
         None => {
+            // A recreated profile has none of the old profile’s connections.
+            previous = None;
             let start = match start {
                 Some(start) => start,
                 None if installed.clean => Start::Fresh,
@@ -458,7 +467,6 @@ pub fn setup(
         }
     };
     write_soul(&dir)?;
-    let previous = record(engine, m)?;
     let profile = AgentProfile {
         profile: hermes.profile.clone(),
         dir: dir.display().to_string(),
@@ -625,7 +633,7 @@ pub fn prepare_start(engine: &Engine, m: &Manifest) -> Result<()> {
         format!("Sunday isn't set up yet. Set it up first: openagora sunday setup (it uses {}'s own profile)", m.name)
     })?;
     let dir = PathBuf::from(&saved.dir);
-    if !is_profile(&dir) {
+    if !has_block(&dir) {
         bail!(
             "Sunday's profile at {} is gone. Set Sunday up again: openagora sunday setup",
             dir.display()
@@ -659,7 +667,7 @@ pub fn remove_profile(engine: &Engine, m: &Manifest) -> Result<Option<String>> {
     let saved = record(engine, m)?;
     let note = match Hermes::find(engine, m) {
         Some(hermes) => match hermes.profile_dir()? {
-            Some(dir) if saved.is_some() || has_block(&dir) => {
+            Some(dir) if has_block(&dir) => {
                 hermes.delete()?;
                 None
             }

@@ -67,6 +67,7 @@ export function App() {
     try {
       setSunday(await bridge.sundayStatus());
     } catch (e) {
+      setSunday(null);
       setSundayError(String(e instanceof Error ? e.message : e));
     }
   }, []);
@@ -169,7 +170,7 @@ export function App() {
   const agentListing = byId.get(SUNDAY_ID);
 
   const act = useCallback(
-    async (app: Listing, action: "install" | "uninstall" | "start" | "stop" | "updateApp", verb: string) => {
+    async (app: Listing, action: "install" | "uninstall" | "start" | "stop" | "updateApp" | "open", verb: string) => {
       if (!bridge) return;
       const agent = app.role === "agent";
       setBusy((b) => ({ ...b, [app.id]: verb }));
@@ -181,11 +182,11 @@ export function App() {
       } catch (e) {
         result = { ok: false, stdout: "", stderr: String(e) };
       }
-      setBusy(({ [app.id]: _done, ...rest }) => rest);
       await refresh();
       if (agent) await refreshSunday();
+      setBusy(({ [app.id]: _done, ...rest }) => rest);
       if (result.ok) {
-        const done = { install: "installed", uninstall: "removed", start: "started", stop: "stopped", updateApp: "updated" }[action];
+        const done = { install: "installed", uninstall: "removed", start: "started", stop: "stopped", updateApp: "updated", open: "opened" }[action];
         setToast({ text: agent && action === "uninstall" ? `Sunday removed. ${app.name} is still installed.` : `${agent && action !== "install" && action !== "updateApp" ? "Sunday" : app.name} ${done}.`, error: false });
         if (agent && (action === "install" || action === "start")) setView({ kind: "sunday" });
         if (action === "stop" || action === "uninstall") setTabs((t) => t.filter((id) => id !== app.id));
@@ -211,9 +212,9 @@ export function App() {
     } catch (e) {
       result = { ok: false, stdout: "", stderr: String(e) };
     }
-    setBusy(({ [SUNDAY_ID]: _done, ...rest }) => rest);
     await refresh();
     await refreshSunday();
+    setBusy(({ [SUNDAY_ID]: _done, ...rest }) => rest);
     if (!result.ok) {
       setSundayError(result.stderr.trim() || "Couldn’t set Sunday up.");
       return;
@@ -396,7 +397,7 @@ export function App() {
             onOpenPage={(id) => setView({ kind: "app", id })}
             onStart={(a) => act(a, "start", "Starting…")}
             onStop={(a) => act(a, "stop", "Stopping…")}
-            onOpenTab={openTab}
+            onOpenTab={openTab} onOpenWindow={(a) => act(a, "open", "Opening…")}
             onBrowse={() => setView({ kind: "store" })}
           />
         )}
@@ -411,7 +412,7 @@ export function App() {
             onUninstall={(a) => act(a, "uninstall", "Removing…")}
             onStart={(a) => act(a, "start", "Starting…")}
             onStop={(a) => act(a, "stop", "Stopping…")}
-            onOpenTab={openTab}
+            onOpenTab={openTab} onOpenWindow={(a) => act(a, "open", "Opening…")}
           />
         )}
 
@@ -573,6 +574,7 @@ function Library(props: {
   onStart: (app: Listing) => void;
   onStop: (app: Listing) => void;
   onOpenTab: (id: string) => void;
+  onOpenWindow: (app: Listing) => void;
   onBrowse: () => void;
 }) {
   return (
@@ -608,7 +610,7 @@ function Library(props: {
                 </span>
               </button>
               <span className={app.status === "running" ? "dot on" : "dot"} />
-              <RunButtons app={app} busy={props.busy[app.id]} onStart={props.onStart} onStop={props.onStop} onOpenTab={props.onOpenTab} />
+              <RunButtons app={app} busy={props.busy[app.id]} onStart={props.onStart} onStop={props.onStop} onOpenTab={props.onOpenTab} onOpenWindow={props.onOpenWindow} />
             </li>
           ))}
         </ul>
@@ -623,12 +625,16 @@ function RunButtons(props: {
   onStart: (app: Listing) => void;
   onStop: (app: Listing) => void;
   onOpenTab: (id: string) => void;
+  onOpenWindow: (app: Listing) => void;
 }) {
   const { app } = props;
   if (props.busy) return <span className="small">{props.busy}</span>;
+  if (!app.present) return <span className="muted">App files missing · open its page to reinstall</span>;
+  if (app.can_open_window && app.status !== "running") return <button className="btn primary" onClick={() => props.onOpenWindow(app)}>Open</button>;
   if (app.status === "running")
     return (
       <span className="actions">
+        {app.can_open_window && <button className="btn primary" onClick={() => props.onOpenWindow(app)}>Open</button>}
         {app.ui === "web" && (
           <button className="btn primary" onClick={() => props.onOpenTab(app.id)}>
             {app.role === "agent" ? "Open Sunday" : "Open"}
@@ -656,6 +662,7 @@ function Detail(props: {
   onStart: (app: Listing) => void;
   onStop: (app: Listing) => void;
   onOpenTab: (id: string) => void;
+  onOpenWindow: (app: Listing) => void;
 }) {
   const { app } = props;
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -677,17 +684,18 @@ function Detail(props: {
         <div className="detail-actions">
           {!app.available ? (
             <span className="muted">Not available on {osName(window.openagora?.platform)}</span>
-          ) : !app.installed ? (
+          ) : !app.installed || !app.present ? (
             <button className="btn primary big" disabled={!!props.busy || !window.openagora} onClick={() => props.onInstall(app)}>
-              {props.busy ?? "Install"}
+              {props.busy ?? (app.installed ? "Reinstall missing app" : "Install")}
             </button>
           ) : (
-            <RunButtons app={app} busy={props.busy} onStart={props.onStart} onStop={props.onStop} onOpenTab={props.onOpenTab} />
+            <RunButtons app={app} busy={props.busy} onStart={props.onStart} onStop={props.onStop} onOpenTab={props.onOpenTab} onOpenWindow={props.onOpenWindow} />
           )}
         </div>
       </header>
 
       <p className="lead">{app.summary}</p>
+      {app.setup_notes && <div className="notice"><strong>Before you start</strong><p>{app.setup_notes}</p></div>}
 
       <div className="links">
         <button className="link" onClick={external(app.homepage)}>
@@ -864,6 +872,7 @@ function ConfirmInstall(props: { app: Listing; onCancel: () => void; onConfirm: 
         {app.role === "agent" && (
           <p>Sunday, OpenAgora’s personal agent, runs on {app.name}. After installing, OpenAgora creates {app.name}’s “{app.profile}” profile for Sunday.</p>
         )}
+        {app.setup_notes && <p className="notice">{app.setup_notes}</p>}
         {app.present ? (
           <p>{app.name} is already on this computer, so OpenAgora uses it as it is instead of installing it again.</p>
         ) : (

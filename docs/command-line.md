@@ -54,6 +54,7 @@ openagora catalog clipboard  # search
 openagora show handy         # what installing it involves on this machine
 openagora install handy      # shows the steps and asks before doing anything
 openagora start handy        # runs it in the background
+openagora open handy         # shows its own window, including an already-running instance
 openagora ps                 # installed apps and whether they're running
 openagora logs handy         # the app's recent output
 openagora stop handy
@@ -271,3 +272,20 @@ OpenAgora's tools.
 - macOS / Linux one-line installer: `rm ~/.local/bin/openagora`
 - Windows one-line installer: remove `%LOCALAPPDATA%\OpenAgora\bin\openagora.exe`
   and remove that directory from your **user** PATH in Environment Variables.
+
+## Handy on Linux
+
+New installs extract the complete upstream AppImage into an AppDir, so Handy
+does not need FUSE to start. Existing raw-AppImage installs show **Reinstall
+missing app** after upgrading OpenAgora; reinstall from its app page. This
+replaces only OpenAgora’s managed program files, not Handy’s own settings.
+
+On Ubuntu, missing runtime libraries are supplied by `libgtk-layer-shell0` and
+`libegl1`. Use **Open** to reach Handy’s own setup. Ubuntu 26.04 GNOME/Wayland
+needs Handy’s upstream ydotool/desktop-shortcut setup for dictation; a visible
+window alone does not prove that microphone capture or typing works. Follow
+[Handy’s Linux notes](https://github.com/cjpais/Handy#linux-notes).
+
+When startup fails, `openagora logs handy` shows the app’s output. Report the
+OS/version, architecture, session type and a redacted error excerpt. See the
+[reliability review](reliability-review.md) for the testing and AI-tool strategy.

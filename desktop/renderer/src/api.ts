@@ -31,12 +31,14 @@ export interface App {
   profile: string | null;
   ui: "web" | "terminal" | "window" | "background";
   steps: Step[];
+  setup_notes?: string | null;
   permissions: Permission[];
   installed: boolean;
   /** Already on this computer when OpenAgora started using it. */
   adopted: boolean;
   /** What the app provides is on this computer, whoever installed it. */
   present: boolean;
+  can_open_window?: boolean;
   status: Status;
   pid: number | null;
   /** Where to open the app: may be a one-time sign-in link it printed at startup. */
@@ -281,6 +283,7 @@ export interface Bridge {
   agentPreferences(): Promise<AgentPreferences>;
   saveAgentPreferences(value: AgentPreferences): Promise<AgentPreferences>;
   catalog(): Promise<App[]>;
+  open(id: string): Promise<EngineResult>;
   install(id: string): Promise<EngineResult>;
   uninstall(id: string): Promise<EngineResult>;
   start(id: string): Promise<EngineResult>;

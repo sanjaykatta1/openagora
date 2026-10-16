@@ -461,3 +461,100 @@ fn an_app_with_an_mcp_server_keeps_its_port() {
     assert_eq!(port_of(&fourth), moved);
     assert!(run(&env, &["stop", "mcpweb"]).status.success());
 }
+
+#[test]
+fn native_open_raises_the_existing_window_and_preserves_its_process() {
+    let env = setup(None);
+    let listing = env.catalog.join("apps/dl/app.toml");
+    fs::write(
+        &listing,
+        fs::read_to_string(&listing)
+            .unwrap()
+            .replace(
+                "command = \"{app_dir}/tool\"",
+                "command = \"{app_dir}/tool\"\nargs = [\"--start-hidden\"]",
+            )
+            .replace(
+                "kind = \"background\"",
+                "kind = \"background\"\nshow_args = []",
+            ),
+    )
+    .unwrap();
+    assert!(run(&env, &["install", "dl", "--yes"]).status.success());
+    let dir = env.home.join("apps/dl");
+    fs::write(
+        dir.join("tool"),
+        r#"#!/bin/sh
+if [ -f instance ] && kill -0 "$(cat instance)" 2>/dev/null; then
+  [ -f fail-open ] && exit 7
+  printf 'shown\n' >> windows
+  exit 0
+fi
+printf '%s' "$$" > instance
+printf '%s' "$*" > launch-args
+trap 'rm -f instance; exit 0' TERM INT
+while :; do sleep 1; done
+"#,
+    )
+    .unwrap();
+    let opened = run(&env, &["open", "dl"]);
+    assert!(opened.status.success(), "{}", stderr(&opened));
+    // Even a saved start-hidden preference must be overridden by activation.
+    assert_eq!(
+        fs::read_to_string(dir.join("launch-args")).unwrap(),
+        "--start-hidden"
+    );
+    let pid = fs::read_to_string(dir.join("instance")).unwrap();
+    let opened_again = run(&env, &["open", "dl"]);
+    let windows = fs::read_to_string(dir.join("windows")).unwrap();
+    let same_pid = fs::read_to_string(dir.join("instance")).unwrap();
+    fs::write(dir.join("fail-open"), "").unwrap();
+    let rejected = run(&env, &["open", "dl"]);
+    let stopped = run(&env, &["stop", "dl"]);
+    assert!(stopped.status.success());
+    assert!(opened_again.status.success(), "{}", stderr(&opened_again));
+    assert_eq!(windows.lines().count(), 2);
+    assert_eq!(pid, same_pid);
+    assert!(!rejected.status.success());
+    assert!(stderr(&rejected).contains("could not show its window"));
+}
+
+#[test]
+fn missing_managed_app_files_can_be_reinstalled() {
+    let env = setup(None);
+    assert!(run(&env, &["install", "dl", "--yes"]).status.success());
+    fs::remove_dir_all(env.home.join("apps/dl")).unwrap();
+    let listing: serde_json::Value =
+        serde_json::from_str(&stdout(&run(&env, &["catalog", "--json"]))).unwrap();
+    let listing = listing
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == "dl")
+        .unwrap();
+    assert_eq!(listing["installed"], true);
+    assert_eq!(listing["present"], false);
+    let reinstalled = run(&env, &["install", "dl", "--yes"]);
+    assert!(reinstalled.status.success(), "{}", stderr(&reinstalled));
+    assert!(env.home.join("apps/dl/tool").exists());
+}
+
+#[test]
+fn an_installer_that_exits_successfully_but_leaves_no_app_is_not_recorded() {
+    let env = setup(None);
+    let listing = env.catalog.join("apps/dl/app.toml");
+    let text = fs::read_to_string(&listing).unwrap().replace(
+        "provides = \"{app_dir}/tool\"",
+        "provides = \"{app_dir}/missing\"",
+    );
+    fs::write(listing, text).unwrap();
+    let out = run(&env, &["install", "dl", "--yes"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("install finished but"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!env.home.join("state/dl.toml").exists());
+    assert!(!env.home.join("apps/dl").exists());
+}

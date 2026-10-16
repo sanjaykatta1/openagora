@@ -17,7 +17,8 @@ cleanup() {
 trap cleanup EXIT
 "$OPENAGORA_BIN" install handy --yes 2>&1 | tee "$OPENAGORA_SMOKE_OUTPUT/install.log"
 cp "$OPENAGORA_HOME/state/handy.toml" "$OPENAGORA_SMOKE_OUTPUT/installed.toml"
-test -x "$OPENAGORA_HOME/apps/handy/Handy.AppDir/AppRun"
+test -x "$OPENAGORA_HOME/apps/handy/Handy-launcher"
+test -x "$OPENAGORA_HOME/apps/handy/Handy.AppImage"
 "$OPENAGORA_BIN" start handy
 "$OPENAGORA_BIN" open handy
 wait_window() {
@@ -31,6 +32,23 @@ wait_window() {
   return 1
 }
 window=$(wait_window)
+# Preserve the runtime context Tauri uses to update/restart the original AppImage.
+python3 - "$OPENAGORA_HOME/apps/handy/Handy.AppImage" "$OPENAGORA_SMOKE_OUTPUT" <<'PYENV'
+import json, pathlib, sys
+expected = sys.argv[1].encode()
+for entry in pathlib.Path('/proc').glob('[0-9]*/environ'):
+    try:
+        env = dict(item.split(b'=', 1) for item in entry.read_bytes().split(b'\0') if b'=' in item)
+    except (OSError, ValueError):
+        continue
+    if env.get(b'APPIMAGE') == expected and env.get(b'APPDIR'):
+        assert env.get(b'APPIMAGE_EXTRACT_AND_RUN') == b'1'
+        evidence = {k: env[k.encode()].decode() for k in ['APPIMAGE', 'APPDIR', 'APPIMAGE_EXTRACT_AND_RUN']}
+        (pathlib.Path(sys.argv[2])/'appimage-environment.json').write_text(json.dumps(evidence))
+        break
+else:
+    raise AssertionError('Handy lost its original AppImage update/restart context')
+PYENV
 "$OPENAGORA_BIN" catalog --json > "$OPENAGORA_SMOKE_OUTPUT/before.json"
 # Hiding and opening again must raise the same running instance.
 xdotool windowunmap "$window"

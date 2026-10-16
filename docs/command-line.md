@@ -275,12 +275,10 @@ OpenAgora's tools.
 
 ## Handy on Linux
 
-New installs extract the complete upstream AppImage into an AppDir, so Handy
-does not need FUSE to start. Existing raw-AppImage installs show **Reinstall
-missing app** after upgrading OpenAgora; reinstall from its app page. This
-replaces only OpenAgora’s managed program files, not Handy’s own settings.
-For later Handy updates in this extracted layout, use Remove and Install in
-OpenAgora. Handy’s in-app AppImage updater is not verified for an AppDir.
+New installs retain the upstream AppImage and launch it with AppImage’s supported
+FUSE-free extract-and-run mode. Handy’s original AppImage path and restart
+context are preserved for its own updater. Existing raw-AppImage installations
+show “Reinstall missing app” once so OpenAgora can add the launcher.
 
 On Ubuntu, missing runtime libraries are supplied by `libgtk-layer-shell0` and
 `libegl1`. Use **Open** to reach Handy’s own setup. Ubuntu 26.04 GNOME/Wayland

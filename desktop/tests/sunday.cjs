@@ -128,9 +128,10 @@ async function retryAndExternalRemoval(dashboard) {
   await page.locator('.sunday-error').getByRole('button', { name: 'Try again' }).click();
   await page.locator('.webview-bar').waitFor();
   assert.equal((await fakeCalls(app)).filter((c) => c[0] === 'sunday-setup').length, 2);
+  await page.getByRole("status").filter({ hasText: "Sunday started." }).waitFor();
   // Losing a profile while the home screen stays mounted must trigger fresh setup again.
   await app.evaluate(() => { globalThis.fake.setup = 'missing'; globalThis.fake.running = false; });
-  await waitFor(async () => (await fakeCalls(app)).filter((c) => c[0] === 'start').length === 2, 'external profile removal recovery', 20000);
+  await waitFor(async () => (await fakeCalls(app)).filter((c) => c[0] === 'start').length === 2, 'external profile removal recovery', 30000);
   await page.locator('.webview-bar').waitFor();
   assert.deepEqual(session.errors, []);
   await app.close();

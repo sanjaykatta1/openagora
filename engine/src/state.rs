@@ -29,6 +29,9 @@ pub struct Installed {
 /// The personal agent's own profile, once OpenAgora has set it up.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentProfile {
+    /// Hermes removed the files but still needs to settle this profile’s identity.
+    #[serde(default)]
+    pub deletion_pending: bool,
     pub profile: String,
     /// The profile's folder, as the agent reported it.
     pub dir: String,

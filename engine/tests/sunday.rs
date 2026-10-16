@@ -22,6 +22,7 @@ fn assert_only_sunday(env: &Env) {
             || call == "--version"
             || call.starts_with("profile create sunday ")
             || call == "profile delete sunday --yes"
+            || call == "profile purge-identity sunday"
             || call == "update";
         assert!(allowed, "unexpected Hermes call: {call}");
     }
@@ -425,4 +426,70 @@ fn a_dashboard_an_earlier_openagora_started_is_replaced() {
     let status = env.json(&["sunday", "status", "--json"]);
     assert_eq!(status["dashboard"], "running");
     env.ok(&["stop", "hermes"]);
+}
+
+#[test]
+fn hermes_partial_deletion_uses_its_supported_identity_cleanup_then_recreates() {
+    let mut env = Env::new();
+    env.env("FAKE_DELETE_IDENTITY_PENDING", "1");
+    env.ok(&["install", "hermes", "--yes"]);
+    env.ok(&["sunday", "setup"]);
+    env.ok(&["uninstall", "hermes", "--yes"]);
+    assert!(!env.hermes_root().join(".identity-pending").exists());
+    assert!(
+        env.hermes_calls()
+            .contains(&"profile purge-identity sunday".into())
+    );
+    env.ok(&["sunday", "setup", "--fresh"]);
+    assert_eq!(env.json(&["sunday", "status", "--json"])["setup"], "ready");
+    assert_only_sunday(&env);
+}
+
+#[test]
+fn failed_identity_cleanup_stays_retryable_after_the_profile_directory_is_gone() {
+    let mut env = Env::new();
+    env.env("FAKE_DELETE_IDENTITY_PENDING", "1");
+    env.env("FAKE_PURGE_FAIL", "1");
+    env.ok(&["install", "hermes", "--yes"]);
+    env.ok(&["sunday", "setup"]);
+    let failed = env.run(&["uninstall", "hermes", "--yes"]);
+    assert!(!failed.status.success());
+    assert!(stderr(&failed).contains("identity cleanup"));
+    assert!(!env.sunday_dir().exists());
+    assert!(
+        fs::read_to_string(env.data.join("state/hermes.profile.toml"))
+            .unwrap()
+            .contains("deletion_pending = true")
+    );
+    env.env("FAKE_PURGE_FAIL", "0");
+    env.ok(&["uninstall", "hermes", "--yes"]);
+    assert!(!env.data.join("state/hermes.profile.toml").exists());
+    assert!(!env.hermes_root().join(".identity-pending").exists());
+    assert_only_sunday(&env);
+}
+
+#[test]
+fn pending_identity_cleanup_survives_a_missing_hermes_and_retries_during_setup() {
+    let mut env = Env::new();
+    env.env("FAKE_DELETE_IDENTITY_PENDING", "1");
+    env.env("FAKE_PURGE_FAIL", "1");
+    env.ok(&["install", "hermes", "--yes"]);
+    env.ok(&["sunday", "setup"]);
+    assert!(!env.run(&["uninstall", "hermes", "--yes"]).status.success());
+    fs::remove_file(env.home.join(".local/bin/hermes")).unwrap();
+    let failed = env.run(&["uninstall", "hermes", "--yes"]);
+    assert!(!failed.status.success());
+    assert!(stderr(&failed).contains("Reinstall Hermes"));
+    assert!(env.data.join("state/hermes.profile.toml").exists());
+    env.ok(&["install", "hermes", "--yes"]);
+    env.env("FAKE_PURGE_FAIL", "0");
+    env.ok(&["sunday", "setup", "--fresh"]);
+    assert!(!env.hermes_root().join(".identity-pending").exists());
+    assert_eq!(env.json(&["sunday", "status", "--json"])["setup"], "ready");
+    assert!(
+        !fs::read_to_string(env.data.join("state/hermes.profile.toml"))
+            .unwrap()
+            .contains("deletion_pending = true")
+    );
+    assert_only_sunday(&env);
 }

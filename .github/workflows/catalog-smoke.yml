@@ -1,7 +1,7 @@
 name: catalog-smoke
 on:
   pull_request:
-    paths: ["catalog/apps/handy/**", "engine/**", "packaging/tests/handy-linux*", ".github/workflows/catalog-smoke.yml"]
+    paths: ["catalog/apps/handy/**", "catalog/apps/hermes/**", "engine/**", "packaging/tests/handy-linux*", "packaging/tests/hermes-linux*", ".github/workflows/catalog-smoke.yml"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -33,5 +33,28 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: handy-ubuntu-${{ matrix.ubuntu }}
+          path: evidence/
+          retention-days: 7
+
+  hermes-ubuntu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --locked --manifest-path engine/Cargo.toml
+      - name: Test the real Hermes installer and profile recovery
+        run: |
+          mkdir -p evidence
+          docker run --rm \
+            -v "$PWD:/src:ro" -v "$PWD/evidence:/evidence" \
+            ubuntu:26.04 bash /src/packaging/tests/hermes-linux-container.sh
+      - name: Keep release provenance and recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-ubuntu-26.04
           path: evidence/
           retention-days: 7

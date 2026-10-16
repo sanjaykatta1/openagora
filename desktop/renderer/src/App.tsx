@@ -67,7 +67,6 @@ export function App() {
     try {
       setSunday(await bridge.sundayStatus());
     } catch (e) {
-      setSunday(null);
       setSundayError(String(e instanceof Error ? e.message : e));
     }
   }, []);

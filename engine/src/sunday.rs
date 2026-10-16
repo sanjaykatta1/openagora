@@ -87,6 +87,15 @@ pub enum Start {
     Clone { channels: bool },
 }
 
+#[derive(Debug)]
+struct IdentityPending;
+impl fmt::Display for IdentityPending {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Hermes removed the profile; its identity cleanup is pending")
+    }
+}
+impl std::error::Error for IdentityPending {}
+
 /// The Hermes command line, always aimed at Sunday's profile.
 pub struct Hermes {
     exe: PathBuf,
@@ -172,7 +181,27 @@ impl Hermes {
 
     pub fn delete(&self) -> Result<()> {
         let args = ["profile", "delete", self.profile.as_str(), "--yes"];
+        let out = self.run(&args, SLOW)?;
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // Hermes 0.22.2 can delete the directory, then fail identity settlement.
+        // Only its exact retry instruction plus an absent profile authorizes this path.
+        if !out.status.success()
+            && text.contains(&format!("hermes profile purge-identity {}", self.profile))
+            && self.profile_dir()?.is_none()
+        {
+            return Err(IdentityPending.into());
+        }
+        check(out, &args)
+    }
+
+    fn purge_identity(&self) -> Result<()> {
+        let args = ["profile", "purge-identity", self.profile.as_str()];
         check(self.run(&args, SLOW)?, &args)
+            .context("Hermes removed Sunday's files but could not finish its identity cleanup. Follow Hermes's gateway instructions, then retry removing or setting up Sunday")
     }
 
     /// `hermes -p <profile> config set <key> <value>`; a JSON value is read by
@@ -436,6 +465,9 @@ pub fn setup(
         );
     }
     let mut previous = record(engine, m)?;
+    if previous.as_ref().is_some_and(|p| p.deletion_pending) {
+        hermes.purge_identity()?;
+    }
     let dir = match hermes.profile_dir()? {
         Some(dir) => {
             if !has_block(&dir) && !use_existing {
@@ -468,6 +500,7 @@ pub fn setup(
     };
     write_soul(&dir)?;
     let profile = AgentProfile {
+        deletion_pending: false,
         profile: hermes.profile.clone(),
         dir: dir.display().to_string(),
         version: version.map(|v| v.to_string()),
@@ -668,15 +701,33 @@ pub fn remove_profile(engine: &Engine, m: &Manifest) -> Result<Option<String>> {
     let note = match Hermes::find(engine, m) {
         Some(hermes) => match hermes.profile_dir()? {
             Some(dir) if has_block(&dir) => {
-                hermes.delete()?;
+                if let Err(error) = hermes.delete() {
+                    if !error.is::<IdentityPending>() { return Err(error); }
+                    let mut pending = saved.clone().unwrap_or(AgentProfile {
+                        deletion_pending: true, profile: hermes.profile.clone(),
+                        dir: dir.display().to_string(), version: None,
+                        set_up_at: state::now(), connected: false, hooks_auto_accept_before: None,
+                    });
+                    pending.deletion_pending = true;
+                    state::write(&engine.paths.agent_profile_file(&m.id), &pending)?;
+                    hermes.purge_identity()?;
+                }
                 None
             }
             Some(dir) => Some(format!(
                 "The Hermes profile at {} wasn't created by OpenAgora, so it was kept.",
                 dir.display()
             )),
-            None => None,
+            None => {
+                if saved.as_ref().is_some_and(|p| p.deletion_pending) {
+                    hermes.purge_identity()?;
+                }
+                None
+            },
         },
+        None if saved.as_ref().is_some_and(|p| p.deletion_pending) => {
+            bail!("Hermes is missing while Sunday's identity cleanup is pending. Reinstall Hermes, then retry removing or setting up Sunday.");
+        }
         None => saved.map(|s| {
             format!(
                 "Hermes is no longer on this computer, so Sunday's profile folder {} was left in place.",

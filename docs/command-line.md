@@ -58,7 +58,7 @@ openagora open handy         # shows its own window, including an already-runnin
 openagora ps                 # installed apps and whether they're running
 openagora logs handy         # the app's recent output
 openagora stop handy
-openagora update handy       # runs the app's own update command, after asking
+openagora update hermes      # runs Hermes’s own updater, after asking
 openagora uninstall handy    # stops it and removes its folder
 openagora adopt t3code       # an app that's already on this computer: use it as it is
 ```
@@ -279,6 +279,8 @@ New installs extract the complete upstream AppImage into an AppDir, so Handy
 does not need FUSE to start. Existing raw-AppImage installs show **Reinstall
 missing app** after upgrading OpenAgora; reinstall from its app page. This
 replaces only OpenAgora’s managed program files, not Handy’s own settings.
+For later Handy updates in this extracted layout, use Remove and Install in
+OpenAgora. Handy’s in-app AppImage updater is not verified for an AppDir.
 
 On Ubuntu, missing runtime libraries are supplied by `libgtk-layer-shell0` and
 `libegl1`. Use **Open** to reach Handy’s own setup. Ubuntu 26.04 GNOME/Wayland

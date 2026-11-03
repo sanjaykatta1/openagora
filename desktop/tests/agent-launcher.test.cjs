@@ -4,9 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { agentWorkflow, agentCommand } = require('../dist/electron/agent-workflows');
-const { PERSONAL_AGENTS } = require('../dist/electron/agents');
-const { findCommand, nativeCommand, launchAgent } = require('../dist/electron/agent-launcher');
+const { agentCommand, findCommand, nativeCommand, launchAgent } = require('../dist/electron/agent-launcher');
 
 function directory(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openagora agent's $test-"));
@@ -14,19 +12,17 @@ function directory(t) {
   return dir;
 }
 
-test('every choice has an upstream interface; unsupported IDs and arbitrary commands fail closed', async (t) => {
-  for (const agent of PERSONAL_AGENTS) assert.ok(agentWorkflow(agent.id).note);
-  for (const id of ['__proto__', 'constructor', '../hermes', null]) assert.throws(() => agentWorkflow(id));
+test('only Sunday\'s own setup can be launched; unsupported IDs and arbitrary commands fail closed', async (t) => {
+  for (const id of ['__proto__', 'constructor', '../hermes', null, 'openclaw']) assert.throws(() => agentCommand(id, 'setup'));
   for (const action of ['__proto__', 'constructor', 'setup; echo injected', ['setup']]) {
     assert.throws(() => agentCommand('hermes', action));
   }
   const dir = directory(t);
   await assert.rejects(launchAgent('hermes', 'arbitrary-shell', dir), /Unsupported/);
   assert.deepEqual(fs.readdirSync(dir), []);
-  // Sunday's shortcuts always name its own Hermes profile.
-  assert.deepEqual(agentCommand('hermes', 'setup').args, ['-p', 'sunday', 'setup']);
-  for (const command of Object.values(agentWorkflow('hermes').commands)) assert.deepEqual(command.args.slice(0, 2), ['-p', 'sunday']);
-  assert.deepEqual(agentCommand('openclaw', 'setup').args, ['onboard']);
+  // Sunday's setup always names its own Hermes profile.
+  assert.deepEqual(agentCommand('hermes', 'setup'), { executable: 'hermes', args: ['-p', 'sunday', 'setup'] });
+  assert.throws(() => agentCommand('hermes', 'chat'));
 });
 
 test('detection requires a real executable and supports Windows launchers', (t) => {

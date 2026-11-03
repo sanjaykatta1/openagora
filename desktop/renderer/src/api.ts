@@ -278,7 +278,6 @@ export interface TabEvent {
 
 export interface Bridge {
   platform: string;
-  agentAvailability(id: string): Promise<{ detected: boolean; launchable: boolean }>;
   launchAgent(id: string, action: string): Promise<void>;
   agentPreferences(): Promise<AgentPreferences>;
   saveAgentPreferences(value: AgentPreferences): Promise<AgentPreferences>;
@@ -309,7 +308,6 @@ export interface Bridge {
     showWindow(id: string): Promise<void>;
     reload(id: string): Promise<void>;
     close(id: string): Promise<void>;
-    url(id: string): Promise<string | null>;
     /** Apps popped out into their own windows (they outlive the main window). */
     popped(): Promise<string[]>;
     onEvent(callback: (event: TabEvent) => void): () => void;
@@ -385,3 +383,7 @@ export const bridge: Bridge | null = window.openagora ?? null;
 
 export const osName = (platform: string | undefined): string =>
   ({ darwin: "macOS", win32: "Windows", linux: "Linux" })[platform ?? ""] ?? "this computer";
+
+/** An error's own words, without Electron's "Error invoking remote method" wrapper. */
+export const errorText = (e: unknown): string =>
+  (e instanceof Error ? e.message : String(e)).replace(/^Error invoking remote method '[^']+': (Error: )?/, "");

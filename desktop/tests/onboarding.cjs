@@ -1,9 +1,10 @@
-// First launch: the personal-agent chooser, with the real preferences IPC in an
-// isolated Electron profile. The engine is faked; nothing is installed.
+// First launch: Sunday's home asks whether to use Sunday, with the real
+// preferences IPC in an isolated Electron profile. The engine is faked;
+// nothing is installed.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { freshFakeState, launch, tempProfile, heading } = require('./ui-helpers.cjs');
+const { freshFakeState, launch, tempProfile, heading, waitFor } = require('./ui-helpers.cjs');
 
 const directory = tempProfile('openagora-onboarding-');
 const file = path.join(directory, 'personal-agent.json');
@@ -14,9 +15,11 @@ async function start() {
   return session.page;
 }
 
+const saved = () => JSON.parse(fs.readFileSync(file, 'utf8'));
+
 async function run() {
   let page = await start();
-  await heading(page, 'Choose your personal agent');
+  await heading(page, 'Sunday');
   // On Linux the window carries OpenAgora's icon itself (Windows and macOS
   // show the packaged app's).
   if (process.platform === 'linux') {
@@ -26,73 +29,69 @@ async function run() {
     });
     assert.deepEqual(icon, { file: path.resolve(__dirname, '..', 'build', 'icons', '256x256.png'), size: { width: 256, height: 256 } });
   }
-  // Sunday is the only choice for now; every other agent says "Coming soon".
-  assert.equal(await page.getByRole('radio').count(), 7);
-  assert.equal(await page.locator('input[type=radio]:not([disabled])').count(), 1);
-  assert.equal(await page.getByText('Coming soon', { exact: true }).count(), 6);
-  assert.equal(await page.getByRole('radio', { name: /^OpenClaw/ }).isDisabled(), true);
-  assert.equal(await page.locator('input:checked').count(), 0);
-  assert.equal(await page.getByRole('button', { name: 'Select an agent to continue' }).isDisabled(), true);
-  assert.equal(await page.getByRole('button', { name: 'Store', exact: true }).count(), 0);
-  // Keyboard: the one enabled radio takes focus and space selects it.
-  await page.getByRole('radio', { name: /^Sunday/ }).focus();
-  await page.keyboard.press('Space');
-  assert.equal(await page.getByRole('radio', { name: /^Sunday/ }).isChecked(), true);
+  // Nothing is chosen yet: Sunday, credited to its makers, or not now.
+  await page.getByRole('button', { name: 'Use Sunday' }).waitFor();
+  await page.getByRole('button', { name: 'Not now' }).waitFor();
+  assert.match(await page.locator('body').innerText(), /Hermes Agent by Nous Research/);
+  assert.equal(fs.existsSync(file), false);
   if (process.env.ONBOARDING_SCREENSHOT) await page.screenshot({ path: process.env.ONBOARDING_SCREENSHOT, fullPage: true });
 
   // A small window never scrolls sideways.
   await session.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 600));
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
 
-  // Choosing later is remembered across a real restart.
-  await page.getByRole('button', { name: 'Choose later' }).click();
+  // "Not now" is remembered across a real restart, and the Store becomes home.
+  await page.getByRole('button', { name: 'Not now' }).click();
   await heading(page, 'Store');
-  assert.deepEqual(JSON.parse(fs.readFileSync(file)), { version: 1, completed: true, selectedAgent: null });
+  assert.deepEqual(saved(), { version: 1, completed: true, selectedAgent: null });
   await session.app.close();
   page = await start();
   await heading(page, 'Store');
 
-  // Sunday can be chosen later, from Settings; the choice survives a restart.
-  await page.getByRole('button', { name: /^Settings/ }).click();
-  await page.getByRole('button', { name: 'Change personal agent' }).click();
-  await page.getByRole('radio', { name: /^Sunday/ }).check();
-  await page.getByRole('button', { name: 'Continue with Sunday' }).click();
-  await heading(page, 'Sunday');
-  assert.equal(JSON.parse(fs.readFileSync(file)).selectedAgent, 'hermes');
+  // Sunday's page still offers Sunday, without asking again; the keyboard
+  // chooses it, and the choice survives a restart.
+  await page.getByRole('button', { name: /^Sunday/ }).click();
+  await page.getByRole('button', { name: 'Use Sunday' }).focus();
+  assert.equal(await page.getByRole('button', { name: 'Not now' }).count(), 0);
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Install Hermes' }).waitFor();
+  assert.equal(saved().selectedAgent, 'hermes');
   await session.app.close();
   page = await start();
-  await heading(page, 'Sunday');
+  await page.getByRole('button', { name: 'Install Hermes' }).waitFor();
 
-  // A failed save keeps the chooser open with an error and the old choice on disk.
+  // A failed save says so and keeps the old choice on disk.
   await page.getByRole('button', { name: /^Settings/ }).click();
-  await page.getByRole('button', { name: 'Change personal agent' }).click();
+  await page.getByRole('tab', { name: 'Sunday' }).click();
   fs.mkdirSync(`${file}.tmp`);
-  await page.getByRole('button', { name: 'Use without an agent' }).click();
-  await page.getByRole('alert').waitFor();
-  await heading(page, 'Choose your personal agent');
-  assert.equal(JSON.parse(fs.readFileSync(file)).selectedAgent, 'hermes');
+  await page.getByRole('button', { name: 'Stop using Sunday' }).click();
+  await page.getByRole('alert').filter({ hasText: 'Couldn’t save your choice.' }).waitFor();
+  assert.equal(saved().selectedAgent, 'hermes');
   fs.rmdirSync(`${file}.tmp`);
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await heading(page, 'Settings');
+  // Stopping takes Sunday's tabs out of Settings.
+  await page.getByRole('button', { name: 'Stop using Sunday' }).click();
+  await heading(page, 'Store');
+  assert.equal(saved().selectedAgent, null);
+  await page.getByRole('button', { name: /^Settings/ }).click();
+  assert.deepEqual(await page.getByRole('tab').allInnerTexts(), ['General', 'Activity']);
 
-  // An earlier choice of an agent that is now "Coming soon" just shows the chooser again.
+  // An earlier choice of an agent OpenAgora no longer offers just asks again.
   fs.writeFileSync(file, JSON.stringify({ version: 1, completed: true, selectedAgent: 'openclaw' }));
   await page.reload();
-  await heading(page, 'Choose your personal agent');
+  await page.getByRole('button', { name: 'Not now' }).waitFor();
   assert.equal(await page.getByRole('alert').count(), 0);
 
-  // Corrupt preferences are reported, kept, and replaced only by a new choice.
+  // Corrupt preferences are reported, kept, and replaced only by a new answer.
   fs.writeFileSync(file, '{broken');
   await page.reload();
-  await page.getByRole('button', { name: 'Retry', exact: true }).waitFor();
+  await page.getByRole('alert').filter({ hasText: 'Couldn’t read your saved choice' }).waitFor();
   assert.equal(fs.readFileSync(file, 'utf8'), '{broken');
-  await page.getByRole('button', { name: 'Choose again' }).click();
-  await heading(page, 'Choose your personal agent');
-  await page.getByRole('button', { name: 'Choose later' }).click();
+  await page.getByRole('button', { name: 'Not now' }).click();
   await heading(page, 'Store');
-  assert.deepEqual(JSON.parse(fs.readFileSync(file)), { version: 1, completed: true, selectedAgent: null });
+  await waitFor(() => fs.readFileSync(file, 'utf8') !== '{broken', 'the new answer to be saved');
+  assert.deepEqual(saved(), { version: 1, completed: true, selectedAgent: null });
   assert.deepEqual(session.errors, []);
-  console.log('Onboarding UI passed: Sunday only, coming soon, keyboard, small window, choose later, restart, change, failed save, retired choice, recovery.');
+  console.log('Onboarding UI passed: ask first, credit, small window, not now, restart, keyboard, stop using, failed save, retired choice, recovery.');
 }
 
 run().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => {

@@ -3,7 +3,19 @@ import path from "node:path";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { agentCommand, agentWorkflow } from "./agent-workflows";
+
+/** The agents' own commands the window may open in a terminal, by agent and
+ *  action: Hermes's setup, for Sunday's profile only. Nothing else runs. */
+const COMMANDS: Record<string, { executable: string; actions: Record<string, string[]> }> = {
+  hermes: { executable: "hermes", actions: { setup: ["-p", "sunday", "setup"] } },
+};
+
+export function agentCommand(id: unknown, action: unknown): { executable: string; args: string[] } {
+  if (typeof id !== "string" || !Object.hasOwn(COMMANDS, id)) throw new Error("Unknown personal agent");
+  const { executable, actions } = COMMANDS[id];
+  if (typeof action !== "string" || !Object.hasOwn(actions, action)) throw new Error("Unsupported agent action");
+  return { executable, args: actions[action] };
+}
 
 export function commandDirectories(env: NodeJS.ProcessEnv = process.env, platform = process.platform, home = os.homedir()): string[] {
   const extra = platform === "win32"
@@ -23,11 +35,6 @@ export function findCommand(command: string, directories = commandDirectories(),
       return candidate;
     } catch { /* Not installed here. */ }
   }
-}
-
-export function agentAvailability(id: unknown): { detected: boolean; launchable: boolean } {
-  const workflow = agentWorkflow(id);
-  return { detected: !!workflow.executable && !!findCommand(workflow.executable), launchable: !!workflow.executable };
 }
 
 export const shQuote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
@@ -51,9 +58,8 @@ function launch(command: string, args: string[], env: NodeJS.ProcessEnv): Promis
 /** Open an interactive terminal. No prompts, credentials, or agent output are captured. */
 export async function launchAgent(id: unknown, action: unknown, userData: string): Promise<void> {
   const selected = agentCommand(id, action);
-  const workflow = agentWorkflow(id);
-  const executable = workflow.executable && findCommand(workflow.executable);
-  if (!executable) throw new Error("The agent’s CLI was not found. Install it using its official guide, then refresh. Desktop-only installs may not provide a CLI.");
+  const executable = findCommand(selected.executable);
+  if (!executable) throw new Error(`${selected.executable} isn’t installed.`);
   const directory = path.join(userData, "agent-workspaces", id as string);
   fs.mkdirSync(directory, { recursive: true });
   const env = { ...process.env, PATH: commandDirectories().join(path.delimiter) };
@@ -68,7 +74,7 @@ export async function launchAgent(id: unknown, action: unknown, userData: string
   }
   const terminal = process.platform === "darwin" ? "/usr/bin/open"
     : ["x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal", "xterm"].map((name) => findCommand(name)).find(Boolean);
-  if (!terminal) throw new Error("No terminal app was found. Use the command shown below in your preferred terminal.");
+  if (!terminal) throw new Error(`No terminal app was found. Run “${[selected.executable, ...selected.args].join(" ")}” in a terminal.`);
   const sessions = path.join(userData, "agent-launchers");
   fs.mkdirSync(sessions, { recursive: true, mode: 0o700 });
   const script = path.join(sessions, `${randomUUID()}.command`);

@@ -6,7 +6,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { fakeDaemon, fakeDashboard, freshFakeState, launch, fakeCalls, tempProfile, heading, waitFor } = require('./ui-helpers.cjs');
+const { fakeDaemon, fakeDashboard, freshFakeState, launch, fakeCalls, tempProfile, waitFor } = require('./ui-helpers.cjs');
 
 let session;
 let daemon;
@@ -26,30 +26,32 @@ async function run() {
   const { app, page } = session;
   await waitFor(() => daemon.connected(), 'the window to connect to the engine');
   await page.getByRole('button', { name: /^Settings/ }).click();
-  await heading(page, 'Background mode');
+  await page.getByRole('tab', { name: 'Memory' }).click();
   const rows = page.getByRole('list', { name: 'Background mode' });
+  const mode = rows.getByRole('checkbox', { name: 'Background mode' });
   const indicator = page.locator('.background-indicator');
 
   // Off by default, and nothing says it captures.
-  await rows.getByText('Off', { exact: true }).waitFor();
+  await mode.waitFor();
+  assert.equal(await mode.isChecked(), false);
   assert.equal(await indicator.count(), 0);
   assert.doesNotMatch((await tray(app)).tooltip, /Background capture/);
 
   // Turned on only after the user reads what it keeps.
-  await rows.getByRole('button', { name: 'Turn on…' }).click();
+  await mode.click();
   const ask = page.getByRole('dialog', { name: 'Turn on background mode?' });
   const told = await ask.innerText();
-  assert.match(told, /apps you always allowed Sunday to see/);
-  assert.match(told, /never-capture list/);
-  assert.match(told, /for 7 days/);
-  assert.match(told, /sent to the model provider/);
+  assert.match(told, /apps Sunday can always see/);
+  assert.match(told, /on this computer, for 7 days/);
+  assert.match(told, /sent to its model provider/);
   await ask.getByRole('button', { name: 'Cancel' }).click();
+  assert.equal(await mode.isChecked(), false);
   assert.ok(!(await fakeCalls(app)).some((c) => c[0] === 'background-turn'));
-  await rows.getByRole('button', { name: 'Turn on…' }).click();
+  await mode.click();
   await ask.getByRole('button', { name: 'Turn on' }).click();
-  await page.getByRole('status').filter({ hasText: 'Background mode is on.' }).waitFor();
+  await rows.getByText('Capturing', { exact: true }).waitFor();
   assert.deepEqual((await fakeCalls(app)).at(-1), ['background-turn', true]);
-  await rows.getByText('Background capture is on').waitFor();
+  assert.equal(await mode.isChecked(), true);
   await indicator.filter({ hasText: 'Background capture is on' }).waitFor();
 
   // The engine tells the window, which shows it in the tray too.
@@ -59,39 +61,35 @@ async function run() {
 
   // Pause for an hour, then resume.
   await rows.getByRole('button', { name: 'Pause for an hour' }).click();
-  await page.getByRole('status').filter({ hasText: 'paused for an hour' }).waitFor();
+  await rows.getByText(/^Paused until \d/).waitFor();
   assert.deepEqual((await fakeCalls(app)).at(-1), ['background-pause', 60]);
-  await rows.getByText(/Background capture is paused until \d/).waitFor();
   await waitFor(async () => (await indicator.getAttribute('class'))?.includes('paused'), 'the sidebar to show the pause');
   daemon.send({ method: 'background/state', params: { on: true, paused: true, paused_until: Math.floor(Date.now() / 1000) + 3600, keep_days: 7 } });
   await waitFor(async () => /paused until/.test((await tray(app)).tooltip), 'the tray to show the pause');
   await rows.getByRole('button', { name: 'Resume' }).click();
-  await page.getByRole('status').filter({ hasText: 'Background capture is on again.' }).waitFor();
+  await rows.getByText('Capturing', { exact: true }).waitFor();
   assert.deepEqual((await fakeCalls(app)).at(-1), ['background-resume']);
-  await rows.getByRole('button', { name: 'Pause', exact: true }).click();
-  assert.deepEqual((await fakeCalls(app)).at(-1), ['background-pause', null]);
-  await rows.getByText('Background capture is paused', { exact: true }).waitFor();
-  await rows.getByRole('button', { name: 'Resume' }).click();
 
   // How long captures are kept.
   await app.evaluate(() => { globalThis.fake.background = { ...globalThis.fake.background, captures: 12, bytes: 3 * 1024 * 1024 }; });
-  await page.getByRole('combobox', { name: 'Keep captures for' }).selectOption('14');
-  await page.getByRole('status').filter({ hasText: 'keeps captures for 14 days' }).waitFor();
+  const keep = page.getByRole('combobox', { name: 'Keep captures for' });
+  await keep.selectOption('14');
+  await rows.getByText('12 captures · 3.0 MB').waitFor();
   assert.deepEqual((await fakeCalls(app)).at(-1), ['background-keep', 14]);
-  await rows.getByText('Kept: 12 captures, 3.0 MB, for 14 days.').waitFor();
+  assert.equal(await keep.inputValue(), '14');
 
   // Clear all, after a question.
   await rows.getByRole('button', { name: 'Clear all…' }).click();
   const clear = page.getByRole('dialog', { name: 'Delete everything background mode kept?' });
-  assert.match(await clear.innerText(), /12 captures, 3\.0 MB/);
+  assert.match(await clear.innerText(), /12 captures · 3\.0 MB/);
   await clear.getByRole('button', { name: 'Delete' }).click();
-  await page.getByRole('status').filter({ hasText: 'Everything background mode kept is deleted.' }).waitFor();
+  await rows.getByText('0 captures · 0.0 MB').waitFor();
   assert.deepEqual((await fakeCalls(app)).at(-1), ['background-clear']);
   assert.equal(await rows.getByRole('button', { name: 'Clear all…' }).isDisabled(), true);
 
   // Off: the sidebar and the tray stop showing it.
-  await rows.getByRole('button', { name: 'Turn off' }).click();
-  await page.getByRole('status').filter({ hasText: 'Background mode is off.' }).waitFor();
+  await mode.click();
+  await waitFor(async () => !(await mode.isChecked()), 'background mode to show as off');
   assert.deepEqual((await fakeCalls(app)).at(-1), ['background-turn', false]);
   await waitFor(async () => (await indicator.count()) === 0, 'the sidebar indicator to go');
   daemon.send({ method: 'background/state', params: { on: false, paused: false, paused_until: null, keep_days: 14 } });

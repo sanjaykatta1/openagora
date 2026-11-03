@@ -116,7 +116,7 @@ async function run() {
 
   // Bring it back: the same page, in its tab again.
   await page.bringToFront();
-  await page.getByRole('button', { name: 'Bring it back here' }).click();
+  await page.getByRole('button', { name: 'Bring back' }).click();
   await waitFor(async () => (await popoutWindows(app)).length === 0, 'the popped-out window to close');
   await waitFor(async () => { const [t] = await tabs(app); return t.visible && t.inMain && !t.popped; }, 'the page back in its tab');
   assert.equal(await notesPage(app, 'window.marker'), 42);
@@ -144,7 +144,7 @@ async function run() {
   await waitFor(() => (main = app.windows().find((w) => w.url().endsWith('index.html') && !w.isClosed())), 'the main window again');
   await main.getByRole('button', { name: 'Web notes', exact: true }).click();
   await main.getByText('Web notes is open in its own window.').waitFor();
-  await main.getByRole('button', { name: 'Bring it back here' }).click();
+  await main.getByRole('button', { name: 'Bring back' }).click();
   await waitFor(async () => { const [t] = await tabs(app); return t && t.visible && t.inMain; }, 'the page in the new main window');
   assert.equal(await notesPage(app, 'window.marker'), 42);
 

@@ -3,20 +3,20 @@
 // Sunday's shortcut and panel, and the menu bar or tray icon that keeps
 // OpenAgora running after its window closes.
 
-import { app, BaseWindow, BrowserWindow, clipboard, ClipboardItem, globalShortcut, ipcMain, Menu, nativeImage, screen, session, shell, systemPreferences, Tray } from "electron";
+import { app, BaseWindow, BrowserWindow, clipboard, ClipboardItem, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, screen, session, shell, systemPreferences, Tray } from "electron";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { readAgentPreferences, saveAgentPreferences } from "./preferences";
 import { registerUpdater } from "./updater";
-import { agentAvailability, commandDirectories, launchAgent } from "./agent-launcher";
+import { commandDirectories, launchAgent } from "./agent-launcher";
 import { EngineLink, parseBackground, type BackgroundState, type ConfirmAnswer, type ConfirmRequest, type Picture } from "./engine-link";
 import { capture, mayCapture, screenAccess } from "./capture";
 import { readDesktopSettings, saveDesktopSettings, type DesktopSettings } from "./desktop-settings";
 import { TRAY_ICON } from "./tray-icon";
 import { windowIcon } from "./app-icon";
 import { launchAtLogin, refreshLaunchAtLogin, setLaunchAtLogin, startedAtLogin } from "./login-item";
-import { bringBack, closeTab, configureTabs, coverTabs, describeTabs, focusedPopout, mainClosed, openTab, placeTab, poppedTabs, popouts, popOut, reloadTab, showPopout, shownInMain, tabText, tabUrl } from "./tabs";
+import { bringBack, closeTab, configureTabs, coverTabs, describeTabs, focusedPopout, mainClosed, openTab, placeTab, poppedTabs, popouts, popOut, reloadTab, showPopout, shownInMain, tabText } from "./tabs";
 
 const EXE = process.platform === "win32" ? "openagora.exe" : "openagora";
 const LOCAL_URL = /^http:\/\/(127\.0\.0\.1|localhost):\d+(\/|$)/;
@@ -69,6 +69,8 @@ function runEngine(args: string[], onLine?: (line: string) => void): Promise<Eng
 }
 
 const VALID_ID = /^[a-z][a-z0-9-]*$/;
+/** The page's own background, so a new window never flashes the wrong colour. */
+const windowBackground = () => (nativeTheme.shouldUseDarkColors ? "#111113" : "#ffffff");
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 let mainWin: BrowserWindow | null = null;
@@ -177,7 +179,7 @@ function createPanel(): BrowserWindow {
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
-    backgroundColor: "#0f1115",
+    backgroundColor: windowBackground(),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -293,7 +295,7 @@ async function openApproval(app: string, url: string): Promise<void> {
     title: "Approve OpenAgora",
     icon: windowIcon(),
     autoHideMenuBar: true,
-    backgroundColor: "#0f1115",
+    backgroundColor: windowBackground(),
     webPreferences: { partition: `persist:app-${app}`, sandbox: true, contextIsolation: true, nodeIntegration: false },
   });
   approvals.set(app, window);
@@ -335,7 +337,7 @@ function registerShortcut(accelerator: string): void {
   } catch {
     registered = false;
   }
-  shortcutError = registered ? null : `${accelerator.replace("CommandOrControl", process.platform === "darwin" ? "Command" : "Ctrl")} is taken by another app or by the system. Choose another shortcut in Settings.`;
+  shortcutError = registered ? null : `${accelerator.replace("CommandOrControl", process.platform === "darwin" ? "Command" : "Ctrl")} is in use by another app.`;
 }
 
 /** A dot in the icon's corner: background mode is capturing. Drawn into the
@@ -420,15 +422,15 @@ function updateTray(): void {
       tray.setImage(trayIcon(capturing));
     }
     const words = backgroundWords();
-    trayTooltip = `OpenAgora · Sunday, powered by Hermes Agent from Nous Research${words ? ` · ${words}` : ""}`;
+    trayTooltip = words ? `OpenAgora · ${words}` : "OpenAgora";
     tray.setToolTip(trayTooltip);
     const backgroundItems: Electron.MenuItemConstructorOptions[] = !background.on ? [] : [
       { type: "separator" },
       { label: words ?? "", enabled: false },
       background.paused
-        ? { label: "Resume background capture", click: () => void backgroundCommand(["resume"]) }
-        : { label: "Pause background capture for an hour", click: () => void backgroundCommand(["pause", "--minutes", "60"]) },
-      { label: "Turn off background capture", click: () => void backgroundCommand(["off"]) },
+        ? { label: "Resume", click: () => void backgroundCommand(["resume"]) }
+        : { label: "Pause for an hour", click: () => void backgroundCommand(["pause", "--minutes", "60"]) },
+      { label: "Turn off background mode", click: () => void backgroundCommand(["off"]) },
     ];
     tray.setContextMenu(Menu.buildFromTemplate([
       { label: "Open Sunday", accelerator: settings.shortcut, registerAccelerator: false, click: () => void onShortcut() },
@@ -533,7 +535,6 @@ function registerIpc(): void {
   });
   handle("agent-preferences", () => readAgentPreferences(app.getPath("userData")));
   handle("save-agent-preferences", (_e, value: unknown) => saveAgentPreferences(app.getPath("userData"), value));
-  handle("agent-availability", (_e, id: unknown) => agentAvailability(id));
   handle("launch-agent", (_e, id: unknown, action: unknown) => launchAgent(id, action, app.getPath("userData")));
   handle("install", (event, id: unknown) => {
     const appId = checkId(id);
@@ -611,7 +612,6 @@ function registerIpc(): void {
   mainOnly("tab-show-window", (id) => showPopout(checkId(id)));
   mainOnly("tab-reload", (id) => reloadTab(checkId(id)));
   mainOnly("tab-close", (id) => closeTab(checkId(id)));
-  mainOnly("tab-url", (id) => tabUrl(checkId(id)));
   mainOnly("tabs-popped", () => poppedTabs());
   ipcMain.on("tab-place", (event, id: unknown, bounds: unknown) => {
     if (!fromMain(event) || typeof id !== "string" || !VALID_ID.test(id)) return;
@@ -809,7 +809,7 @@ function createWindow(): BrowserWindow {
     minHeight: 600,
     title: "OpenAgora",
     icon: windowIcon(),
-    backgroundColor: "#0f1115",
+    backgroundColor: windowBackground(),
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),

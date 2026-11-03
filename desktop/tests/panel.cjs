@@ -81,10 +81,10 @@ async function run() {
   const panel = await panelPage(app);
   await panel.getByText('Sunday can’t see Web notes yet.').waitFor();
   assert.equal(await panelVisible(app), true);
-  assert.match(await panel.locator('.panel-head').innerText(), /powered by Hermes Agent( ↗)? from Nous Research( ↗)? · MIT license/);
+  assert.match(await panel.locator('.bar').innerText(), /^Sunday/);
   assert.equal(await app.evaluate(() => globalThis.openagoraTest.panel().isAlwaysOnTop()), true);
   await waitFor(() => dashboard.requests.includes('/chat?profile=sunday'), 'Sunday’s chat in the panel');
-  assert.match(await panel.locator('body').innerText(), /sent to the model provider/);
+  assert.match(await panel.locator('body').innerText(), /sent to its model provider/);
 
   // Allowing it captures the tab; the panel shows what Sunday got.
   await panel.getByRole('button', { name: 'Always allow' }).click();
@@ -146,7 +146,7 @@ async function run() {
     await panel.keyboard.press('Escape');
     await waitFor(async () => !(await panelVisible(app)), 'the panel to close');
     await press(app);
-    await panel.getByText(/can’t see which window you’re in here \(the window list failed\)/).waitFor();
+    await panel.getByText(/Can’t tell which window you’re in \(the window list failed\)/).waitFor();
     // The panel says the same with or without a picker, and can show the
     // last press for a moment: wait for this press's answer.
     const pickButton = panel.getByRole('button', { name: 'Pick a window' });
@@ -184,42 +184,51 @@ async function run() {
   const bad = await daemon.ask('capture/window', { target: { kind: 'file', path: '/etc/passwd' } });
   assert.match(bad.error.message, /unknown capture target/);
 
-  // Settings → What Sunday can see.
+  // Settings → Privacy: the apps Sunday may see and the never-capture list.
   await page.bringToFront();
   await page.getByRole('button', { name: /^Settings/ }).click();
-  await heading(page, 'What Sunday can see');
-  const shortcut = page.getByRole('textbox', { name: 'Sunday’s shortcut' });
-  assert.equal(await shortcut.inputValue(), 'CommandOrControl+Shift+Space');
-  assert.match(await page.locator('body').innerText(), /1Password, Private browser windows/);
+  await heading(page, 'Settings');
+  await page.getByRole('tab', { name: 'Privacy' }).click();
+  assert.match(await page.getByRole('listitem').filter({ hasText: 'Built in' }).innerText(), /1Password, Private browser windows/);
   // Allowed apps can be taken back.
   await page.getByRole('listitem').filter({ hasText: 'Firefox' }).getByRole('button', { name: 'Remove' }).click();
-  await page.getByRole('status').filter({ hasText: 'Sunday may no longer see Firefox.' }).waitFor();
+  await waitFor(async () => (await page.getByRole('listitem').filter({ hasText: 'Firefox' }).count()) === 0, 'Firefox to go');
   assert.deepEqual((await fakeCalls(app)).at(-1), ['broker-revoke', 'firefox']);
   // The never-capture list takes the user's own apps and window titles.
-  await page.getByLabel('An app').fill('Signal');
-  await page.getByRole('button', { name: 'Never capture' }).click();
-  await page.getByRole('status').filter({ hasText: 'OpenAgora will never capture Signal.' }).waitFor();
+  await page.getByLabel('App', { exact: true }).fill('Signal');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await page.getByRole('listitem').filter({ hasText: 'Signal' }).getByRole('button', { name: 'Remove' }).waitFor();
   assert.deepEqual((await fakeCalls(app)).at(-1), ['never-add', { name: 'Signal', app: 'Signal' }]);
+  assert.equal(await page.getByLabel('App', { exact: true }).inputValue(), '');
   await page.getByRole('listitem').filter({ hasText: 'Signal' }).getByRole('button', { name: 'Remove' }).click();
+  await waitFor(async () => (await fakeCalls(app)).at(-1)?.[0] === 'never-remove', 'Signal to go');
   assert.deepEqual((await fakeCalls(app)).at(-1), ['never-remove', 'Signal']);
-  // The shortcut can be changed; a shortcut without a key isn't saved.
-  await shortcut.fill('Shift+');
-  await page.getByRole('button', { name: 'Save shortcut' }).click();
-  await page.getByRole('alert').filter({ hasText: /Invalid settings/ }).waitFor();
-  await shortcut.fill('CommandOrControl+Alt+K');
-  await page.getByRole('button', { name: 'Save shortcut' }).click();
-  await page.getByRole('status').filter({ hasText: `Sunday’s shortcut is now ${process.platform === 'darwin' ? 'Command' : 'Ctrl'} + Alt + K.` }).waitFor();
-  const saved = JSON.parse(fs.readFileSync(path.join(directory, 'desktop-settings.json'), 'utf8'));
-  assert.deepEqual(saved, { version: 1, shortcut: 'CommandOrControl+Alt+K', keepRunning: true });
+
+  // Settings → General: Sunday's shortcut is recorded by pressing it. A lone
+  // modifier, or a key without one, isn't a shortcut.
+  const settingsFile = path.join(directory, 'desktop-settings.json');
+  const settings = () => (fs.existsSync(settingsFile) ? JSON.parse(fs.readFileSync(settingsFile, 'utf8')) : null);
+  await page.getByRole('tab', { name: 'General' }).click();
+  const shortcut = page.getByRole('textbox', { name: 'Sunday’s shortcut' });
+  const mac = process.platform === 'darwin';
+  assert.equal(await shortcut.inputValue(), mac ? '⇧⌘Space' : 'Ctrl+Shift+Space');
+  await shortcut.click();
+  await page.keyboard.press('Shift');
+  await page.keyboard.press('K');
+  assert.equal(settings(), null);
+  await page.keyboard.press('ControlOrMeta+Alt+K');
+  await waitFor(() => settings()?.shortcut === 'CommandOrControl+Alt+K', 'the new shortcut to be saved');
+  assert.deepEqual(settings(), { version: 1, shortcut: 'CommandOrControl+Alt+K', keepRunning: true });
+  await waitFor(async () => (await shortcut.inputValue()) === (mac ? '⌥⌘K' : 'Ctrl+Alt+K'), 'the new shortcut to show');
   assert.equal(await app.evaluate(() => globalThis.openagoraTest.shortcutRegistered()), true);
   // Keeping OpenAgora in the tray is on by default, and can be turned off.
-  const keep = page.getByRole('checkbox', { name: /Keep OpenAgora running/ });
+  const keep = page.getByRole('checkbox', { name: /^Keep running in the/ });
   assert.equal(await keep.isChecked(), true);
-  await keep.uncheck();
-  await page.getByRole('status').filter({ hasText: 'OpenAgora closes with its window.' }).waitFor();
-  assert.equal(JSON.parse(fs.readFileSync(path.join(directory, 'desktop-settings.json'), 'utf8')).keepRunning, false);
-  await keep.check();
-  await page.getByRole("status").filter({ hasText: "OpenAgora keeps running in the" }).waitFor();
+  await keep.click();
+  await waitFor(() => settings().keepRunning === false, 'keep running to be off');
+  await waitFor(async () => !(await keep.isDisabled()), 'the setting to be saved');
+  await keep.click();
+  await waitFor(() => settings().keepRunning === true, 'keep running to be on');
   // Start with a hidden panel; on macOS closing the main window can focus
   // a visible panel, where the shortcut correctly toggles it closed.
   await panel.keyboard.press("Escape");

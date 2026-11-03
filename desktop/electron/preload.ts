@@ -5,7 +5,6 @@ import type { AgentPreferences } from "./agents";
 
 contextBridge.exposeInMainWorld("openagora", {
   platform: process.platform,
-  agentAvailability: (id: string) => ipcRenderer.invoke("agent-availability", id),
   launchAgent: (id: string, action: string) => ipcRenderer.invoke("launch-agent", id, action),
   agentPreferences: () => ipcRenderer.invoke("agent-preferences"),
   saveAgentPreferences: (value: AgentPreferences) => ipcRenderer.invoke("save-agent-preferences", value),
@@ -47,7 +46,6 @@ contextBridge.exposeInMainWorld("openagora", {
     showWindow: (id: string) => ipcRenderer.invoke("tab-show-window", id),
     reload: (id: string) => ipcRenderer.invoke("tab-reload", id),
     close: (id: string) => ipcRenderer.invoke("tab-close", id),
-    url: (id: string) => ipcRenderer.invoke("tab-url", id),
     popped: () => ipcRenderer.invoke("tabs-popped"),
     onEvent: (callback: (event: unknown) => void) => {
       const handler = (_e: IpcRendererEvent, event: unknown) => callback(event);

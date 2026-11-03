@@ -1,6 +1,7 @@
-// OpenAgora's window and the engine service: the engine's confirmations shown
-// in the window, agents opening apps in tabs, handoffs through the clipboard or
-// an app's own URL scheme, and connecting Sunday to OpenAgora (with consent).
+// OpenAgora's window and the engine service: connecting Sunday to OpenAgora
+// (after showing exactly what changes), the engine's confirmations shown in
+// the window, agents opening apps in tabs, and handoffs through the clipboard
+// or an app's own URL scheme.
 // The engine side is a stand-in; Rust tests cover it.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -37,19 +38,27 @@ async function run() {
   const { app, page } = session;
   await waitFor(() => daemon.connected(), 'the window to connect to the engine');
 
-  // Before Sunday uses OpenAgora, the window explains what changes and asks.
-  await heading(page, 'Let Sunday use OpenAgora');
-  assert.match(await page.locator('body').innerText(), /hooks_auto_accept/);
-  await page.getByRole('button', { name: 'Connect Sunday' }).click();
-  await page.getByRole('status').filter({ hasText: 'Sunday now uses OpenAgora' }).waitFor();
-  assert.deepEqual(await fakeCalls(app), [['sunday-connect']]);
-  assert.equal(await page.getByRole('heading', { name: 'Let Sunday use OpenAgora' }).count(), 0);
+  // Before Sunday uses OpenAgora, the window shows exactly what changes in
+  // Sunday's profile, and asks.
+  await page.getByRole('button', { name: 'Start Sunday' }).click();
+  await page.getByText('Let Sunday use OpenAgora?').waitFor();
+  await page.getByRole('button', { name: 'Connect…' }).click();
+  const consent = page.getByRole('dialog', { name: 'Let Sunday use OpenAgora?' });
+  const changes = await consent.innerText();
+  assert.match(changes, /hermes -p sunday config set mcp_servers\.openagora/);
+  assert.match(changes, /hermes -p sunday config set hooks_auto_accept true/);
+  await consent.getByRole('button', { name: 'Cancel' }).click();
+  assert.deepEqual(await fakeCalls(app), [['start', 'hermes']]);
+  await page.getByRole('button', { name: 'Connect…' }).click();
+  await consent.getByRole('button', { name: 'Connect', exact: true }).click();
+  await waitFor(async () => (await page.getByRole('button', { name: 'Connect…' }).count()) === 0, 'the question to go once Sunday uses OpenAgora');
+  assert.deepEqual(await fakeCalls(app), [['start', 'hermes'], ['sunday-connect']]);
 
   // The engine asks the user in the window when the agent can't ask in its chat.
   daemon.send({ id: 'ask-1', method: 'confirm/ask', params: { client: 'sunday', title: 'Install Notes?', message: 'Install Notes? A notes app\nOn this computer OpenAgora will:\n  run: install-notes' } });
   const dialog = page.getByRole('alertdialog', { name: 'Install Notes?' });
   await dialog.waitFor();
-  assert.match(await dialog.innerText(), /Sunday asks OpenAgora/);
+  assert.equal(await dialog.locator('.modal-label').innerText(), 'Sunday');
   assert.match(await dialog.innerText(), /run: install-notes/);
   // "Don't allow" has the focus: Enter alone never allows.
   assert.equal(await page.evaluate(() => document.activeElement?.textContent), 'Don’t allow');
@@ -68,9 +77,10 @@ async function run() {
   assert.deepEqual((await daemon.reply('ask-3')).result, { allowed: false });
 
   // An agent asking to show an app opens its tab.
+  const loaded = dashboard.requests.length;
   daemon.send({ method: 'app/open', params: { id: 'notes' } });
   await page.getByRole('button', { name: 'Notes', exact: true }).waitFor();
-  await waitFor(() => dashboard.requests.length > 0, 'the app tab to load');
+  await waitFor(() => dashboard.requests.length > loaded, 'the app tab to load');
 
   // Sunday hands things over on the clipboard: text, or a PNG or JPEG.
   daemon.send({ id: 'clip-1', method: 'clipboard/write', params: { kind: 'text', text: 'TODO: ship it' } });
@@ -107,12 +117,14 @@ async function run() {
   // Settings shows the connection and can undo it.
   await page.getByRole('button', { name: /^Settings/ }).click();
   await heading(page, 'Settings');
-  assert.match(await page.locator('body').innerText(), /Sunday uses OpenAgora/);
-  await page.getByRole('button', { name: 'Disconnect' }).click();
-  await page.getByRole('status').filter({ hasText: 'Sunday no longer uses OpenAgora' }).waitFor();
+  await page.getByRole('tab', { name: 'Sunday' }).click();
+  const connected = page.getByRole('checkbox', { name: 'Let Sunday use OpenAgora' });
+  assert.equal(await connected.isChecked(), true);
+  await connected.click();
+  await waitFor(async () => !(await connected.isChecked()), 'Sunday to stop using OpenAgora');
   assert.deepEqual((await fakeCalls(app)).at(-1), ['sunday-disconnect']);
   assert.deepEqual(session.errors, []);
-  console.log('Engine link UI passed: connect consent, confirmation allow/deny/escape/queue, app/open, clipboard, own URL schemes, disconnect.');
+  console.log('Engine link UI passed: connect consent with the exact changes, confirmation allow/deny/escape/queue, app/open, clipboard, own URL schemes, disconnect.');
 }
 
 run().catch((error) => { console.error(error); process.exitCode = 1; }).finally(async () => {

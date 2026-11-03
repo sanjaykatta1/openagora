@@ -8,15 +8,14 @@ work to the coding agents you use. Underneath, Sunday is
 implement its own agent, chat screen, setup or settings. It shows Hermes's own
 dashboard and pages, labelled Sunday.
 
-**Credit where it's due.** OpenAgora says Sunday is Hermes Agent by Nous Research
-wherever Sunday appears: on the home screen, in the dashboard's bar, in Sunday's
-panel, in Settings, in the agent chooser and in OpenAgora's About box, each with
-a link to Hermes's source and its MIT license. Sunday says so itself when it
-describes who it is or what it runs on.
+**Credit where it's due.** OpenAgora names Hermes Agent by Nous Research where
+you meet Sunday, under its name on Sunday's page; in Settings → Sunday, with
+links to Hermes's source and its MIT license; and in OpenAgora's About box.
+Hermes's dashboard and chat, which OpenAgora shows as they are, carry Hermes's
+own name. Sunday says so itself when it describes who it is or what it runs on.
 
-Other personal agents (OpenClaw, Goose, nanobot, NanoClaw, PicoClaw and
-ZeroClaw) are shown in the chooser as **Coming soon**. If you chose one of them
-in an earlier version, OpenAgora shows the chooser again; nothing breaks.
+Sunday is the only personal agent for now. If you chose another agent in an
+earlier version, OpenAgora asks again; nothing breaks.
 
 ## One profile, and nothing else
 
@@ -33,24 +32,26 @@ never adds a `sunday` command to your PATH.
 
 ## Setting Sunday up
 
-Choose Sunday on first launch, or later from **Settings → Change personal
-agent**. Sunday is then OpenAgora's home screen. What happens next depends on
-whether Hermes is already on your computer:
+On first launch, Sunday's page asks: **Use Sunday** or **Not now**. After
+**Not now** the Store is home, and Sunday's page still offers **Use Sunday**.
+Once you use Sunday it is OpenAgora's home screen; **Stop using Sunday** in
+Settings → Sunday undoes that and leaves Hermes as it is. What happens next
+depends on whether Hermes is already on your computer:
 
 | You have | What OpenAgora does |
 |---|---|
 | No Hermes | Shows Hermes's official installer for review, installs it, creates the `sunday` profile (`hermes profile create sunday --no-alias`), starts Sunday and opens Hermes's own model setup. |
-| Hermes already, including one an earlier OpenAgora installed | Never reinstalls it: it is recorded as installed as it is. Then you choose **Start fresh** (`hermes profile create sunday --no-alias`) or **Bring my setup** (`… --clone`). A Hermes dashboard an earlier OpenAgora left running for your default profile is replaced by Sunday's. |
+| Hermes already, including one an earlier OpenAgora installed | Never reinstalls it: it is recorded as installed as it is. Then you choose **Start fresh** (`hermes profile create sunday --no-alias`) or **Bring my Hermes setup** (`… --clone`). A Hermes dashboard an earlier OpenAgora left running for your default profile is replaced by Sunday's. |
 | A Hermes older than 0.21.3 | Offers **Update Hermes**, which runs Hermes's own `hermes update`. |
-| A profile named `sunday` that OpenAgora didn't create | Asks before using it. If you agree, OpenAgora adds Sunday's identity to the top of its `SOUL.md` and keeps everything else. |
+| A profile named `sunday` that OpenAgora didn't create | Asks before using it (**Use existing “sunday” profile**). If you agree, OpenAgora adds Sunday's identity to the top of its `SOUL.md` and keeps everything else. |
 
-**Bring my setup** copies your current Hermes profile's settings, API keys,
+**Bring my Hermes setup** copies your current Hermes profile's settings, API keys,
 `SOUL.md`, skills and memory (`memories/MEMORY.md` and `USER.md`) into Sunday.
 It does not copy history, sessions or scheduled jobs.
 
 **Messaging bots** stay with your current Hermes. A bot can answer for only one
-profile at a time; Hermes blocks the duplicate. If you tick **Also copy my
-messaging bots** (`--clone-channels`), turn each bot off in your other setup.
+profile at a time; Hermes blocks the duplicate. If you tick **Include messaging
+bots** (`--clone-channels`), turn each bot off in your other setup.
 Otherwise create a new bot for Sunday later, in **Settings → Sunday → Channels**.
 
 **Model sign-ins** (Anthropic, OpenAI Codex and xAI logins) are shared with your
@@ -94,10 +95,10 @@ the per-reply hook below supplies it.
 
 ## Sunday and your apps
 
-Sunday reaches your apps only through OpenAgora. Once Sunday is set up, OpenAgora
-asks **Let Sunday use OpenAgora?** and explains what that changes in Sunday's
-Hermes profile. It makes the changes only after you agree, using Hermes's own
-`hermes -p sunday config set`:
+Sunday reaches your apps only through OpenAgora. Once Sunday runs, a bar above
+its dashboard asks **Let Sunday use OpenAgora?**; **Connect…** shows the exact
+Hermes commands that change Sunday's profile. OpenAgora makes the changes only
+after you agree, using Hermes's own `hermes -p sunday config set`:
 
 - **One MCP server: OpenAgora's gateway** (`openagora mcp --client sunday`). It is
   the only MCP server OpenAgora adds. Sunday gets the store tools through it: it
@@ -133,8 +134,9 @@ answered, and the outcome. Settings → Activity shows it, newest first, and fin
 entries by who asked or by words; `openagora audit` prints it. It stays on this
 computer.
 
-**Disconnect** in Settings → Sunday (or `openagora sunday disconnect`) removes only
-what OpenAgora added and puts `hooks_auto_accept` back as it was.
+Turning off **Let Sunday use OpenAgora** in Settings → Sunday (or `openagora sunday
+disconnect`) removes only what OpenAgora added and puts `hooks_auto_accept` back
+as it was.
 
 OpenAgora keeps a copy of its engine at `<data folder>/bin/openagora` for Sunday's
 configuration to point at, because the desktop app's own copy can move (a Linux
@@ -159,7 +161,7 @@ stays on top.
 - **Apps OpenAgora never captures:** password managers (1Password, Bitwarden,
   KeePassXC, LastPass, Dashlane, Keychain Access, Passwords and others), private
   and incognito browser windows, and Tor Browser. They can't be allowed. Add your
-  own apps, or words in window titles, in **Settings → What Sunday can see**.
+  own apps, or words in window titles, in **Settings → Privacy**.
   Browsers mark private windows in their titles, except Safari, so OpenAgora
   can't tell Safari's private windows apart. Whether Chrome marks them on macOS
   is still to be checked. Each capture checks the window's title again, as
@@ -177,12 +179,13 @@ them (or Sunday names one itself), and never-capture rules are never named to
 Sunday; the panel and Settings show them to you.
 
 Anything Sunday looks at is sent to the model provider you chose for Sunday.
-OpenAgora says so in the panel and in Settings.
+OpenAgora says so in the panel when you allow an app, and before background mode
+turns on.
 
 **The desk** is where what you share with Sunday waits: screenshots, and the
-clipboard or files you put there from the panel (**Add clipboard**, or drop files
-on the panel; the panel reads them and sends their contents, so no page can have
-OpenAgora read a file by its path). Items are kept on this computer, in a folder
+clipboard or files you put there from the panel (**Add clipboard**, **Add files…**,
+or drop files on the panel; the panel reads them and sends their contents, so no
+page can have OpenAgora read a file by its path). Items are kept on this computer, in a folder
 only you can open, for 24 hours. `openagora desk` lists and clears them.
 
 **Sunday can look again** with its `capture_window` tool, but only at apps you
@@ -208,8 +211,8 @@ could ask for what Sunday may see; on macOS that includes pictures of apps you
 always allowed, through OpenAgora's Screen Recording permission. Allow apps
 **once** when you only need it once; the audit log shows every capture.
 
-**Background mode** (off unless you turn it on, in **Settings → Background
-mode** or with `openagora background on`): while OpenAgora runs, it looks at the
+**Background mode** (off unless you turn it on, in **Settings → Memory** or
+with `openagora background on`): while OpenAgora runs, it looks at the
 window you're in when you switch windows, and every few minutes while you stay,
 and keeps what apps you **always** allowed Sunday to see show, a picture and the
 window's text, in a searchable history on this computer (SQLite full-text
@@ -217,16 +220,18 @@ search), for 7 days unless you choose 1 to 30. Sunday finds things in it with
 `history_search` and `history_get` when you ask about something you saw. Apps
 you allowed once, and apps and windows on the never-capture list, are never
 captured; take back an app and its captures drop out of what Sunday can find.
-**Pause** it (for an hour, or until you resume), **clear** everything it kept, or
-turn it off any time, in Settings or from the menu bar or tray. The icon there
+**Pause** it for an hour (or, with `openagora background pause`, until you
+resume), **clear** everything it kept, or turn it off any time, in Settings or
+from the menu bar or tray. The icon there
 shows a dot, and the sidebar says so, while it captures. Every capture is in the
 audit log. On Wayland it keeps only OpenAgora's own apps, since other windows
 can't be seen.
 
 **OpenAgora keeps running in the menu bar (or tray) after you close its window**,
 so the shortcut keeps working. **Quit OpenAgora** is in its menu. Turn this off,
-or change the shortcut, in **Settings → What Sunday can see**. There you can also
-have OpenAgora **open when you log in** (off unless you turn it on): it then
+or change the shortcut (click it and press the new keys), in **Settings →
+General**. There you can also have OpenAgora **open at login** (off unless you
+turn it on): it then
 starts in the tray, without its window, so the shortcut works right away
 (macOS opens it with its window; close it and OpenAgora stays in the menu bar).
 On Linux that's an entry in `~/.config/autostart`, which turning it off
@@ -236,10 +241,10 @@ removes.
 
 - **macOS** asks once for **Screen Recording** permission the first time
   OpenAgora captures another app's window (System Settings → Privacy & Security →
-  Screen Recording). Settings shows a button to that page. Reading other apps'
-  text needs **Accessibility** permission (System Settings → Privacy & Security →
-  Accessibility); Settings says when it's missing, with a button that lists
-  OpenAgora there. Chrome and Electron apps build their text for the system when
+  Screen Recording). Settings → Privacy shows a button to that page while it's
+  missing. Reading other apps' text needs **Accessibility** permission (System
+  Settings → Privacy & Security → Accessibility); Settings → Privacy shows a
+  button for it too, which lists OpenAgora there. Chrome and Electron apps build their text for the system when
   OpenAgora asks.
 - **Windows** needs no permission; OpenAgora uses Windows' own window capture,
   and UI Automation for text.
@@ -264,7 +269,7 @@ desk, with a note. In that coding agent, ask **"what did Sunday send me?"**: it
 reads its inbox through OpenAgora and sees the picture. Claude Code hears about
 it with your next prompt without being asked.
 
-**Set each agent up once**, in **Settings → Coding agents** (or with `openagora
+**Connect each agent once**, in **Settings → Coding agents** (or with `openagora
 agents setup <agent>`). OpenAgora shows you the exact command it will run, then
 runs the agent's own command to add OpenAgora's MCP server to that agent's
 settings:
@@ -276,8 +281,8 @@ settings:
 - Codex: `codex mcp add openagora -- …`.
 - OpenCode: `opencode mcp add openagora -- …` (`--global` for OpenCode 2).
 
-OpenAgora never edits an agent's settings files itself. Removing works the same
-way, with the agent's own command; OpenCode has none, so OpenAgora tells you what
+OpenAgora never edits an agent's settings files itself. **Disconnect…** works the
+same way, with the agent's own command; OpenCode has none, so OpenAgora tells you what
 to remove from its `opencode.json`. Another MCP agent can read what Sunday sends
 it too: add a server named `openagora` that runs `openagora mcp --client <name>`
 to its settings, then `openagora agents add <name> --name "<Name>"`.
@@ -324,7 +329,7 @@ never-capture list ever leaves, even where you always allowed sending. An agent
 only ever sees what was sent to it, never the rest of your desk, and what you
 send is shared with that agent and the model provider it uses. Every setup,
 connection, handoff, task and read is in the audit log. Take back "always" in
-**Settings → What Sunday can see**.
+**Settings → Privacy**.
 
 ## Sunday remembers what you did in your coding agents
 
@@ -339,7 +344,8 @@ The first time Sunday wants to read an agent's sessions, OpenAgora asks you in
 its own window: **Allow once** or **Always allow**, per agent. What Sunday reads
 goes to the model provider it uses. You can allow an agent ahead of time, or
 take it back, with `openagora sessions allow <agent>` and `openagora sessions
-revoke <agent>`; every read is in the audit log.
+revoke <agent>` (or **Take back** in Settings → Memory); every read is in the
+audit log.
 
 **Long-term memory.** Sunday's memory is Hermes's: its built-in memory
 (MEMORY.md and USER.md) is always on and stays across restarts, but holds only a
@@ -361,9 +367,8 @@ that back per agent in Settings → Memory.
 
 ## Home screen and settings
 
-The home screen is Hermes's dashboard for Sunday's profile, labelled **Sunday**,
-with a "powered by Hermes Agent from Nous Research" credit and a link to its MIT
-license. OpenAgora runs it
+The home screen is Hermes's dashboard for Sunday's profile, labelled **Sunday**.
+OpenAgora runs it
 as `hermes -p sunday dashboard --isolated --host 127.0.0.1 --port <port> --no-open`.
 `--isolated` gives Sunday a dashboard server of its own, so OpenAgora never
 attaches to, or takes over, a Hermes dashboard you already run. Pages always open
@@ -373,8 +378,7 @@ with `?profile=sunday`.
 Channels, Pairing, Skills, Plugins, MCP, Cron, Config, Keys, Sessions, Logs and
 System. Nothing is reimplemented. Messaging channels connected there (Discord,
 Telegram, WhatsApp, Slack, Signal and every other channel Hermes supports) answer
-as Sunday. **Run Sunday's setup in Terminal** opens Hermes's own
-`hermes -p sunday setup`.
+as Sunday. **Run setup in Terminal** opens Hermes's own `hermes -p sunday setup`.
 
 **Messaging gateway.** Hermes runs its own messaging gateway; by default one
 gateway serves every Hermes profile, so Sunday and your other Hermes can both
@@ -384,7 +388,7 @@ Phone messages need the gateway running and the computer awake.
 
 ## Removing Sunday
 
-**Settings → Remove Sunday** (or `openagora uninstall hermes`) asks first, then
+**Remove Sunday…** in Settings → Sunday (or `openagora uninstall hermes`) asks first, then
 deletes only the `sunday` profile with Hermes's own `hermes profile delete sunday
 --yes`. Hermes itself, your default profile and your other profiles stay. A
 profile named `sunday` that OpenAgora didn't set up is never deleted.
@@ -413,8 +417,8 @@ window and answered, the result read; OpenCode 1's own `opencode serve` with a
 password, OpenCode 2's service started with its own command). UI tests cover
 popping an app out (the same page without reloading, focus reported, captured
 and read in its own window, dialogs never hidden under an app, back to its tab,
-outliving the main window), Settings → Background mode with its indicator in
-the sidebar and the tray, Settings → Activity, opening at login (OpenAgora's own
+outliving the main window), background mode in Settings → Memory with its
+indicator in the sidebar and the tray, Settings → Activity, opening at login (OpenAgora's own
 autostart entry, written and removed; a start at login in the tray only), and
 background mode once with the real engine and a real window.
 
@@ -463,7 +467,7 @@ line's connect through the browser; the fallbacks (the clipboard, one item at a
 time; a folder, asked each time, never "always", only the user's own folders,
 nothing overwritten; apps that take files by a folder or their own URL scheme);
 and the audit rows. UI tests cover Settings → Coding agents (the exact command
-shown before anything runs, manual removal for OpenCode, T3 Code's connect),
+shown before anything runs, manual disconnecting for OpenCode, T3 Code's connect),
 the approval window with T3's own session, and the window writing the clipboard
 and opening only an installed app's own URL scheme.
 
@@ -490,8 +494,9 @@ private folder; the hook staying quiet about the screen on messaging channels
 and on turns that don't say where they come from, and telling about every desk
 item in time; and the audit log's entries. A test against a real X server checks the X11
 window query. UI tests cover the panel, its buttons, captures of an app tab and
-of a real window by its X11 id, the clipboard, Settings → What Sunday can see,
-keeping OpenAgora running after its window closes, dropped files sent as their
+of a real window by its X11 id, the clipboard, Settings → Privacy, recording a
+new shortcut in Settings → General, keeping OpenAgora running after its window
+closes, dropped files sent as their
 contents, the window picker offered only when the engine says so, and pages in
 OpenAgora refused the screen. One end-to-end test runs the real engine with the
 real window, capturing another process's real window through the OS, reading it
@@ -522,14 +527,14 @@ fresh and bring my setup, with and without messaging bots, with every file outsi
 `profiles/sunday` checked to be unchanged; the minimum version and `hermes
 update`; removing Sunday deleting only its profile; never taking over or deleting a
 `sunday` profile OpenAgora didn't create; the `SOUL.md` block keeping the user's
-own text; the chooser's coming-soon agents; and Settings → Sunday opening each
-page with `?profile=sunday`.
+own text; using Sunday, not now and stopping, across restarts; and Settings →
+Sunday opening each page with `?profile=sunday`.
 
 Not tested automatically, and to be checked by hand with a real Hermes: Hermes's
 own installer and `hermes update`; signing in to a model provider in Hermes's
 setup; Sunday answering "who are you?" as Sunday; connecting a real Discord or
 Telegram bot and getting a reply from Sunday; the gateway status shown for a
 real gateway; Hermes loading the `openagora` MCP server, the hook and the skill
-after **Connect Sunday**; and asking Sunday to install an app, with Hermes's
+after **Connect**; and asking Sunday to install an app, with Hermes's
 approval prompt in the dashboard chat and on a messaging channel. Native assistant
 features and channels depend on the installed Hermes version.

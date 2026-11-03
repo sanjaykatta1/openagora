@@ -11,12 +11,12 @@
 // - No preload, no Node, sandboxed, with context isolation. Like every page in
 //   OpenAgora, no camera, microphone or screen (main.ts).
 
-import { BaseWindow, shell, WebContentsView, type BrowserWindow, type Rectangle, type WebContents } from "electron";
+import { BaseWindow, nativeTheme, shell, WebContentsView, type BrowserWindow, type Rectangle, type WebContents } from "electron";
 import { windowIcon } from "./app-icon";
 
 const LOCAL_URL = /^http:\/\/(127\.0\.0\.1|localhost):\d+(\/|$)/;
 const VALID_ID = /^[a-z][a-z0-9-]*$/;
-const BACKGROUND = "#0f1115";
+const background = () => (nativeTheme.shouldUseDarkColors ? "#111113" : "#ffffff");
 
 /** What the main window's page hears about its tabs. */
 export interface TabEvent {
@@ -128,7 +128,7 @@ export function openTab(id: string, name: string, url: string, pid: number): voi
   const view = new WebContentsView({
     webPreferences: { partition: `persist:app-${id}`, sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false },
   });
-  view.setBackgroundColor(BACKGROUND);
+  view.setBackgroundColor(background());
   view.setVisible(false);
   const tab: Tab = { id, name, pid, view, bounds: null, shownIn: null, popout: null };
   tabs.set(id, tab);
@@ -185,7 +185,7 @@ export function popOut(id: string): void {
     minHeight: 240,
     title: tab.name,
     icon: windowIcon(),
-    backgroundColor: BACKGROUND,
+    backgroundColor: background(),
     autoHideMenuBar: true,
     show: false,
   });
@@ -255,12 +255,6 @@ export function closeTab(id: string): void {
 export function reloadTab(id: string): void {
   const contents = tabs.get(id)?.view.webContents;
   if (contents && !contents.isDestroyed()) contents.reload();
-}
-
-/** The address a tab shows now. */
-export function tabUrl(id: string): string | null {
-  const contents = tabs.get(id)?.view.webContents;
-  return contents && !contents.isDestroyed() ? contents.getURL() : null;
 }
 
 /** The apps whose tabs are popped out, for a main window that opens again. */

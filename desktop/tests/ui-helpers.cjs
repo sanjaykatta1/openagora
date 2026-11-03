@@ -7,6 +7,7 @@ const http = require('node:http');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { _electron: electron } = require('playwright-core');
 
 /** A stand-in for Hermes's dashboard: answers every page and logs the request. */
@@ -117,8 +118,14 @@ async function launch({ directory, fake, daemon }) {
   const page = await app.firstWindow();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
+  // The first page may already be asking the engine: leave it before the
+  // fake takes over, so the fake's state is only ever used by the page under
+  // test (a question the first page asked could use up a planned failure).
+  const index = pathToFileURL(path.resolve(__dirname, '..', 'dist', 'renderer', 'index.html')).href;
+  await page.waitForURL(index);
+  await page.goto('about:blank');
   if (fake) await installFakeEngine(app, fake);
-  await page.reload();
+  await page.goto(index);
   return { app, page, errors };
 }
 
@@ -250,7 +257,6 @@ async function installFakeEngine(app, state) {
       f().memory.sessions = f().memory.sessions.map((s) => (s.agent === agent ? { ...s, always: false } : s));
       return ok;
     });
-    handle('agent-availability', () => ({ detected: true, launchable: true }));
     handle('launch-agent', (_e, id, action) => { f().calls.push(['launch-agent', id, action]); });
   }, state);
 }

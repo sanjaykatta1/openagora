@@ -43,17 +43,22 @@ async function run() {
   await row.getByRole('button', { name: 'Open', exact: true }).click();
   await waitFor(async () => (await fakeCalls(app)).length === 2, 'native app reopen');
   assert.deepEqual(await fakeCalls(app), [['open', 'handy'], ['open', 'handy']]);
-  assert.equal(await page.locator('.webview-bar').count(), 0);
+  assert.equal(await page.locator('.bar').count(), 0);
 
+  // Missing files: the library and the app's page offer a reinstall, which
+  // shows the app's own setup notes first.
   await app.evaluate(() => { const a = globalThis.fake.extraApps[0]; a.present = false; a.status = 'stopped'; });
   await page.reload();
   await page.getByRole('button', { name: /Library/ }).click();
-  await page.getByText('App files missing · open its page to reinstall').waitFor();
+  await row.getByRole('button', { name: 'Reinstall…' }).waitFor();
   await row.locator('.row-main').click();
   await heading(page, 'Handy');
   await page.getByText('Follow Handy’s own setup for dictation.').waitFor();
-  await page.getByRole('button', { name: 'Reinstall missing app' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Install', exact: true }).click();
+  await page.getByRole('button', { name: '‹ Library' }).waitFor();
+  await page.getByRole('button', { name: 'Reinstall…' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Install Handy?' });
+  assert.match(await dialog.innerText(), /Follow Handy’s own setup for dictation\./);
+  await dialog.getByRole('button', { name: 'Install', exact: true }).click();
   await page.getByRole('button', { name: 'Open', exact: true }).waitFor();
   assert.deepEqual((await fakeCalls(app)).at(-1), ['install', 'handy']);
   assert.deepEqual(session.errors, []);

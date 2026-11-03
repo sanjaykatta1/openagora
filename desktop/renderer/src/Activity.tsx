@@ -1,8 +1,9 @@
 // Settings → Activity: the audit log. Every app action, capture, handoff,
 // read of a coding agent's sessions and change of permission, with who asked
 // and who said yes. It stays on this computer; the engine writes it.
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { bridge, type AuditEntry } from "./api";
+import { useMemo, useState } from "react";
+import { bridge } from "./api";
+import { useEngine } from "./ui";
 
 const WHO: Record<string, string> = {
   sunday: "Sunday", user: "You", openagora: "OpenAgora",
@@ -35,25 +36,10 @@ const who = (client: string) => WHO[client] ?? client;
 const via = (where: string) => VIA[where] ?? `in ${where}`;
 const what = (action: string) => WHAT[action] ?? action.replace(/_/g, " ");
 
-const errorText = (e: unknown) =>
-  (e instanceof Error ? e.message : String(e)).replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
-
 export function ActivitySettings() {
-  const [entries, setEntries] = useState<AuditEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [entries, reload] = useEngine((b) => b.auditLog());
   const [client, setClient] = useState("all");
   const [query, setQuery] = useState("");
-
-  const load = useCallback(async () => {
-    if (!bridge) return;
-    try {
-      setEntries(await bridge.auditLog());
-      setError(null);
-    } catch (e) {
-      setError(errorText(e));
-    }
-  }, []);
-  useEffect(() => { void load(); }, [load]);
 
   const clients = useMemo(() => [...new Set((entries ?? []).map((e) => e.client))].sort(), [entries]);
   const shown = useMemo(() => {
@@ -71,33 +57,27 @@ export function ActivitySettings() {
 
   if (!bridge) return null;
   return (
-    <div className="panel" aria-labelledby="activity-title">
-      <h3 id="activity-title">Activity</h3>
-      <p className="muted small">Everything Sunday, your coding agents and OpenAgora did for you, and every yes and no, newest first. It stays on this computer.</p>
-      <div className="row">
-        <label className="small">Who{" "}
-          <select aria-label="Who" value={client} onChange={(e) => setClient(e.target.value)}>
-            <option value="all">Everyone</option>
-            {clients.map((c) => <option key={c} value={c}>{who(c)}</option>)}
-          </select>
-        </label>
+    <>
+      <div className="toolbar">
+        <select aria-label="Who" value={client} onChange={(e) => setClient(e.target.value)}>
+          <option value="all">Everyone</option>
+          {clients.map((c) => <option key={c} value={c}>{who(c)}</option>)}
+        </select>
         <input type="search" aria-label="Search the activity" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} />
-        <button className="btn ghost" onClick={() => void load()}>Refresh</button>
+        <button className="btn" onClick={() => void reload()}>Refresh</button>
       </div>
-      {error && <p role="alert" className="agent-error">{error}</p>}
-      {entries && shown.length === 0 && <p className="muted small">Nothing yet.</p>}
-      <ul className="rows compact" aria-label="Audit log">
+      <ul className="group" aria-label="Audit log">
+        {entries && shown.length === 0 && <li className="row muted">Nothing yet</li>}
         {shown.map((e, n) => (
           <li key={`${e.at}-${n}`} className="row">
-            <span>
-              <strong>{who(e.client)}</strong>{" "}
-              <span>{what(e.action)}{e.target ? `: ${e.target}` : ""}</span>{" "}
-              <span className="muted small">— {DECISION[e.decision] ?? e.decision}{e.via ? ` ${via(e.via)}` : ""}{e.outcome && e.outcome !== "ok" ? `; ${e.outcome}` : ""}</span>
+            <span className="row-label">
+              <strong>{who(e.client)}</strong> {what(e.action)}{e.target ? `: ${e.target}` : ""}{" "}
+              <span className="muted">— {DECISION[e.decision] ?? e.decision}{e.via ? ` ${via(e.via)}` : ""}{e.outcome && e.outcome !== "ok" ? `; ${e.outcome}` : ""}</span>
             </span>
-            <time className="muted small" dateTime={new Date(e.at * 1000).toISOString()}>{new Date(e.at * 1000).toLocaleString()}</time>
+            <time className="value" dateTime={new Date(e.at * 1000).toISOString()}>{new Date(e.at * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</time>
           </li>
         ))}
       </ul>
-    </div>
+    </>
   );
 }

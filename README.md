@@ -28,7 +28,7 @@ An open-source app store for your desktop.
     allowed apps showed over the last days, all kept on your computer.
   - **Activity:** Settings → Activity shows everything Sunday and your agents did.
 
-  Other personal agents are coming soon. See [Sunday](docs/personal-agents.md).
+  See [Sunday](docs/personal-agents.md).
 
 ## Download
 

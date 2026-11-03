@@ -151,7 +151,7 @@ nothing happens. Sunday can't update, stop or remove itself this way.
 
 Sunday sees a window only when you press Sunday's shortcut in OpenAgora's
 desktop app, or Sunday asks, and only for apps you allowed. These commands show
-and change the same settings as **Settings → What Sunday can see**.
+and change the same settings as **Settings → Privacy**.
 
 ```sh
 openagora focus                          # the windows in front, front first, and whether Sunday may see each
@@ -189,7 +189,7 @@ Off unless you turn it on. While it's on and OpenAgora runs, OpenAgora keeps
 what apps you always allowed Sunday to see show (a picture and the window's
 text, on each switch and every few minutes while you stay) on this computer,
 for Sunday to search with `history_search` and `history_get`. The same as
-**Settings → Background mode**:
+background mode in **Settings → Memory**:
 
 ```sh
 openagora background                     # on or off, and how much it kept

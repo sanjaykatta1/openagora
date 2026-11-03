@@ -552,7 +552,9 @@ logs.
 
 **Built (phase 1).**
 
-- **Hermes only for now.** Other personal agents are listed as "Coming soon".
+- **Hermes only for now.** On first launch Sunday's page asks **Use Sunday** or
+  **Not now** (`personal-agent.json`); an earlier choice of another agent asks
+  again.
 - **One profile.** OpenAgora runs `hermes -p sunday …` only. Without Hermes, it
   installs it from the store and creates the profile
   (`hermes profile create sunday --no-alias`). With an existing Hermes it adopts
@@ -569,10 +571,10 @@ logs.
   is kept.
 - **Home screen.** Hermes's dashboard for Sunday's profile
   (`hermes -p sunday dashboard --isolated …`, opened with `?profile=sunday`),
-  labelled Sunday, with a "powered by Hermes Agent from Nous Research" credit
-  and its license (also in the dashboard's bar, Sunday's panel, Settings, the
-  agent chooser and OpenAgora's About box). An install,
-  update, choice or start screen comes first when needed.
+  labelled Sunday. Until it runs, Sunday's page shows one step at a time
+  (install, update, how to start, start), under the credit "Hermes Agent by
+  Nous Research"; Settings → Sunday links Hermes's source and license, and so
+  does OpenAgora's About box.
 - **Settings → Sunday** opens Hermes's own pages for the profile (Models,
   Channels, Pairing, Skills, Plugins, MCP, Cron, Config, Keys, Sessions, Logs,
   System) and shows the gateway status Hermes reports.
@@ -633,9 +635,9 @@ or `denied`). The broker checks every capture against the user's grants and the
 never-capture list, asks when needed, and logs it (built: phase 3), and every
 handoff to a coding agent or app, task and app action too (built: phase 4).
 Allowed apps and handoffs can be taken back, and the never-capture list
-extended, in Settings → What Sunday can see; reading coding sessions in Settings
-→ Memory; and the audit log is in Settings → Activity, newest first, filtered by
-who asked and by words (built: phase 6).
+extended, in Settings → Privacy; reading coding sessions in Settings → Memory;
+and the audit log is in Settings → Activity, newest first, filtered by who asked
+and by words (built: phase 6).
 
 ## 7. Shell
 
@@ -648,14 +650,21 @@ who asked and by words (built: phase 6).
   redirect away from 127.0.0.1/localhost opens in the default browser instead.
   OpenAgora's own dialogs hide the app's view while they are open, so it never
   covers them.
-- **Settings** (built): Sunday's Hermes pages; What Sunday can see (the
-  shortcut, keeping OpenAgora in the menu bar or tray, opening it at login,
-  macOS Screen Recording and Accessibility permission, allowed apps and
-  handoffs, the never-capture list); Coding agents (each agent found on this
-  computer, set up or removed with its own command, shown first; apps that take
-  work, connected on their own approval page); Memory (phase 5); Background
-  mode and Activity, the audit log (phase 6); the personal-agent choice;
-  removing Sunday.
+- **Settings** (built), in tabs; Sunday's show only to people who use Sunday:
+  General (Sunday's shortcut, recorded by pressing it; keeping OpenAgora in the
+  menu bar or tray; opening it at login); Sunday (connecting it to OpenAgora,
+  Hermes's gateway status and pages, stopping using or removing Sunday);
+  Privacy (macOS Screen Recording and Accessibility permission, allowed apps
+  and handoffs, the never-capture list); Coding agents (each agent found on
+  this computer, connected or disconnected with its own command, shown first;
+  apps that take work, connected on their own approval page); Memory
+  (Holographic, the digest, background mode, reading coding sessions; phases 5
+  and 6); Activity, the audit log (phase 6).
+- **On screen, words only where the screen can't say it.** Titles say what a
+  page is and buttons what they do; a change the page shows (a switch, a row
+  that appears) isn't announced again. Every consent shows the exact commands
+  that will run. The toast is for failures, and for work that finishes out of
+  sight (installs, updates, removals).
 - **Opening at login** (built: phase 6; the issue's default: off, with a
   setting): macOS and Windows through Electron's login items, Linux through
   OpenAgora's own XDG autostart entry (`~/.config/autostart/openagora.desktop`,
